@@ -591,6 +591,7 @@ export default function CharacterCreatorApp() {
 
   const [genLoading, setGenLoading] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
+  const [proxyProgress, setProxyProgress] = useState(0);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
@@ -644,6 +645,25 @@ export default function CharacterCreatorApp() {
   useEffect(() => {
     localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!genLoading) {
+      setProxyProgress(0);
+      return;
+    }
+    setProxyProgress(6);
+    const t = window.setInterval(() => {
+      setProxyProgress((prev) => {
+        if (prev >= 92) return prev;
+        const step = Math.max(1, Math.round((100 - prev) / 14));
+        return Math.min(92, prev + step);
+      });
+    }, 180);
+    return () => {
+      window.clearInterval(t);
+      setProxyProgress(100);
+    };
+  }, [genLoading]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1031,14 +1051,36 @@ export default function CharacterCreatorApp() {
     const clean = String(text || "").trim();
     if (!clean) return [] as string[];
 
-    try {
-      const parsed = JSON.parse(clean);
-      if (Array.isArray(parsed)) {
-        return parsed
-          .map((entry) => collapseWhitespace(entry))
-          .filter(Boolean);
+    const parseAsArray = (value: any): string[] => {
+      if (!Array.isArray(value)) return [];
+      return value
+        .map((entry) => {
+          if (typeof entry === "string") return collapseWhitespace(entry);
+          if (entry && typeof entry === "object") {
+            return collapseWhitespace(entry.entry ?? entry.text ?? entry.content ?? "");
+          }
+          return "";
+        })
+        .filter(Boolean);
+    };
+
+    const tryParse = (raw: string) => {
+      try {
+        const parsed = JSON.parse(raw);
+        return parseAsArray(parsed);
+      } catch {
+        return [] as string[];
       }
-    } catch {}
+    };
+
+    const direct = tryParse(clean);
+    if (direct.length) return direct;
+
+    const fenced = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (fenced?.[1]) {
+      const fromFence = tryParse(fenced[1].trim());
+      if (fromFence.length) return fromFence;
+    }
 
     return clean
       .split(/\n+/)
@@ -1046,6 +1088,7 @@ export default function CharacterCreatorApp() {
       .map((line) => collapseWhitespace(line))
       .filter(Boolean);
   }
+
 
   async function callProxyChatCompletion(args: {
     system: string;
@@ -1157,11 +1200,11 @@ export default function CharacterCreatorApp() {
     }
 
     const system =
-      "You are a roleplay writing editor. Expand rough backstory notes into a rich, coherent backstory timeline. Fill in missing connective details, resolve contradictions, and infer sensible transitions while preserving the character's established facts and tone. Return valid JSON only in this format: [\"entry 1\", \"entry 2\", ...]. Each entry should be detailed (2-5 sentences), specific, and ordered chronologically.";
+      "You are a roleplay writing editor. Expand rough backstory notes into a rich, coherent backstory timeline. Fill in missing connective details, resolve contradictions, and infer sensible transitions while preserving the character's established facts and tone. You may add NEW timeline entries that were not in the original notes whenever needed for context, causality, and detail. Return valid JSON only in this format: [\"entry 1\", \"entry 2\", ...]. Each entry should be detailed (2-5 sentences), specific, and ordered chronologically.";
 
     const user = `Character info:\n${getCharacterSummaryForLLM()}\n\nRaw backstory notes:\n${backstory
       .map((entry, i) => `${i + 1}. ${entry}`)
-      .join("\n")}\n\nRewrite these as a comprehensive, polished backstory list.`;
+      .join("\n")}\n\nRewrite these into a comprehensive, polished backstory list and add NEW detailed entries wherever missing context, causality, or timeline transitions are needed. It is good to return more entries than the input if that improves clarity and depth.`;
 
     setGenLoading(true);
     try {
@@ -2022,6 +2065,41 @@ export default function CharacterCreatorApp() {
             </div>
           </div>
         </Modal>
+
+        {genLoading ? (
+          <div
+            className={cn(
+              "fixed z-40 w-[min(92vw,340px)] rounded-xl border p-3 shadow-lg",
+              "left-1/2 top-3 -translate-x-1/2 md:left-auto md:top-auto md:bottom-4 md:right-4 md:translate-x-0"
+            )}
+            style={{
+              background: theme === "light" ? "hsl(222 10% 14%)" : "hsl(40 33% 96%)",
+              borderColor: theme === "light" ? "hsl(222 10% 24%)" : "hsl(40 14% 80%)",
+            }}
+          >
+            <div
+              className="mb-2 text-xs font-medium"
+              style={{ color: theme === "light" ? "hsl(40 33% 96%)" : "hsl(222 10% 14%)" }}
+            >
+              Proxy is writing…
+            </div>
+            <div
+              className="h-2 overflow-hidden rounded-full"
+              style={{
+                background: theme === "light" ? "hsl(222 10% 26%)" : "hsl(220 8% 82%)",
+              }}
+            >
+              <div
+                className="h-full rounded-full transition-all duration-200"
+                style={{
+                  width: `${proxyProgress}%`,
+                  background: theme === "light" ? "hsl(44 90% 52%)" : "hsl(0 45% 48%)",
+                }}
+              />
+            </div>
+          </div>
+        ) : null}
+
 
         <Modal open={proxyOpen} onClose={() => setProxyOpen(false)} title="Proxy" widthClass="max-w-xl">
           <div className="space-y-4">
