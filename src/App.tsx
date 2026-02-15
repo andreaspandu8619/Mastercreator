@@ -1242,9 +1242,9 @@ export default function CharacterCreatorApp() {
             <div className="mt-1 text-[hsl(var(--muted-foreground))]">{storageError}</div>
           </div>
         ) : null}
-        <header className="flex items-center justify-between gap-3">
+        <header className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Mastercreator</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
             <Button variant="secondary" onClick={() => setProxyOpen(true)}>
               <SlidersHorizontal className="h-4 w-4" /> Proxy
             </Button>
