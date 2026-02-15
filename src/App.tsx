@@ -234,13 +234,16 @@ function openIdb(): Promise<IDBDatabase> {
 
 async function idbGetAllCharacters(): Promise<Character[]> {
   const db = await openIdb();
-  return new Promise((resolve, reject) => {
+   return new Promise<Character[]>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, "readonly");
     const store = tx.objectStore(IDB_STORE);
     const req = store.getAll();
     req.onsuccess = () => {
       const arr = Array.isArray(req.result) ? (req.result as any[]) : [];
-      resolve(arr.map(normalizeCharacter).filter(Boolean) as Character[]);
+      const normalized = arr
+        .map(normalizeCharacter)
+        .filter((x): x is Character => !!x);
+      resolve(normalized);
     };
     req.onerror = () => reject(req.error || new Error("Failed to read characters."));
   }).finally(() => db.close());
@@ -270,17 +273,6 @@ async function idbDeleteCharacter(id: string): Promise<void> {
   }).finally(() => db.close());
 }
 
-async function idbClearCharacters(): Promise<void> {
-  const db = await openIdb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, "readwrite");
-    const store = tx.objectStore(IDB_STORE);
-    store.clear();
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error("Failed to clear characters."));
-    tx.onabort = () => reject(tx.error || new Error("Clear aborted."));
-  }).finally(() => db.close());
-}
 
 function characterToTxt(c: Character) {
   const lines = [
@@ -599,11 +591,7 @@ export default function CharacterCreatorApp() {
   const imageFileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    const isTest =
-      typeof process !== "undefined" &&
-      !!(process as any)?.env &&
-      (process as any).env.NODE_ENV === "test";
-    if (isTest) runTests();
+    if (import.meta.env.MODE === "test") runTests();
   }, []);
 
   useEffect(() => {
