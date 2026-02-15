@@ -555,6 +555,9 @@ export default function CharacterCreatorApp() {
 
   const [query, setQuery] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [showCreatePreview, setShowCreatePreview] = useState(true);
+  const [createPreviewOpen, setCreatePreviewOpen] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
 
   const [imageDataUrl, setImageDataUrl] = useState("");
   const [imageError, setImageError] = useState<string | null>(null);
@@ -641,6 +644,23 @@ export default function CharacterCreatorApp() {
   useEffect(() => {
     localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(max-width: 1023px)");
+    const onChange = () => {
+      const mobile = media.matches;
+      setIsMobileViewport(mobile);
+      if (mobile) {
+        setCreatePreviewOpen(false);
+      } else {
+        setShowCreatePreview(true);
+      }
+    };
+    onChange();
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(
@@ -1345,6 +1365,13 @@ export default function CharacterCreatorApp() {
               <div className="flex flex-wrap justify-end gap-2">
                 <Button
                   variant="secondary"
+                  className="w-full sm:w-auto lg:hidden"
+                  onClick={() => setCreatePreviewOpen(true)}
+                >
+                  Preview
+                </Button>
+                <Button
+                  variant="secondary"
                   onClick={() => {
                     if (!draft) return alert("Please enter a character name before exporting.");
                     downloadText(
@@ -1866,64 +1893,135 @@ export default function CharacterCreatorApp() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-sm lg:col-span-2">
-                <div className="space-y-4 p-5 md:p-6">
-                  <div className="text-lg font-semibold">Preview</div>
-                  <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-base font-semibold">{collapseWhitespace(name) || "(unnamed)"}</div>
-                        <div className={cn("text-sm", genderColorClass(gender))}>{gender || "—"}</div>
-                      </div>
-                      {getFinalRace() ? <Badge>{getFinalRace()}</Badge> : null}
+              {!isMobileViewport && showCreatePreview ? (
+                <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-sm lg:col-span-2">
+                  <div className="space-y-4 p-5 md:p-6">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-lg font-semibold">Preview</div>
+                      <Button variant="secondary" type="button" onClick={() => setShowCreatePreview(false)}>
+                        Hide
+                      </Button>
                     </div>
-                    {imageDataUrl ? (
-                      <div className="relative w-full overflow-hidden rounded-2xl border border-[hsl(var(--border))] aspect-[3/4]">
-                        <img
-                          src={imageDataUrl}
-                          alt="Preview"
-                          className="absolute inset-0 h-full w-full object-cover object-top"
-                        />
+                    <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-base font-semibold">{collapseWhitespace(name) || "(unnamed)"}</div>
+                          <div className={cn("text-sm", genderColorClass(gender))}>{gender || "—"}</div>
+                        </div>
+                        {getFinalRace() ? <Badge>{getFinalRace()}</Badge> : null}
                       </div>
-                    ) : (
-                      <div className="flex aspect-[3/4] w-full items-center justify-center rounded-2xl border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted))] text-sm text-[hsl(var(--muted-foreground))]">
-                        No image
+                      {imageDataUrl ? (
+                        <div className="relative w-full overflow-hidden rounded-2xl border border-[hsl(var(--border))] aspect-[3/4]">
+                          <img
+                            src={imageDataUrl}
+                            alt="Preview"
+                            className="absolute inset-0 h-full w-full object-cover object-top"
+                          />
+                        </div>
+                      ) : (
+                        <div className="flex aspect-[3/4] w-full items-center justify-center rounded-2xl border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted))] text-sm text-[hsl(var(--muted-foreground))]">
+                          No image
+                        </div>
+                      )}
+                      <div className="text-xs text-[hsl(var(--muted-foreground))]">Saved locally in your browser.</div>
+                      <div className="flex flex-wrap gap-2">
+                        {(personalities || []).slice(0, 6).map((p) => (
+                          <Badge key={p}>{p}</Badge>
+                        ))}
+                        {personalities.length > 6 ? (
+                          <Badge>+{personalities.length - 6}</Badge>
+                        ) : null}
                       </div>
-                    )}
-                    <div className="text-xs text-[hsl(var(--muted-foreground))]">Saved locally in your browser.</div>
-                    <div className="flex flex-wrap gap-2">
-                      {(personalities || []).slice(0, 6).map((p) => (
-                        <Badge key={p}>{p}</Badge>
-                      ))}
-                      {personalities.length > 6 ? (
-                        <Badge>+{personalities.length - 6}</Badge>
-                      ) : null}
                     </div>
-                  </div>
 
-                  <div className="flex gap-2">
-                    <Button
-                      variant="secondary"
-                      type="button"
-                      onClick={() => {
-                        if (!draft) return alert("Enter a character name first.");
-                        downloadText(
-                          (filenameSafe(draft.name) || "character") + ".txt",
-                          characterToTxt(draft)
-                        );
-                      }}
-                    >
-                      <Download className="h-4 w-4" /> Export TXT
-                    </Button>
-                    <Button variant="primary" type="button" onClick={saveCharacter}>
-                      <Plus className="h-4 w-4" /> Save
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        onClick={() => {
+                          if (!draft) return alert("Enter a character name first.");
+                          downloadText(
+                            (filenameSafe(draft.name) || "character") + ".txt",
+                            characterToTxt(draft)
+                          );
+                        }}
+                      >
+                        <Download className="h-4 w-4" /> Export TXT
+                      </Button>
+                      <Button variant="primary" type="button" onClick={saveCharacter}>
+                        <Plus className="h-4 w-4" /> Save
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : null}
+              {!isMobileViewport && !showCreatePreview ? (
+                <div className="hidden items-start lg:col-span-2 lg:flex">
+                  <Button variant="secondary" type="button" onClick={() => setShowCreatePreview(true)}>
+                    Show Preview
+                  </Button>
+                </div>
+              ) : null}
             </div>
           </div>
         )}
+
+        <Modal
+          open={isMobileViewport && createPreviewOpen}
+          onClose={() => setCreatePreviewOpen(false)}
+          title="Preview"
+          widthClass="max-w-xl"
+        >
+          <div className="space-y-4">
+            <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-base font-semibold">{collapseWhitespace(name) || "(unnamed)"}</div>
+                  <div className={cn("text-sm", genderColorClass(gender))}>{gender || "—"}</div>
+                </div>
+                {getFinalRace() ? <Badge>{getFinalRace()}</Badge> : null}
+              </div>
+              {imageDataUrl ? (
+                <div className="relative w-full overflow-hidden rounded-2xl border border-[hsl(var(--border))] aspect-[3/4]">
+                  <img
+                    src={imageDataUrl}
+                    alt="Preview"
+                    className="absolute inset-0 h-full w-full object-cover object-top"
+                  />
+                </div>
+              ) : (
+                <div className="flex aspect-[3/4] w-full items-center justify-center rounded-2xl border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted))] text-sm text-[hsl(var(--muted-foreground))]">
+                  No image
+                </div>
+              )}
+              <div className="text-xs text-[hsl(var(--muted-foreground))]">Saved locally in your browser.</div>
+              <div className="flex flex-wrap gap-2">
+                {(personalities || []).slice(0, 6).map((p) => (
+                  <Badge key={p}>{p}</Badge>
+                ))}
+                {personalities.length > 6 ? (
+                  <Badge>+{personalities.length - 6}</Badge>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => {
+                  if (!draft) return alert("Enter a character name first.");
+                  downloadText((filenameSafe(draft.name) || "character") + ".txt", characterToTxt(draft));
+                }}
+              >
+                <Download className="h-4 w-4" /> Export TXT
+              </Button>
+              <Button variant="primary" type="button" onClick={saveCharacter}>
+                <Plus className="h-4 w-4" /> Save
+              </Button>
+            </div>
+          </div>
+        </Modal>
 
         <Modal open={proxyOpen} onClose={() => setProxyOpen(false)} title="Proxy" widthClass="max-w-xl">
           <div className="space-y-4">
@@ -2058,7 +2156,7 @@ export default function CharacterCreatorApp() {
           ) : null}
         </Modal>
 
-        <div className="pointer-events-none fixed bottom-4 right-4 text-xs text-[hsl(var(--muted-foreground))]">
+        <div className="pointer-events-none fixed inset-x-0 bottom-3 px-4 text-center text-[10px] text-[hsl(var(--muted-foreground))] md:inset-x-auto md:bottom-4 md:right-4 md:px-0 md:text-xs">
           © {new Date().getFullYear()} Sancte™. All rights reserved.
         </div>
       </div>
