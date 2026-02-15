@@ -3,6 +3,8 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Download,
   Moon,
   Pencil,
@@ -802,6 +804,16 @@ export default function CharacterCreatorApp() {
     setBackstory((prev) => prev.filter((_, i) => i !== idx));
   }
 
+  function moveBackstoryEntry(from: number, to: number) {
+    setBackstory((prev) => {
+      if (to < 0 || to >= prev.length || from === to) return prev;
+      const next = [...prev];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+  }
+
   function getFinalRace() {
     return racePreset && racePreset !== "Other"
       ? racePreset
@@ -995,6 +1007,26 @@ export default function CharacterCreatorApp() {
     ].join("\n");
   }
 
+  function parseGeneratedBackstoryEntries(text: string) {
+    const clean = String(text || "").trim();
+    if (!clean) return [] as string[];
+
+    try {
+      const parsed = JSON.parse(clean);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((entry) => collapseWhitespace(entry))
+          .filter(Boolean);
+      }
+    } catch {}
+
+    return clean
+      .split(/\n+/)
+      .map((line) => line.replace(/^[-*\d.)\s]+/, ""))
+      .map((line) => collapseWhitespace(line))
+      .filter(Boolean);
+  }
+
   async function callProxyChatCompletion(args: {
     system: string;
     user: string;
@@ -1089,6 +1121,41 @@ export default function CharacterCreatorApp() {
         temperature: 0.9,
       });
       setSynopsis(text);
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  async function generateBackstoryFromEntries() {
+    setGenError(null);
+
+    if (!backstory.length) {
+      setGenError("Add at least one backstory entry first.");
+      return;
+    }
+
+    const system =
+      "You are a roleplay writing editor. Expand rough backstory notes into a rich, coherent backstory timeline. Fill in missing connective details, resolve contradictions, and infer sensible transitions while preserving the character's established facts and tone. Return valid JSON only in this format: [\"entry 1\", \"entry 2\", ...]. Each entry should be detailed (2-5 sentences), specific, and ordered chronologically.";
+
+    const user = `Character info:\n${getCharacterSummaryForLLM()}\n\nRaw backstory notes:\n${backstory
+      .map((entry, i) => `${i + 1}. ${entry}`)
+      .join("\n")}\n\nRewrite these as a comprehensive, polished backstory list.`;
+
+    setGenLoading(true);
+    try {
+      const text = await callProxyChatCompletion({
+        system,
+        user,
+        maxTokens: Math.min(1000, Math.max(300, proxyMaxTokens * 3)),
+        temperature: 0.8,
+      });
+      const generated = parseGeneratedBackstoryEntries(text);
+      if (!generated.length) {
+        throw new Error("The model did not return usable backstory entries.");
+      }
+      setBackstory(generated);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Generation failed.");
     } finally {
@@ -1586,7 +1653,10 @@ export default function CharacterCreatorApp() {
                   {tab === "definition" ? (
                     <div className="space-y-4">
                       <div className="text-lg font-semibold">Definition</div>
-                      <div className="text-sm text-[hsl(var(--muted-foreground))]">Backstory entries become a list.</div>
+                      <div className="text-sm text-[hsl(var(--muted-foreground))]">
+                        Backstory entries stay as a list. You can reorder them and generate an expanded,
+                        comprehensive version from your notes.
+                      </div>
                       <div className="flex gap-2">
                         <Input
                           value={backstoryInput}
@@ -1603,6 +1673,16 @@ export default function CharacterCreatorApp() {
                           Add
                         </Button>
                       </div>
+                      <div className="flex justify-end">
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          onClick={generateBackstoryFromEntries}
+                          disabled={!backstory.length || genLoading}
+                        >
+                          <Sparkles className="h-4 w-4" /> Generate detailed backstory
+                        </Button>
+                      </div>
                       <div className="space-y-2">
                         {backstory.length ? (
                           backstory.map((b, i) => (
@@ -1612,14 +1692,34 @@ export default function CharacterCreatorApp() {
                             >
                               <div className="flex items-start justify-between gap-3">
                                 <div className="whitespace-pre-wrap text-sm">{b}</div>
-                                <button
-                                  className="clickable rounded-xl border border-[hsl(var(--border))] p-2"
-                                  onClick={() => removeBackstoryEntry(i)}
-                                  type="button"
-                                  aria-label="Remove"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
+                                <div className="flex gap-2">
+                                  <button
+                                    className="clickable rounded-xl border border-[hsl(var(--border))] p-2 disabled:opacity-40"
+                                    onClick={() => moveBackstoryEntry(i, i - 1)}
+                                    type="button"
+                                    aria-label="Move up"
+                                    disabled={i === 0}
+                                  >
+                                    <ChevronUp className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    className="clickable rounded-xl border border-[hsl(var(--border))] p-2 disabled:opacity-40"
+                                    onClick={() => moveBackstoryEntry(i, i + 1)}
+                                    type="button"
+                                    aria-label="Move down"
+                                    disabled={i === backstory.length - 1}
+                                  >
+                                    <ChevronDown className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    className="clickable rounded-xl border border-[hsl(var(--border))] p-2"
+                                    onClick={() => removeBackstoryEntry(i)}
+                                    type="button"
+                                    aria-label="Remove"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           ))
