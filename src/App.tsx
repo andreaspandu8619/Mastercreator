@@ -22,7 +22,7 @@ import {
 
 type ThemeMode = "light" | "dark";
 type Gender = "Male" | "Female" | "";
-type Page = "library" | "create";
+type Page = "library" | "create" | "chat";
 type CreateTab = "overview" | "definition" | "system" | "intro" | "synopsis";
 
 type ProxyConfig = {
@@ -37,6 +37,16 @@ type ProxyConfig = {
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
+};
+
+type ChatSession = {
+  id: string;
+  characterId: string;
+  characterName: string;
+  characterImageDataUrl: string;
+  messages: ChatMessage[];
+  createdAt: string;
+  updatedAt: string;
 };
 
 type Character = {
@@ -66,6 +76,7 @@ const IDB_STORE = "characters";
 const THEME_KEY = "mastercreator_theme";
 const PROXY_KEY = "mastercreator_proxy";
 const PERSONA_KEY = "mastercreator_persona";
+const CHAT_SESSIONS_KEY = "mastercreator_chat_sessions_v1";
 
 const DEFAULT_PROXY: ProxyConfig = {
   chatUrl: "https://llm.chutes.ai/v1/chat/completions",
@@ -73,7 +84,7 @@ const DEFAULT_PROXY: ProxyConfig = {
   model: "deepseek-ai/DeepSeek-R1",
   maxTokens: 350,
   temperature: 0.9,
-  contextSize: 12,
+  contextSize: 32000,
 };
 
 const PERSONALITIES: string[] = [
@@ -518,6 +529,31 @@ function clampIndex(i: number, len: number) {
   return ((i % len) + len) % len;
 }
 
+function RichText({ text }: { text: string }) {
+  const renderInline = (raw: string) => {
+    const parts: React.ReactNode[] = [];
+    const regex = /(\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|\*[^*]+\*)/g;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(raw))) {
+      if (m.index > last) parts.push(raw.slice(last, m.index));
+      const token = m[0];
+      if (token.startsWith("***") && token.endsWith("***")) {
+        parts.push(<strong key={m.index}><em>{token.slice(3, -3)}</em></strong>);
+      } else if (token.startsWith("**") && token.endsWith("**")) {
+        parts.push(<strong key={m.index}>{token.slice(2, -2)}</strong>);
+      } else if (token.startsWith("*") && token.endsWith("*")) {
+        parts.push(<em key={m.index}>{token.slice(1, -1)}</em>);
+      }
+      last = m.index + token.length;
+    }
+    if (last < raw.length) parts.push(raw.slice(last));
+    return parts;
+  };
+
+  return <>{String(text || "").split("\n").map((line, i) => <React.Fragment key={i}>{i > 0 ? <br /> : null}{renderInline(line)}</React.Fragment>)}</>;
+}
+
 function runTests() {
   const c0 = normalizeCharacter({ name: "A", personalities: undefined, introMessages: undefined });
   if (!c0) throw new Error("normalizeCharacter should return a character");
@@ -565,14 +601,20 @@ export default function CharacterCreatorApp() {
   const [proxyModel, setProxyModel] = useState(DEFAULT_PROXY.model);
   const [proxyMaxTokens, setProxyMaxTokens] = useState(DEFAULT_PROXY.maxTokens);
   const [proxyTemperature, setProxyTemperature] = useState(DEFAULT_PROXY.temperature);
+  const [proxyTemperatureInput, setProxyTemperatureInput] = useState(String(DEFAULT_PROXY.temperature));
   const [proxyContextSize, setProxyContextSize] = useState(DEFAULT_PROXY.contextSize);
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaText, setPersonaText] = useState("");
 
-  const [chatOpen, setChatOpen] = useState(false);
   const [chatCharacter, setChatCharacter] = useState<Character | null>(null);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [chatStreamEnabled, setChatStreamEnabled] = useState(true);
+  const [introStreamEnabled, setIntroStreamEnabled] = useState(false);
+  const [synopsisStreamEnabled, setSynopsisStreamEnabled] = useState(false);
+  const [backstoryStreamEnabled, setBackstoryStreamEnabled] = useState(false);
 
   const [query, setQuery] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -637,13 +679,52 @@ export default function CharacterCreatorApp() {
       const mt = Number((savedProxy as any).maxTokens);
       if (Number.isFinite(mt) && mt > 0) setProxyMaxTokens(Math.floor(mt));
       const temp = Number((savedProxy as any).temperature);
-      if (Number.isFinite(temp) && temp >= 0 && temp <= 2) setProxyTemperature(temp);
+      if (Number.isFinite(temp) && temp >= 0 && temp <= 2) {
+        setProxyTemperature(temp);
+        setProxyTemperatureInput(String(temp));
+      }
       const ctx = Number((savedProxy as any).contextSize);
       if (Number.isFinite(ctx) && ctx > 1) setProxyContextSize(Math.floor(ctx));
     }
 
     const savedPersona = localStorage.getItem(PERSONA_KEY);
     if (typeof savedPersona === "string") setPersonaText(savedPersona);
+
+    const savedSessions = safeParseJSON(localStorage.getItem(CHAT_SESSIONS_KEY) || "");
+    if (Array.isArray(savedSessions)) {
+      const normalized = savedSessions
+        .map((s) => {
+          if (!s || typeof s !== "object") return null;
+          const msgs = Array.isArray((s as any).messages)
+            ? (s as any).messages
+                .map((m: any) => {
+                  const role = m?.role === "assistant" ? "assistant" : m?.role === "user" ? "user" : null;
+                  const content = collapseWhitespace(m?.content ?? "");
+                  if (!role || !content) return null;
+                  return { role, content } as ChatMessage;
+                })
+                .filter(Boolean)
+            : [];
+          const id = typeof (s as any).id === "string" ? (s as any).id : uid();
+          const characterId = typeof (s as any).characterId === "string" ? (s as any).characterId : "";
+          const characterName = collapseWhitespace((s as any).characterName ?? "");
+          if (!characterId || !characterName) return null;
+          const now = new Date().toISOString();
+          return {
+            id,
+            characterId,
+            characterName,
+            characterImageDataUrl:
+              typeof (s as any).characterImageDataUrl === "string" ? (s as any).characterImageDataUrl : "",
+            messages: msgs,
+            createdAt: typeof (s as any).createdAt === "string" ? (s as any).createdAt : now,
+            updatedAt: typeof (s as any).updatedAt === "string" ? (s as any).updatedAt : now,
+          } as ChatSession;
+        })
+        .filter((x): x is ChatSession => !!x)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      setChatSessions(normalized);
+    }
 
     (async () => {
       try {
@@ -729,8 +810,16 @@ export default function CharacterCreatorApp() {
   }, [proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize]);
 
   useEffect(() => {
+    setProxyTemperatureInput(String(proxyTemperature));
+  }, [proxyTemperature]);
+
+  useEffect(() => {
     localStorage.setItem(PERSONA_KEY, personaText);
   }, [personaText]);
+
+  useEffect(() => {
+    localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(chatSessions));
+  }, [chatSessions]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -828,8 +917,8 @@ export default function CharacterCreatorApp() {
 
     setGenError(null);
     setGenLoading(false);
-    setChatOpen(false);
     setChatCharacter(null);
+    setActiveChatSessionId(null);
     setChatMessages([]);
     setChatInput("");
   }
@@ -1081,17 +1170,47 @@ export default function CharacterCreatorApp() {
     );
   }
 
-  function startChatWithCharacter(c: Character) {
-    setChatCharacter(c);
+  function upsertChatSession(session: ChatSession) {
+    setChatSessions((prev) => {
+      const exists = prev.some((s) => s.id === session.id);
+      const merged = exists ? prev.map((s) => (s.id === session.id ? session : s)) : [session, ...prev];
+      return merged.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    });
+  }
+
+  function openChatSession(session: ChatSession) {
+    setActiveChatSessionId(session.id);
+    setChatMessages(Array.isArray(session.messages) ? session.messages : []);
+    const linked = characters.find((c) => c.id === session.characterId) || null;
+    setChatCharacter(linked);
     setChatInput("");
     setGenError(null);
+    setPage("chat");
+  }
+
+  function startChatWithCharacter(c: Character) {
+    const now = new Date().toISOString();
+    const latest = chatSessions.find((s) => s.characterId === c.id);
+    if (latest) {
+      openChatSession({ ...latest, characterName: c.name, characterImageDataUrl: c.imageDataUrl || latest.characterImageDataUrl });
+      return;
+    }
     const greeting = collapseWhitespace(
       c.introMessages?.[
         clampIndex(c.selectedIntroIndex || 0, Math.max(1, c.introMessages?.length || 1))
       ] || ""
     );
-    setChatMessages(greeting ? [{ role: "assistant", content: greeting }] : []);
-    setChatOpen(true);
+    const session: ChatSession = {
+      id: uid(),
+      characterId: c.id,
+      characterName: c.name,
+      characterImageDataUrl: c.imageDataUrl || "",
+      messages: greeting ? [{ role: "assistant", content: greeting }] : [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    upsertChatSession(session);
+    openChatSession(session);
   }
 
   function buildCharacterChatSystemPrompt(c: Character) {
@@ -1115,7 +1234,7 @@ export default function CharacterCreatorApp() {
   }
 
   async function sendChatMessage() {
-    if (!chatCharacter || genLoading) return;
+    if (!chatCharacter || !activeChatSessionId || genLoading) return;
     const text = collapseWhitespace(chatInput);
     if (!text) return;
     setGenError(null);
@@ -1123,7 +1242,8 @@ export default function CharacterCreatorApp() {
     setChatMessages(newHistory);
     setChatInput("");
 
-    const maxHistory = Math.max(2, Math.floor(proxyContextSize));
+    const approxPerMessage = 220;
+    const maxHistory = Math.max(2, Math.floor(proxyContextSize / approxPerMessage));
     const trimmedHistory = newHistory.slice(-maxHistory);
     const system = buildCharacterChatSystemPrompt(chatCharacter);
     const transcript = trimmedHistory
@@ -1139,8 +1259,20 @@ Write the character's next reply to the latest user message.`;
       const reply = await callProxyChatCompletion({
         system,
         user,
+        stream: chatStreamEnabled,
       });
-      setChatMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      const finalMessages = [...newHistory, { role: "assistant" as const, content: reply }];
+      setChatMessages(finalMessages);
+      const now = new Date().toISOString();
+      upsertChatSession({
+        id: activeChatSessionId,
+        characterId: chatCharacter.id,
+        characterName: chatCharacter.name,
+        characterImageDataUrl: chatCharacter.imageDataUrl || "",
+        messages: finalMessages,
+        createdAt: chatSessions.find((s) => s.id === activeChatSessionId)?.createdAt || now,
+        updatedAt: now,
+      });
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Chat failed.");
     } finally {
@@ -1227,6 +1359,7 @@ Write the character's next reply to the latest user message.`;
     user: string;
     maxTokens?: number;
     temperature?: number;
+    stream?: boolean;
   }) {
     const chatUrl = collapseWhitespace(proxyChatUrl);
     const apiKey = collapseWhitespace(proxyApiKey);
@@ -1250,12 +1383,40 @@ Write the character's next reply to the latest user message.`;
         ],
         temperature: args.temperature ?? proxyTemperature,
         max_tokens: args.maxTokens ?? proxyMaxTokens,
+        stream: !!args.stream,
       }),
     });
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`Request failed (${res.status}). ${text}`);
+    }
+
+    if (args.stream) {
+      const raw = await res.text();
+      const lines = raw
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .filter((l) => l.startsWith("data:"))
+        .map((l) => l.replace(/^data:\s*/, ""))
+        .filter((l) => l && l !== "[DONE]");
+      let merged = "";
+      for (const line of lines) {
+        try {
+          const part = JSON.parse(line);
+          merged +=
+            part?.choices?.[0]?.delta?.content ??
+            part?.choices?.[0]?.message?.content ??
+            part?.choices?.[0]?.text ??
+            "";
+        } catch {
+          merged += line;
+        }
+      }
+      const clean = String(merged ?? "").trim();
+      if (!clean) throw new Error("No text returned by the model.");
+      return clean;
     }
 
     const data = await res.json();
@@ -1285,6 +1446,7 @@ Write the character's next reply to the latest user message.`;
         system,
         user,
         temperature: 0.95,
+        stream: introStreamEnabled,
       });
       setIntroMessages((prev) => {
         const base = prev.length ? [...prev] : [""];
@@ -1314,6 +1476,7 @@ Write the character's next reply to the latest user message.`;
         user,
         maxTokens: Math.min(220, Math.max(64, proxyMaxTokens)),
         temperature: 0.9,
+        stream: synopsisStreamEnabled,
       });
       setSynopsis(text);
     } catch (e: any) {
@@ -1345,6 +1508,7 @@ Write the character's next reply to the latest user message.`;
         user,
         maxTokens: Math.min(1000, Math.max(300, proxyMaxTokens * 3)),
         temperature: 0.8,
+        stream: backstoryStreamEnabled,
       });
       const generated = parseGeneratedBackstoryEntries(text);
       if (!generated.length) {
@@ -1563,6 +1727,9 @@ Return only the revised synopsis.`;
             <Button variant="secondary" onClick={() => setPersonaOpen(true)}>
               <UserRound className="h-4 w-4" /> Persona
             </Button>
+            <Button variant="secondary" onClick={() => setPage("chat")}>
+              <MessageCircle className="h-4 w-4" /> Chats
+            </Button>
             <Button
               variant="secondary"
               onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
@@ -1590,7 +1757,116 @@ Return only the revised synopsis.`;
           </div>
         </header>
 
-        {page === "library" ? (
+        {page === "chat" ? (
+          <div className="mt-6 grid gap-4 lg:grid-cols-3">
+            <div className="space-y-3 lg:col-span-1">
+              <div className="flex items-center justify-between gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <div>
+                  <div className="text-sm font-semibold">Chats</div>
+                  <div className="text-xs text-[hsl(var(--muted-foreground))]">Continue latest or pick a session.</div>
+                </div>
+                <Button variant="secondary" onClick={() => setPage("library")}>
+                  <ArrowLeft className="h-4 w-4" /> Dashboard
+                </Button>
+              </div>
+              {chatSessions.length ? (
+                <div className="space-y-2">
+                  <Button
+                    variant="primary"
+                    className="w-full"
+                    onClick={() => openChatSession(chatSessions[0])}
+                  >
+                    Continue latest chat
+                  </Button>
+                  {chatSessions.map((s) => (
+                    <button
+                      key={s.id}
+                      className={cn(
+                        "clickable w-full rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 text-left",
+                        activeChatSessionId === s.id && "border-[hsl(var(--hover-accent))]"
+                      )}
+                      onClick={() => openChatSession(s)}
+                      type="button"
+                    >
+                      <div className="text-sm font-medium">{s.characterName}</div>
+                      <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
+                        {new Date(s.updatedAt).toLocaleString()}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-sm text-[hsl(var(--muted-foreground))]">
+                  No chats yet. Start a chat from a character.
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 shadow-sm lg:col-span-2">
+              {chatCharacter ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-lg font-semibold">Chat with {chatCharacter.name}</div>
+                    <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
+                      <input
+                        type="checkbox"
+                        checked={chatStreamEnabled}
+                        onChange={(e) => setChatStreamEnabled(e.target.checked)}
+                      />
+                      Stream text
+                    </label>
+                  </div>
+                  <div className="max-h-[62vh] space-y-2 overflow-auto rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
+                    {chatMessages.length ? (
+                      chatMessages.map((m, i) => (
+                        <div
+                          key={`${m.role}-${i}`}
+                          className={cn(
+                            "flex max-w-[95%] items-start gap-2 rounded-xl px-3 py-2 text-sm whitespace-pre-wrap",
+                            m.role === "user"
+                              ? "ml-auto border border-[hsl(var(--border))]"
+                              : "mr-auto border border-[hsl(var(--border))] bg-[hsl(var(--card))]"
+                          )}
+                        >
+                          {m.role === "assistant" ? (
+                            chatCharacter.imageDataUrl ? (
+                              <img
+                                src={chatCharacter.imageDataUrl}
+                                alt={chatCharacter.name}
+                                className="mt-0.5 h-7 w-7 rounded-full object-cover"
+                              />
+                            ) : (
+                              <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-[hsl(var(--border))] text-[10px]">AI</div>
+                            )
+                          ) : null}
+                          <div className="min-w-0">
+                            <RichText text={m.content} />
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-sm text-[hsl(var(--muted-foreground))]">No messages yet. Start chatting.</div>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => onEnterAdd(e, sendChatMessage)}
+                      placeholder="Type your message…"
+                    />
+                    <Button variant="primary" onClick={sendChatMessage} disabled={!collapseWhitespace(chatInput) || genLoading}>
+                      Send
+                    </Button>
+                  </div>
+                  {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
+                </div>
+              ) : (
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">Pick a chat session from the left.</div>
+              )}
+            </div>
+          </div>
+        ) : page === "library" ? (
           <div className="mt-6 space-y-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="relative w-full md:max-w-xl">
@@ -1680,16 +1956,6 @@ Return only the revised synopsis.`;
               <div className="flex flex-wrap justify-end gap-2">
                 <Button
                   variant="secondary"
-                  onClick={() => {
-                    const chatTarget = getDraftCharacter();
-                    if (!chatTarget) return alert("Please enter a character name before chatting.");
-                    startChatWithCharacter(chatTarget);
-                  }}
-                >
-                  <MessageCircle className="h-4 w-4" /> Chat
-                </Button>
-                <Button
-                  variant="secondary"
                   className="w-full sm:w-auto lg:hidden"
                   onClick={() => setCreatePreviewOpen(true)}
                 >
@@ -1727,6 +1993,18 @@ Return only the revised synopsis.`;
                 </Button>
               </div>
             </div>
+
+            <Button
+              variant="secondary"
+              className="w-full rounded-2xl lg:hidden"
+              onClick={() => {
+                const chatTarget = getDraftCharacter();
+                if (!chatTarget) return alert("Please enter a character name before chatting.");
+                startChatWithCharacter(chatTarget);
+              }}
+            >
+              <MessageCircle className="h-4 w-4" /> Open Character Chat
+            </Button>
 
             <div className="flex flex-wrap gap-2">
               {tabs.map((t) => (
@@ -2026,6 +2304,14 @@ Return only the revised synopsis.`;
                         </Button>
                       </div>
                       <div className="flex flex-wrap justify-end gap-2">
+                        <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
+                          <input
+                            type="checkbox"
+                            checked={backstoryStreamEnabled}
+                            onChange={(e) => setBackstoryStreamEnabled(e.target.checked)}
+                          />
+                          Stream text
+                        </label>
                         <Button
                           variant="secondary"
                           type="button"
@@ -2065,7 +2351,7 @@ Return only the revised synopsis.`;
                               className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3"
                             >
                               <div className="flex items-start justify-between gap-3">
-                                <div className="whitespace-pre-wrap text-sm">{b}</div>
+                              <div className="whitespace-pre-wrap text-sm"><RichText text={b} /></div>
                                 <div className="flex gap-2">
                                   <button
                                     className="clickable rounded-xl border border-[hsl(var(--border))] p-2 disabled:opacity-40"
@@ -2182,6 +2468,14 @@ Return only the revised synopsis.`;
 
                       <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
                         <div className="text-sm font-medium">Generate with Proxy</div>
+                        <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
+                          <input
+                            type="checkbox"
+                            checked={introStreamEnabled}
+                            onChange={(e) => setIntroStreamEnabled(e.target.checked)}
+                          />
+                          Stream text
+                        </label>
                         <Textarea
                           value={introPrompt}
                           onChange={(e) => setIntroPrompt(e.target.value)}
@@ -2243,6 +2537,14 @@ Return only the revised synopsis.`;
                           <Sparkles className="h-4 w-4" /> {genLoading ? "Generating…" : "Generate"}
                         </Button>
                       </div>
+                      <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
+                        <input
+                          type="checkbox"
+                          checked={synopsisStreamEnabled}
+                          onChange={(e) => setSynopsisStreamEnabled(e.target.checked)}
+                        />
+                        Stream text
+                      </label>
                       <Textarea
                         value={synopsis}
                         onChange={(e) => setSynopsis(e.target.value)}
@@ -2276,8 +2578,20 @@ Return only the revised synopsis.`;
 
               {!isMobileViewport && showCreatePreview ? (
                 <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-sm lg:col-span-2">
-                  <div className="space-y-4 p-5 md:p-6">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="space-y-4 p-5 md:p-6">
+                      <Button
+                        variant="secondary"
+                        className="w-full rounded-2xl"
+                        type="button"
+                        onClick={() => {
+                          const chatTarget = getDraftCharacter();
+                          if (!chatTarget) return alert("Please enter a character name before chatting.");
+                          startChatWithCharacter(chatTarget);
+                        }}
+                      >
+                        <MessageCircle className="h-4 w-4" /> Open Character Chat
+                      </Button>
+                      <div className="flex items-center justify-between gap-2">
                       <div className="text-lg font-semibold">Preview</div>
                       <Button variant="secondary" type="button" onClick={() => setShowCreatePreview(false)}>
                         Hide
@@ -2486,10 +2800,11 @@ Return only the revised synopsis.`;
             <div className="space-y-2">
               <div className="text-sm font-medium">Temperature</div>
               <Input
-                value={String(proxyTemperature)}
+                value={proxyTemperatureInput}
                 onChange={(e) => {
                   const v = e.target.value;
-                  if (v === "") return;
+                  setProxyTemperatureInput(v);
+                  if (v.trim() === "") return;
                   const n = Number(v);
                   if (Number.isFinite(n) && n >= 0 && n <= 2) setProxyTemperature(n);
                 }}
@@ -2498,19 +2813,23 @@ Return only the revised synopsis.`;
               />
             </div>
             <div className="space-y-2">
-              <div className="text-sm font-medium">Context size</div>
-              <Input
-                value={String(proxyContextSize)}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (v === "") return;
-                  const n = Math.floor(Number(v));
-                  if (Number.isFinite(n) && n > 1) setProxyContextSize(n);
-                }}
-                placeholder="e.g., 12"
-                inputMode="numeric"
+              <div className="text-sm font-medium">Context size (tokens)</div>
+              <input
+                type="range"
+                min={16000}
+                max={128000}
+                step={16000}
+                value={proxyContextSize}
+                onChange={(e) => setProxyContextSize(Number(e.target.value))}
+                className="w-full"
               />
-              <div className="text-xs text-[hsl(var(--muted-foreground))]">Used as chat history message window.</div>
+              <div className="flex justify-between text-[11px] text-[hsl(var(--muted-foreground))]">
+                <span>16k</span>
+                <span>32k</span>
+                <span>64k</span>
+                <span>128k</span>
+              </div>
+              <div className="text-xs text-[hsl(var(--muted-foreground))]">Current: {Math.round(proxyContextSize / 1000)}k tokens.</div>
             </div>
             <div className="flex justify-end">
               <Button variant="primary" onClick={() => setProxyOpen(false)}>
@@ -2536,47 +2855,6 @@ Return only the revised synopsis.`;
                 Done
               </Button>
             </div>
-          </div>
-        </Modal>
-
-        <Modal
-          open={chatOpen && !!chatCharacter}
-          onClose={() => setChatOpen(false)}
-          title={chatCharacter ? `Chat with ${chatCharacter.name}` : "Chat"}
-          widthClass="max-w-3xl"
-        >
-          <div className="space-y-3">
-            <div className="max-h-[52vh] space-y-2 overflow-auto rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
-              {chatMessages.length ? (
-                chatMessages.map((m, i) => (
-                  <div
-                    key={`${m.role}-${i}`}
-                    className={cn(
-                      "max-w-[90%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap",
-                      m.role === "user"
-                        ? "ml-auto border border-[hsl(var(--border))]"
-                        : "mr-auto bg-[hsl(var(--card))] border border-[hsl(var(--border))]"
-                    )}
-                  >
-                    {m.content}
-                  </div>
-                ))
-              ) : (
-                <div className="text-sm text-[hsl(var(--muted-foreground))]">No messages yet. Start chatting.</div>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <Input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => onEnterAdd(e, sendChatMessage)}
-                placeholder="Type your message…"
-              />
-              <Button variant="primary" onClick={sendChatMessage} disabled={!collapseWhitespace(chatInput) || genLoading}>
-                Send
-              </Button>
-            </div>
-            {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
           </div>
         </Modal>
 
@@ -2612,7 +2890,7 @@ Return only the revised synopsis.`;
                     {previewChar.height ? <Badge>{previewChar.height}</Badge> : null}
                     {previewChar.age !== "" ? <Badge>{String(previewChar.age)}</Badge> : null}
                   </div>
-                  <div className="text-sm text-[hsl(var(--muted-foreground))]">{previewChar.synopsis || ""}</div>
+                  <div className="text-sm text-[hsl(var(--muted-foreground))]"><RichText text={previewChar.synopsis || ""} /></div>
                   <div className="flex flex-wrap gap-2">
                     {(previewChar.personalities || []).slice(0, 10).map((p) => (
                       <Badge key={p}>{p}</Badge>
