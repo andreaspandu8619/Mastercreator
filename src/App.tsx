@@ -13,6 +13,8 @@ import {
   SlidersHorizontal,
   Sun,
   Trash2,
+  MessageCircle,
+  UserRound,
   Upload,
   X,
   Sparkles,
@@ -28,6 +30,13 @@ type ProxyConfig = {
   apiKey: string;
   model: string;
   maxTokens: number;
+  temperature: number;
+  contextSize: number;
+};
+
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
 };
 
 type Character = {
@@ -56,12 +65,15 @@ const IDB_NAME = "mastercreator_db";
 const IDB_STORE = "characters";
 const THEME_KEY = "mastercreator_theme";
 const PROXY_KEY = "mastercreator_proxy";
+const PERSONA_KEY = "mastercreator_persona";
 
 const DEFAULT_PROXY: ProxyConfig = {
   chatUrl: "https://llm.chutes.ai/v1/chat/completions",
   apiKey: "",
   model: "deepseek-ai/DeepSeek-R1",
   maxTokens: 350,
+  temperature: 0.9,
+  contextSize: 12,
 };
 
 const PERSONALITIES: string[] = [
@@ -552,6 +564,15 @@ export default function CharacterCreatorApp() {
   const [proxyApiKey, setProxyApiKey] = useState(DEFAULT_PROXY.apiKey);
   const [proxyModel, setProxyModel] = useState(DEFAULT_PROXY.model);
   const [proxyMaxTokens, setProxyMaxTokens] = useState(DEFAULT_PROXY.maxTokens);
+  const [proxyTemperature, setProxyTemperature] = useState(DEFAULT_PROXY.temperature);
+  const [proxyContextSize, setProxyContextSize] = useState(DEFAULT_PROXY.contextSize);
+  const [personaOpen, setPersonaOpen] = useState(false);
+  const [personaText, setPersonaText] = useState("");
+
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatCharacter, setChatCharacter] = useState<Character | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
 
   const [query, setQuery] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -615,7 +636,14 @@ export default function CharacterCreatorApp() {
       if (typeof (savedProxy as any).model === "string") setProxyModel((savedProxy as any).model);
       const mt = Number((savedProxy as any).maxTokens);
       if (Number.isFinite(mt) && mt > 0) setProxyMaxTokens(Math.floor(mt));
+      const temp = Number((savedProxy as any).temperature);
+      if (Number.isFinite(temp) && temp >= 0 && temp <= 2) setProxyTemperature(temp);
+      const ctx = Number((savedProxy as any).contextSize);
+      if (Number.isFinite(ctx) && ctx > 1) setProxyContextSize(Math.floor(ctx));
     }
+
+    const savedPersona = localStorage.getItem(PERSONA_KEY);
+    if (typeof savedPersona === "string") setPersonaText(savedPersona);
 
     (async () => {
       try {
@@ -694,9 +722,15 @@ export default function CharacterCreatorApp() {
         apiKey: proxyApiKey,
         model: proxyModel,
         maxTokens: proxyMaxTokens,
+        temperature: proxyTemperature,
+        contextSize: proxyContextSize,
       })
     );
-  }, [proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens]);
+  }, [proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize]);
+
+  useEffect(() => {
+    localStorage.setItem(PERSONA_KEY, personaText);
+  }, [personaText]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -794,6 +828,10 @@ export default function CharacterCreatorApp() {
 
     setGenError(null);
     setGenLoading(false);
+    setChatOpen(false);
+    setChatCharacter(null);
+    setChatMessages([]);
+    setChatInput("");
   }
 
   function addToList(
@@ -1043,6 +1081,73 @@ export default function CharacterCreatorApp() {
     );
   }
 
+  function startChatWithCharacter(c: Character) {
+    setChatCharacter(c);
+    setChatInput("");
+    setGenError(null);
+    const greeting = collapseWhitespace(
+      c.introMessages?.[
+        clampIndex(c.selectedIntroIndex || 0, Math.max(1, c.introMessages?.length || 1))
+      ] || ""
+    );
+    setChatMessages(greeting ? [{ role: "assistant", content: greeting }] : []);
+    setChatOpen(true);
+  }
+
+  function buildCharacterChatSystemPrompt(c: Character) {
+    const persona = collapseWhitespace(personaText);
+    return [
+      "You are roleplaying as the following character. Stay in-character and speak naturally.",
+      `Name: ${c.name}`,
+      `Gender: ${c.gender || ""}`,
+      `Age: ${c.age === "" ? "" : String(c.age)}`,
+      `Height: ${c.height || ""}`,
+      `Origins: ${c.origins || ""}`,
+      `Race: ${c.race || ""}`,
+      `Personalities: ${(c.personalities || []).join(", ")}`,
+      `Unique traits: ${(c.uniqueTraits || []).join(", ")}`,
+      `Backstory: ${(c.backstory || []).join(" | ")}`,
+      `Synopsis: ${c.synopsis || ""}`,
+      `System rules: ${c.systemRules || ""}`,
+      persona ? `User persona: ${persona}` : "User persona: (not provided)",
+      "Respond as the character in chat. Keep continuity with prior messages.",
+    ].join("\n");
+  }
+
+  async function sendChatMessage() {
+    if (!chatCharacter || genLoading) return;
+    const text = collapseWhitespace(chatInput);
+    if (!text) return;
+    setGenError(null);
+    const newHistory = [...chatMessages, { role: "user" as const, content: text }];
+    setChatMessages(newHistory);
+    setChatInput("");
+
+    const maxHistory = Math.max(2, Math.floor(proxyContextSize));
+    const trimmedHistory = newHistory.slice(-maxHistory);
+    const system = buildCharacterChatSystemPrompt(chatCharacter);
+    const transcript = trimmedHistory
+      .map((m) => `${m.role === "user" ? "User" : chatCharacter.name}: ${m.content}`)
+      .join("\n");
+    const user = `Conversation so far:
+${transcript}
+
+Write the character's next reply to the latest user message.`;
+
+    setGenLoading(true);
+    try {
+      const reply = await callProxyChatCompletion({
+        system,
+        user,
+      });
+      setChatMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Chat failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
   function getCharacterSummaryForLLM() {
     return [
       `Name: ${collapseWhitespace(name) || "(unnamed)"}`,
@@ -1143,7 +1248,7 @@ export default function CharacterCreatorApp() {
           { role: "system", content: args.system },
           { role: "user", content: args.user },
         ],
-        temperature: args.temperature ?? 0.9,
+        temperature: args.temperature ?? proxyTemperature,
         max_tokens: args.maxTokens ?? proxyMaxTokens,
       }),
     });
@@ -1455,6 +1560,9 @@ Return only the revised synopsis.`;
             <Button variant="secondary" onClick={() => setProxyOpen(true)}>
               <SlidersHorizontal className="h-4 w-4" /> Proxy
             </Button>
+            <Button variant="secondary" onClick={() => setPersonaOpen(true)}>
+              <UserRound className="h-4 w-4" /> Persona
+            </Button>
             <Button
               variant="secondary"
               onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
@@ -1570,6 +1678,16 @@ Return only the revised synopsis.`;
                 </div>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    const chatTarget = getDraftCharacter();
+                    if (!chatTarget) return alert("Please enter a character name before chatting.");
+                    startChatWithCharacter(chatTarget);
+                  }}
+                >
+                  <MessageCircle className="h-4 w-4" /> Chat
+                </Button>
                 <Button
                   variant="secondary"
                   className="w-full sm:w-auto lg:hidden"
@@ -2365,11 +2483,100 @@ Return only the revised synopsis.`;
                 inputMode="numeric"
               />
             </div>
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Temperature</div>
+              <Input
+                value={String(proxyTemperature)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "") return;
+                  const n = Number(v);
+                  if (Number.isFinite(n) && n >= 0 && n <= 2) setProxyTemperature(n);
+                }}
+                placeholder="e.g., 0.9"
+                inputMode="decimal"
+              />
+            </div>
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Context size</div>
+              <Input
+                value={String(proxyContextSize)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "") return;
+                  const n = Math.floor(Number(v));
+                  if (Number.isFinite(n) && n > 1) setProxyContextSize(n);
+                }}
+                placeholder="e.g., 12"
+                inputMode="numeric"
+              />
+              <div className="text-xs text-[hsl(var(--muted-foreground))]">Used as chat history message window.</div>
+            </div>
             <div className="flex justify-end">
               <Button variant="primary" onClick={() => setProxyOpen(false)}>
                 Done
               </Button>
             </div>
+          </div>
+        </Modal>
+
+        <Modal open={personaOpen} onClose={() => setPersonaOpen(false)} title="Your Persona" widthClass="max-w-2xl">
+          <div className="space-y-3">
+            <div className="text-sm text-[hsl(var(--muted-foreground))]">
+              Describe who you are / what you look like so characters can use this context in chat.
+            </div>
+            <Textarea
+              value={personaText}
+              onChange={(e) => setPersonaText(e.target.value)}
+              rows={8}
+              placeholder="Example: I am a 24-year-old detective with short black hair, calm voice, and a cautious personality..."
+            />
+            <div className="flex justify-end">
+              <Button variant="primary" onClick={() => setPersonaOpen(false)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal
+          open={chatOpen && !!chatCharacter}
+          onClose={() => setChatOpen(false)}
+          title={chatCharacter ? `Chat with ${chatCharacter.name}` : "Chat"}
+          widthClass="max-w-3xl"
+        >
+          <div className="space-y-3">
+            <div className="max-h-[52vh] space-y-2 overflow-auto rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
+              {chatMessages.length ? (
+                chatMessages.map((m, i) => (
+                  <div
+                    key={`${m.role}-${i}`}
+                    className={cn(
+                      "max-w-[90%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap",
+                      m.role === "user"
+                        ? "ml-auto border border-[hsl(var(--border))]"
+                        : "mr-auto bg-[hsl(var(--card))] border border-[hsl(var(--border))]"
+                    )}
+                  >
+                    {m.content}
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">No messages yet. Start chatting.</div>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Input
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => onEnterAdd(e, sendChatMessage)}
+                placeholder="Type your message…"
+              />
+              <Button variant="primary" onClick={sendChatMessage} disabled={!collapseWhitespace(chatInput) || genLoading}>
+                Send
+              </Button>
+            </div>
+            {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
           </div>
         </Modal>
 
@@ -2418,7 +2625,7 @@ Return only the revised synopsis.`;
                 <div className="text-xs text-[hsl(var(--muted-foreground))]">
                   Updated {new Date(previewChar.updatedAt).toLocaleString()}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     variant="secondary"
                     onClick={() => {
@@ -2429,6 +2636,12 @@ Return only the revised synopsis.`;
                     }}
                   >
                     <Download className="h-4 w-4" /> TXT
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => startChatWithCharacter(previewChar)}
+                  >
+                    <MessageCircle className="h-4 w-4" /> Chat
                   </Button>
                   <Button
                     variant="primary"
