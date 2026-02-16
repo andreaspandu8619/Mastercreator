@@ -589,6 +589,10 @@ export default function CharacterCreatorApp() {
   const [introIndex, setIntroIndex] = useState(0);
   const [introPrompt, setIntroPrompt] = useState("");
 
+  const [backstoryRevisionFeedback, setBackstoryRevisionFeedback] = useState("");
+  const [introRevisionFeedback, setIntroRevisionFeedback] = useState("");
+  const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
+
   const [genLoading, setGenLoading] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [proxyProgress, setProxyProgress] = useState(0);
@@ -783,6 +787,10 @@ export default function CharacterCreatorApp() {
     setIntroMessages([""]);
     setIntroIndex(0);
     setIntroPrompt("");
+
+    setBackstoryRevisionFeedback("");
+    setIntroRevisionFeedback("");
+    setSynopsisRevisionFeedback("");
 
     setGenError(null);
     setGenLoading(false);
@@ -1021,6 +1029,10 @@ export default function CharacterCreatorApp() {
     setIntroIndex(clampIndex(c.selectedIntroIndex ?? 0, im.length));
     setIntroPrompt("");
 
+    setBackstoryRevisionFeedback("");
+    setIntroRevisionFeedback("");
+    setSynopsisRevisionFeedback("");
+
     setGenError(null);
     setGenLoading(false);
 
@@ -1046,6 +1058,21 @@ export default function CharacterCreatorApp() {
       `Synopsis: ${collapseWhitespace(synopsis)}`,
     ].join("\n");
   }
+
+  function getOverviewAndSystemContextForRevision() {
+    return [
+      `Name: ${collapseWhitespace(name) || "(unnamed)"}`,
+      `Gender: ${gender || ""}`,
+      `Age: ${age === "" ? "" : String(age)}`,
+      `Height: ${collapseWhitespace(height)}`,
+      `Origins: ${collapseWhitespace(origins)}`,
+      `Race: ${getFinalRace()}`,
+      `Personalities: ${(personalities || []).join(", ")}`,
+      `Unique traits: ${(traits || []).join(", ")}`,
+      `System rules: ${collapseWhitespace(systemRules)}`,
+    ].join("\n");
+  }
+
 
   function parseGeneratedBackstoryEntries(text: string) {
     const clean = String(text || "").trim();
@@ -1221,6 +1248,143 @@ export default function CharacterCreatorApp() {
       setBackstory(generated);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  async function reviseBackstoryFromFeedback() {
+    setGenError(null);
+    const feedback = collapseWhitespace(backstoryRevisionFeedback);
+    if (!backstory.length) {
+      setGenError("Generate or add backstory entries before revising.");
+      return;
+    }
+    if (!feedback) {
+      setGenError("Write feedback for how to revise the backstory.");
+      return;
+    }
+
+    const system =
+      "You revise a roleplay backstory timeline based on user feedback. Keep chronology coherent, preserve established facts unless feedback asks to change them, and improve detail/clarity. You may add NEW entries when needed to satisfy feedback and continuity. Return valid JSON array only: [\"entry 1\", \"entry 2\", ...].";
+
+    const user = `Overview and system context:
+${getOverviewAndSystemContextForRevision()}
+
+Current backstory entries:
+${backstory
+      .map((entry, i) => `${i + 1}. ${entry}`)
+      .join("\n")}
+
+User revision feedback:
+${feedback}
+
+Revise the backstory entries now.`;
+
+    setGenLoading(true);
+    try {
+      const text = await callProxyChatCompletion({
+        system,
+        user,
+        maxTokens: Math.min(1200, Math.max(300, proxyMaxTokens * 3)),
+        temperature: 0.8,
+      });
+      const revised = parseGeneratedBackstoryEntries(text);
+      if (!revised.length) throw new Error("The model did not return usable revised backstory entries.");
+      setBackstory(revised);
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Revision failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  async function reviseSelectedIntro() {
+    setGenError(null);
+    const feedback = collapseWhitespace(introRevisionFeedback);
+    const currentIntro =
+      introMessages[clampIndex(introIndex, Math.max(1, introMessages.length))] || "";
+
+    if (!collapseWhitespace(currentIntro)) {
+      setGenError("Generate or write this intro before revising it.");
+      return;
+    }
+    if (!feedback) {
+      setGenError("Write feedback for how to revise this intro.");
+      return;
+    }
+
+    const system =
+      "You revise exactly ONE roleplay intro message based on feedback. Only use overview/system context and the provided current intro. Do not use other intros. Keep it in-character and ready to use. Return ONLY the revised intro text.";
+
+    const user = `Overview and system context:
+${getOverviewAndSystemContextForRevision()}
+
+Current intro message (only this one should be revised):
+${currentIntro}
+
+User revision feedback:
+${feedback}
+
+Return only the revised intro message.`;
+
+    setGenLoading(true);
+    try {
+      const text = await callProxyChatCompletion({
+        system,
+        user,
+        temperature: 0.9,
+      });
+      setIntroMessages((prev) => {
+        const base = prev.length ? [...prev] : [""];
+        const i = clampIndex(introIndex, base.length);
+        base[i] = text;
+        return base;
+      });
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Revision failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  async function reviseSynopsis() {
+    setGenError(null);
+    const feedback = collapseWhitespace(synopsisRevisionFeedback);
+    if (!collapseWhitespace(synopsis)) {
+      setGenError("Generate or write a synopsis before revising it.");
+      return;
+    }
+    if (!feedback) {
+      setGenError("Write feedback for how to revise the synopsis.");
+      return;
+    }
+
+    const system =
+      "You revise a roleplay character synopsis based on user feedback. Only use the provided overview/system context and current synopsis. Keep it cohesive, vivid, and roleplay-oriented. Return ONLY the revised synopsis text.";
+
+    const user = `Overview and system context:
+${getOverviewAndSystemContextForRevision()}
+
+Current synopsis:
+${synopsis}
+
+User revision feedback:
+${feedback}
+
+Return only the revised synopsis.`;
+
+    setGenLoading(true);
+    try {
+      const text = await callProxyChatCompletion({
+        system,
+        user,
+        maxTokens: Math.min(280, Math.max(80, proxyMaxTokens)),
+        temperature: 0.9,
+      });
+      setSynopsis(text);
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Revision failed.");
     } finally {
       setGenLoading(false);
     }
@@ -1743,7 +1907,7 @@ export default function CharacterCreatorApp() {
                           Add
                         </Button>
                       </div>
-                      <div className="flex justify-end">
+                      <div className="flex flex-wrap justify-end gap-2">
                         <Button
                           variant="secondary"
                           type="button"
@@ -1752,6 +1916,28 @@ export default function CharacterCreatorApp() {
                         >
                           <Sparkles className="h-4 w-4" /> Generate detailed backstory
                         </Button>
+                      </div>
+                      <div className="space-y-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
+                        <div className="text-sm font-medium">Revise generated backstory</div>
+                        <Textarea
+                          value={backstoryRevisionFeedback}
+                          onChange={(e) => setBackstoryRevisionFeedback(e.target.value)}
+                          rows={3}
+                          placeholder="Give feedback for revision (e.g., make it longer, add richer dialogue and scene details)…"
+                        />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            variant="secondary"
+                            type="button"
+                            onClick={reviseBackstoryFromFeedback}
+                            disabled={!backstory.length || !collapseWhitespace(backstoryRevisionFeedback) || genLoading}
+                          >
+                            <Sparkles className="h-4 w-4" /> Revise backstory
+                          </Button>
+                          <div className="text-xs text-[hsl(var(--muted-foreground))]">
+                            Revises only this output using overview + system context.
+                          </div>
+                        </div>
                       </div>
                       <div className="space-y-2">
                         {backstory.length ? (
@@ -1897,6 +2083,23 @@ export default function CharacterCreatorApp() {
                             Only affects the selected intro.
                           </div>
                         </div>
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium">Revise selected intro with feedback</div>
+                          <Textarea
+                            value={introRevisionFeedback}
+                            onChange={(e) => setIntroRevisionFeedback(e.target.value)}
+                            rows={3}
+                            placeholder="Feedback for this intro only (e.g., make it longer and add more descriptive dialogue)…"
+                          />
+                          <Button
+                            variant="secondary"
+                            type="button"
+                            onClick={reviseSelectedIntro}
+                            disabled={!collapseWhitespace(introRevisionFeedback) || genLoading}
+                          >
+                            <Sparkles className="h-4 w-4" /> Revise this intro
+                          </Button>
+                        </div>
                         {genError ? (
                           <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div>
                         ) : null}
@@ -1928,6 +2131,23 @@ export default function CharacterCreatorApp() {
                         rows={10}
                         placeholder="Synopsis…"
                       />
+                      <div className="space-y-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
+                        <div className="text-sm font-medium">Revise synopsis with feedback</div>
+                        <Textarea
+                          value={synopsisRevisionFeedback}
+                          onChange={(e) => setSynopsisRevisionFeedback(e.target.value)}
+                          rows={3}
+                          placeholder="Feedback for synopsis revision (e.g., longer narration, richer dialogue cues, stronger tension)…"
+                        />
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          onClick={reviseSynopsis}
+                          disabled={!collapseWhitespace(synopsisRevisionFeedback) || genLoading}
+                        >
+                          <Sparkles className="h-4 w-4" /> Revise synopsis
+                        </Button>
+                      </div>
                       {genError ? (
                         <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div>
                       ) : null}
