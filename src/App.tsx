@@ -2599,7 +2599,7 @@ Return only the revised synopsis.`;
             </div>
           </div>
         ) : page === "storywriting" ? (
-          <div className="mt-6 space-y-4" ref={storywritingDndRef}>
+          <div className="relative mt-6 space-y-4" ref={storywritingDndRef}>
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xl font-semibold">Storywriting</div>
