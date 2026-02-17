@@ -3095,10 +3095,10 @@ Return only the revised synopsis.`;
 
                 <div
                   ref={relationshipDeckRef}
-                  className="absolute inset-x-6 bottom-0 z-20 h-44 rounded-t-2xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 px-3 pb-3 pt-1"
+                  className="absolute inset-x-6 bottom-0 z-20 h-44 overflow-visible rounded-t-2xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 px-3 pb-3 pt-1"
                   onDragOver={(e) => e.preventDefault()}
                 >
-                  <div className="flex gap-2 overflow-x-auto overflow-y-visible pt-1">
+                  <div className="flex gap-2 overflow-x-auto pb-2 pt-14">
                     {activeStory.characterIds
                       .filter((id) => !activeStory.boardNodes.some((n) => n.characterId === id))
                       .map((id) => {
@@ -3111,7 +3111,7 @@ Return only the revised synopsis.`;
                               if (e.button !== 0) return;
                               beginRelationshipCardDrag(id, "deck", e);
                             }}
-                            className="relative -mt-16 shrink-0 w-44 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-1 transition-transform duration-200 hover:-translate-y-3"
+                            className="relative z-10 shrink-0 w-44 -translate-y-10 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-1 transition-transform duration-200 hover:-translate-y-14"
                           >
                             <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
                               {c.imageDataUrl ? (
