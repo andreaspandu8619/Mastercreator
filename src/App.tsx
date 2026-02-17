@@ -3172,7 +3172,7 @@ Return only the revised synopsis.`;
                 <div
                   ref={relationshipDeckRef}
                   className={cn(
-                    "pointer-events-none absolute inset-x-0 bottom-0 z-10 h-52 rounded-t-3xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))/0.58] transition-colors duration-200",
+                    "pointer-events-none absolute inset-x-0 bottom-0 z-10 h-72 rounded-t-3xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))/0.58] transition-colors duration-200",
                     deckDropHover && "bg-[hsl(var(--hover-accent))/0.22]"
                   )}
                 >
@@ -3181,8 +3181,9 @@ Return only the revised synopsis.`;
                   </div>
                 </div>
 
-                <div className="absolute inset-x-6 bottom-4 z-20 overflow-visible">
-                  <div className="flex items-end gap-2 overflow-x-auto overflow-y-visible pb-1 pt-1">
+                <div className="absolute inset-x-6 bottom-3 z-20">
+                  <div className="overflow-x-auto pb-2">
+                    <div className="flex items-end gap-2 pt-6">
                     {activeStory.characterIds
                       .filter((id) => !activeStory.boardNodes.some((n) => n.characterId === id))
                       .map((id) => {
@@ -3195,7 +3196,7 @@ Return only the revised synopsis.`;
                               if (e.button !== 0) return;
                               beginRelationshipCardDrag(id, "deck", e);
                             }}
-                            className="relative z-10 shrink-0 w-44 -translate-y-24 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-1 transition-transform duration-200 hover:-translate-y-28"
+                            className="relative z-10 shrink-0 w-44 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-1 transition-transform duration-200 hover:-translate-y-3"
                           >
                             <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
                               {c.imageDataUrl ? (
@@ -3208,6 +3209,7 @@ Return only the revised synopsis.`;
                           </div>
                         );
                       })}
+                    </div>
                   </div>
                 </div>
 
