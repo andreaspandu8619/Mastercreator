@@ -24,7 +24,7 @@ import {
 
 type ThemeMode = "light" | "dark";
 type Gender = "Male" | "Female" | "";
-type Page = "library" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board";
+type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board";
 type CreateTab = "overview" | "definition" | "system" | "intro" | "synopsis";
 type StoryTab = "scenario" | "relationships" | "plot_points";
 
@@ -2551,9 +2551,14 @@ Return only the revised synopsis.`;
           <div className="mt-6 space-y-4">
             <div className="flex items-center justify-between gap-2">
               <div className="text-xl font-semibold">My Stories</div>
-              <Button variant="secondary" onClick={() => navigateTo("library")}>
-                <ArrowLeft className="h-4 w-4" /> Dashboard
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="primary" onClick={() => navigateTo("storywriting")}>
+                  <Plus className="h-4 w-4" /> Create
+                </Button>
+                <Button variant="secondary" onClick={() => navigateTo("library")}>
+                  <ArrowLeft className="h-4 w-4" /> Dashboard
+                </Button>
+              </div>
             </div>
             <div className="space-y-2">
               {stories.map((s) => (
@@ -3115,7 +3120,7 @@ Return only the revised synopsis.`;
                 <Button variant="primary" className="w-full justify-center py-3" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}>
                   <Plus className="h-4 w-4" /> Create a new character
                 </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => setQuery("")}>View characters</Button>
+                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("characters")}>View characters</Button>
               </div>
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                 <Button variant="primary" className="w-full justify-center py-3" onClick={() => navigateTo("storywriting")}>
@@ -3130,20 +3135,20 @@ Return only the revised synopsis.`;
               <button
                 type="button"
                 onClick={() => latestCharacter && setPreviewId(latestCharacter.id)}
-                className="group relative h-36 w-full overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--hover-accent))/0.18] text-left"
+                className="group relative h-64 w-full overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--hover-accent))/0.38] text-left"
               >
                 {latestCharacter?.imageDataUrl ? (
-                  <img src={latestCharacter.imageDataUrl} alt={latestCharacter.name} className="absolute inset-y-0 left-0 h-full w-1/2 object-cover opacity-35 transition-all duration-300 group-hover:scale-110 group-hover:opacity-100" />
+                  <img src={latestCharacter.imageDataUrl} alt={latestCharacter.name} className="absolute inset-y-0 left-0 h-full w-[58%] object-cover object-top opacity-35 transition-all duration-300 group-hover:scale-110 group-hover:opacity-100" />
                 ) : null}
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent to-[hsl(var(--card))]" />
-                <div className="relative z-10 p-4">
-                  <div className="text-lg font-semibold">{latestCharacter?.name || "No character yet"}</div>
-                  <div className="text-sm text-[hsl(var(--muted-foreground))]">Continue your last character</div>
+                <div className="absolute inset-0 bg-gradient-to-r from-[hsl(var(--hover-accent))/0.02] via-[hsl(var(--hover-accent))/0.68] to-[hsl(var(--hover-accent))/0.98]" />
+                <div className="relative z-10 p-5">
+                  <div className="text-xl font-semibold">{latestCharacter?.name || "No character yet"}</div>
+                  <div className="text-sm text-[hsl(var(--foreground))/0.8]">Continue your last character</div>
                 </div>
-                <div className="absolute inset-y-0 right-0 w-24 translate-x-14 bg-[hsl(var(--foreground))/0.12] transition-transform duration-300 group-hover:translate-x-0">
+                <div className="absolute inset-y-0 right-0 w-24 translate-x-full bg-white transition-transform duration-300 group-hover:translate-x-0">
                   <div className="flex h-full items-center justify-center">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--card))]">
-                      <ArrowLeft className="h-4 w-4 rotate-180 animate-[spin_1.2s_linear_1]" />
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-white/90">
+                      <ArrowLeft className="h-4 w-4 rotate-180 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-hover:animate-[spin_0.8s_ease-out_1]" />
                     </div>
                   </div>
                 </div>
@@ -3159,26 +3164,28 @@ Return only the revised synopsis.`;
                   setActiveStoryId(latestStory.id);
                   navigateTo("story_editor");
                 }}
-                className="group relative h-36 w-full overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--hover-accent))/0.18] text-left"
+                className="group relative h-64 w-full overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--hover-accent))/0.38] text-left"
               >
                 {latestStory?.imageDataUrl ? (
-                  <img src={latestStory.imageDataUrl} alt={latestStory.title} className="absolute inset-y-0 left-0 h-full w-1/2 object-cover opacity-35 transition-all duration-300 group-hover:scale-110 group-hover:opacity-100" />
+                  <img src={latestStory.imageDataUrl} alt={latestStory.title} className="absolute inset-y-0 left-0 h-full w-[58%] object-cover object-top opacity-35 transition-all duration-300 group-hover:scale-110 group-hover:opacity-100" />
                 ) : null}
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent to-[hsl(var(--card))]" />
-                <div className="relative z-10 p-4">
-                  <div className="text-lg font-semibold">{latestStory?.title || "No story yet"}</div>
-                  <div className="text-sm text-[hsl(var(--muted-foreground))]">Continue your last story</div>
+                <div className="absolute inset-0 bg-gradient-to-r from-[hsl(var(--hover-accent))/0.02] via-[hsl(var(--hover-accent))/0.68] to-[hsl(var(--hover-accent))/0.98]" />
+                <div className="relative z-10 p-5">
+                  <div className="text-xl font-semibold">{latestStory?.title || "No story yet"}</div>
+                  <div className="text-sm text-[hsl(var(--foreground))/0.8]">Continue your last story</div>
                 </div>
-                <div className="absolute inset-y-0 right-0 w-24 translate-x-14 bg-[hsl(var(--foreground))/0.12] transition-transform duration-300 group-hover:translate-x-0">
+                <div className="absolute inset-y-0 right-0 w-24 translate-x-full bg-white transition-transform duration-300 group-hover:translate-x-0">
                   <div className="flex h-full items-center justify-center">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--card))]">
-                      <ArrowLeft className="h-4 w-4 rotate-180 animate-[spin_1.2s_linear_1]" />
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-white/90">
+                      <ArrowLeft className="h-4 w-4 rotate-180 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-hover:animate-[spin_0.8s_ease-out_1]" />
                     </div>
                   </div>
                 </div>
               </button>
             </div>
-
+          </div>
+        ) : page === "characters" ? (
+          <div className="mt-6 space-y-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="relative w-full md:max-w-xl">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-[hsl(var(--muted-foreground))]" />
@@ -3189,13 +3196,15 @@ Return only the revised synopsis.`;
                   className="pl-9"
                 />
               </div>
+              <div className="flex justify-end">
+                <Button variant="primary" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}>
+                  <Plus className="h-4 w-4" /> Create
+                </Button>
+              </div>
             </div>
-
             {filteredCharacters.length === 0 ? (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-6 text-sm text-[hsl(var(--muted-foreground))]">
-                {characters.length === 0
-                  ? "No characters yet. Click Create to make your first one."
-                  : "No matches for your search."}
+                {characters.length === 0 ? "No characters yet. Click Create to make your first one." : "No matches for your search."}
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -3211,11 +3220,7 @@ Return only the revised synopsis.`;
                   >
                     <div className="relative aspect-[3/4] w-full">
                       {c.imageDataUrl ? (
-                        <img
-                          src={c.imageDataUrl}
-                          alt={c.name}
-                          className="absolute inset-0 h-full w-full object-cover object-top"
-                        />
+                        <img src={c.imageDataUrl} alt={c.name} className="absolute inset-0 h-full w-full object-cover object-top" />
                       ) : (
                         <div className="absolute inset-0 flex items-center justify-center bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))]">
                           <span className="text-sm">No image</span>
@@ -3225,12 +3230,8 @@ Return only the revised synopsis.`;
                       <div className="absolute bottom-0 left-0 right-0 p-4">
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0">
-                            <div className="truncate text-base font-semibold text-[hsl(var(--foreground))]">
-                              {c.name}
-                            </div>
-                            <div className={cn("text-sm", genderColorClass(c.gender))}>
-                              {c.gender || "—"}
-                            </div>
+                            <div className="truncate text-base font-semibold text-[hsl(var(--foreground))]">{c.name}</div>
+                            <div className={cn("text-sm", genderColorClass(c.gender))}>{c.gender || "—"}</div>
                           </div>
                           {c.race ? <Badge className="shrink-0">{c.race}</Badge> : null}
                         </div>
