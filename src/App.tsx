@@ -689,6 +689,7 @@ export default function CharacterCreatorApp() {
   const [storyRelAlignment, setStoryRelAlignment] = useState("Neutral");
   const [storyRelType, setStoryRelType] = useState("Platonic");
   const [storyRelDetails, setStoryRelDetails] = useState("");
+  const [pendingRelationshipEdge, setPendingRelationshipEdge] = useState<{ fromCharacterId: string; toCharacterId: string } | null>(null);
   const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
   const [connectingFromId, setConnectingFromId] = useState<string | null>(null);
   const [connectingPointer, setConnectingPointer] = useState<{ x: number; y: number } | null>(null);
@@ -1523,7 +1524,13 @@ export default function CharacterCreatorApp() {
     setStoryRelAlignment("Neutral");
     setStoryRelType("Platonic");
     setStoryRelDetails("");
+    setPendingRelationshipEdge({ fromCharacterId: fromId, toCharacterId: toId });
     setStoryRelationshipEditorOpen(true);
+  }
+
+  function closeRelationshipEditor() {
+    setStoryRelationshipEditorOpen(false);
+    setPendingRelationshipEdge(null);
   }
 
   function getBoardNodeCenter(characterId: string, side: "from" | "to") {
@@ -1599,6 +1606,7 @@ export default function CharacterCreatorApp() {
     updateStory(activeStory.id, {
       relationships: [rel, ...activeStory.relationships],
     });
+    setPendingRelationshipEdge(null);
     setStoryRelationshipEditorOpen(false);
   }
 
@@ -2502,7 +2510,7 @@ Return only the revised synopsis.`;
                   onClick={() => {
                     setStoryTab(id as StoryTab);
                     if (id === "relationships") {
-                      setStoryRelationshipEditorOpen(false);
+                      closeRelationshipEditor();
                       setSelectedRelationshipId(null);
                     }
                   }}
@@ -2617,7 +2625,7 @@ Return only the revised synopsis.`;
                     </div>
                     <div className="flex gap-2">
                       <Button variant="primary" onClick={saveRelationshipEdge}>Save relation</Button>
-                      <Button variant="secondary" onClick={() => setStoryRelationshipEditorOpen(false)}>Close</Button>
+                      <Button variant="secondary" onClick={closeRelationshipEditor}>Close</Button>
                     </div>
                   </div>
                 </div>
@@ -2757,6 +2765,22 @@ Return only the revised synopsis.`;
                         />
                       );
                     })}
+                    {pendingRelationshipEdge ? (() => {
+                      const from = getBoardNodeCenter(pendingRelationshipEdge.fromCharacterId, "to");
+                      const to = getBoardNodeCenter(pendingRelationshipEdge.toCharacterId, "from");
+                      if (!from || !to) return null;
+                      const c1x = from.x + 120;
+                      const c2x = to.x - 120;
+                      return (
+                        <path
+                          d={`M ${from.x} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${to.x} ${to.y}`}
+                          stroke="hsl(var(--hover-accent))"
+                          strokeWidth={3}
+                          fill="none"
+                          strokeDasharray="8 5"
+                        />
+                      );
+                    })() : null}
                     {connectingFromId && connectingPointer ? (() => {
                       const from = getBoardNodeCenter(connectingFromId, "to");
                       if (!from) return null;
@@ -2918,6 +2942,54 @@ Return only the revised synopsis.`;
                       })}
                   </div>
                 </div>
+
+                {storyRelationshipEditorOpen ? (
+                  <div className="fixed right-0 top-0 z-40 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                    <div className="text-sm font-semibold">Relationship Editor</div>
+                    <div className="mt-3 space-y-3">
+                      <div>
+                        <div className="text-xs">From</div>
+                        <Select value={storyRelFromId} onChange={(e) => setStoryRelFromId(e.target.value)}>
+                          <option value="">Select character…</option>
+                          {activeStory.characterIds.map((id) => {
+                            const c = characters.find((x) => x.id === id);
+                            return c ? <option key={id} value={id}>{c.name}</option> : null;
+                          })}
+                        </Select>
+                      </div>
+                      <div>
+                        <div className="text-xs">To</div>
+                        <Select value={storyRelToId} onChange={(e) => setStoryRelToId(e.target.value)}>
+                          <option value="">Select character…</option>
+                          {activeStory.characterIds.map((id) => {
+                            const c = characters.find((x) => x.id === id);
+                            return c ? <option key={id} value={id}>{c.name}</option> : null;
+                          })}
+                        </Select>
+                      </div>
+                      <div>
+                        <div className="text-xs">Alignment</div>
+                        <Select value={storyRelAlignment} onChange={(e) => setStoryRelAlignment(e.target.value)}>
+                          {REL_ALIGNMENTS.map((a) => <option key={a} value={a}>{a}</option>)}
+                        </Select>
+                      </div>
+                      <div>
+                        <div className="text-xs">Relationship</div>
+                        <Select value={storyRelType} onChange={(e) => setStoryRelType(e.target.value)}>
+                          {REL_TYPES.map((a) => <option key={a} value={a}>{a}</option>)}
+                        </Select>
+                      </div>
+                      <div>
+                        <div className="text-xs">Details</div>
+                        <Textarea value={storyRelDetails} onChange={(e) => setStoryRelDetails(e.target.value)} rows={4} />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button variant="primary" onClick={saveRelationshipEdge}>Save relation</Button>
+                        <Button variant="secondary" onClick={closeRelationshipEditor}>Close</Button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           )
