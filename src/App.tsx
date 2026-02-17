@@ -682,7 +682,6 @@ export default function CharacterCreatorApp() {
   const [storyScenarioPrompt, setStoryScenarioPrompt] = useState("");
   const [storyScenarioRevision, setStoryScenarioRevision] = useState("");
   const [storyPlotPointInput, setStoryPlotPointInput] = useState("");
-  const [storyPlotPointPrompt, setStoryPlotPointPrompt] = useState("");
   const [storyPlotPointRevision, setStoryPlotPointRevision] = useState("");
   const [storyRelationshipEditorOpen, setStoryRelationshipEditorOpen] = useState(false);
   const [storyRelFromId, setStoryRelFromId] = useState("");
@@ -690,6 +689,11 @@ export default function CharacterCreatorApp() {
   const [storyRelAlignment, setStoryRelAlignment] = useState("Neutral");
   const [storyRelType, setStoryRelType] = useState("Platonic");
   const [storyRelDetails, setStoryRelDetails] = useState("");
+  const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
+  const [connectingFromId, setConnectingFromId] = useState<string | null>(null);
+  const [connectingPointer, setConnectingPointer] = useState<{ x: number; y: number } | null>(null);
+  const [storyDragCharacterId, setStoryDragCharacterId] = useState<string | null>(null);
+  const [saveToastOpen, setSaveToastOpen] = useState(false);
   const [showCreatePreview, setShowCreatePreview] = useState(true);
   const [createPreviewOpen, setCreatePreviewOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
@@ -1350,6 +1354,8 @@ export default function CharacterCreatorApp() {
           : s
       )
     );
+    setSaveToastOpen(true);
+    window.setTimeout(() => setSaveToastOpen(false), 1400);
   }
 
   function proceedStoryDraft() {
@@ -1455,6 +1461,35 @@ export default function CharacterCreatorApp() {
     setStoryRelType("Platonic");
     setStoryRelDetails("");
     setStoryRelationshipEditorOpen(true);
+  }
+
+  function getBoardNodeCenter(characterId: string, side: "from" | "to") {
+    if (!activeStory) return null;
+    const node = activeStory.boardNodes.find((n) => n.characterId === characterId);
+    if (!node) return null;
+    const baseX = node.x;
+    const baseY = node.y;
+    return {
+      x: side === "from" ? baseX + 8 : baseX + 120,
+      y: baseY + 10,
+    };
+  }
+
+  function beginConnectionDrag(characterId: string, e: React.MouseEvent | React.TouchEvent) {
+    e.stopPropagation();
+    setConnectingFromId(characterId);
+  }
+
+  function finishConnectionDrag(targetCharacterId: string, e: React.MouseEvent | React.TouchEvent) {
+    e.stopPropagation();
+    if (!connectingFromId || connectingFromId === targetCharacterId) {
+      setConnectingFromId(null);
+      setConnectingPointer(null);
+      return;
+    }
+    openRelationshipEditor(connectingFromId, targetCharacterId);
+    setConnectingFromId(null);
+    setConnectingPointer(null);
   }
 
   function saveRelationshipEdge() {
@@ -1965,9 +2000,8 @@ Return only the revised synopsis.`;
 
   async function generateStoryPlotPoints() {
     if (!activeStory) return;
-    const prompt = collapseWhitespace(storyPlotPointPrompt);
-    if (!prompt) {
-      setGenError("Write a plot point prompt first.");
+    if (!activeStory.plotPoints.length) {
+      setGenError("Add at least one plot point first.");
       return;
     }
     setGenError(null);
@@ -1975,13 +2009,16 @@ Return only the revised synopsis.`;
     try {
       const out = await callProxyChatCompletion({
         system:
-          "Generate detailed plot point list. Return JSON array of strings only.",
-        user: `Prompt: ${prompt}`,
+          "Expand plot points into more detailed entries, each max 30 words. Return JSON array of strings only.",
+        user: `Current plot points:\n${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}`,
         maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
       });
       const items = parseGeneratedBackstoryEntries(out);
       if (!items.length) throw new Error("No valid plot points returned.");
-      updateStory(activeStory.id, { plotPoints: items });
+      updateStory(
+        activeStory.id,
+        { plotPoints: items.map((x) => x.split(/\s+/).slice(0, 30).join(" ")) }
+      );
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Plot point generation failed.");
     } finally {
@@ -2000,13 +2037,16 @@ Return only the revised synopsis.`;
     setGenLoading(true);
     try {
       const out = await callProxyChatCompletion({
-        system: "Revise plot point list. Return JSON array of strings only.",
+        system: "Revise plot point list with each entry max 30 words. Return JSON array of strings only.",
         user: `Current points:\n${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}\n\nFeedback:\n${feedback}`,
         maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
       });
       const items = parseGeneratedBackstoryEntries(out);
       if (!items.length) throw new Error("No valid revised plot points returned.");
-      updateStory(activeStory.id, { plotPoints: items });
+      updateStory(
+        activeStory.id,
+        { plotPoints: items.map((x) => x.split(/\s+/).slice(0, 30).join(" ")) }
+      );
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Plot point revision failed.");
     } finally {
@@ -2238,11 +2278,24 @@ Return only the revised synopsis.`;
                       <div
                         key={c.id}
                         draggable
-                        onDragStart={(e) => e.dataTransfer.setData("text/character-id", c.id)}
-                        className="clickable rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3"
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/character-id", c.id);
+                          setStoryDragCharacterId(c.id);
+                        }}
+                        onDragEnd={() => setStoryDragCharacterId(null)}
+                        className={cn(
+                          "clickable rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-2 transition-all duration-200",
+                          storyDragCharacterId === c.id && "scale-95 opacity-70"
+                        )}
                       >
-                        <div className="text-sm font-medium">{c.name}</div>
-                        <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">Drag to story field</div>
+                        <div className="relative aspect-[3/4] w-full overflow-hidden rounded-lg border border-[hsl(var(--border))]">
+                          {c.imageDataUrl ? (
+                            <img src={c.imageDataUrl} alt={c.name} className="absolute inset-0 h-full w-full object-cover object-top" />
+                          ) : (
+                            <div className="absolute inset-0 flex items-center justify-center bg-[hsl(var(--muted))] text-xs text-[hsl(var(--muted-foreground))]">No image</div>
+                          )}
+                          <div className="absolute inset-x-0 top-0 bg-black/45 px-2 py-1 text-xs font-semibold text-white">{c.name}</div>
+                        </div>
                       </div>
                     ))}
                     {characters.length === 0 ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No characters available.</div> : null}
@@ -2265,9 +2318,15 @@ Return only the revised synopsis.`;
                     const c = characters.find((x) => x.id === id);
                     if (!c) return null;
                     return (
-                      <div key={id} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
-                        <div className="text-sm font-medium">{c.name}</div>
-                        <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">In this story draft</div>
+                      <div key={id} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-2 transition-all duration-200">
+                        <div className="relative aspect-[3/4] w-full overflow-hidden rounded-lg border border-[hsl(var(--border))]">
+                          {c.imageDataUrl ? (
+                            <img src={c.imageDataUrl} alt={c.name} className="absolute inset-0 h-full w-full object-cover object-top" />
+                          ) : (
+                            <div className="absolute inset-0 flex items-center justify-center bg-[hsl(var(--muted))] text-xs text-[hsl(var(--muted-foreground))]">No image</div>
+                          )}
+                          <div className="absolute inset-x-0 top-0 bg-black/45 px-2 py-1 text-xs font-semibold text-white">{c.name}</div>
+                        </div>
                         <Button className="mt-2 w-full" variant="secondary" onClick={() => toggleStoryDraftCharacter(id)}>Remove</Button>
                       </div>
                     );
@@ -2377,11 +2436,60 @@ Return only the revised synopsis.`;
                 </div>
               </div>
             ) : storyTab === "relationships" ? (
-              <div className="relative min-h-[72vh] overflow-hidden rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-0">
-                <div className="h-full min-h-[72vh] w-full rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))]"
+              <div className="fixed inset-0 z-30 bg-[hsl(var(--background))] p-3 md:p-6">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-sm text-[hsl(var(--muted-foreground))]">Drag cards and connect To → From dots</div>
+                  <Button variant="secondary" onClick={() => setPage("story_editor")}>Close full board</Button>
+                </div>
+                <div className="relative h-[calc(100vh-86px)] w-full overflow-hidden rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-0">
+                <div
+                  className="h-full w-full rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))]"
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={dropCharacterToRelationshipBoard}
+                  onMouseMove={(e) => {
+                    if (!connectingFromId) return;
+                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                    setConnectingPointer({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                  }}
+                  onMouseUp={() => {
+                    if (connectingFromId) {
+                      setConnectingFromId(null);
+                      setConnectingPointer(null);
+                    }
+                  }}
                 >
+                  <svg className="pointer-events-none absolute inset-0 h-full w-full">
+                    {activeStory.relationships.map((r) => {
+                      const from = getBoardNodeCenter(r.fromCharacterId, "to");
+                      const to = getBoardNodeCenter(r.toCharacterId, "from");
+                      if (!from || !to) return null;
+                      const c1x = from.x + 80;
+                      const c2x = to.x - 80;
+                      const selected = selectedRelationshipId === r.id;
+                      return (
+                        <path
+                          key={r.id}
+                          d={`M ${from.x} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${to.x} ${to.y}`}
+                          stroke={selected ? "hsl(var(--hover-accent))" : "hsl(var(--muted-foreground))"}
+                          strokeWidth={selected ? 3 : 2}
+                          fill="none"
+                        />
+                      );
+                    })}
+                    {connectingFromId && connectingPointer ? (() => {
+                      const from = getBoardNodeCenter(connectingFromId, "to");
+                      if (!from) return null;
+                      return (
+                        <path
+                          d={`M ${from.x} ${from.y} C ${from.x + 80} ${from.y}, ${connectingPointer.x - 80} ${connectingPointer.y}, ${connectingPointer.x} ${connectingPointer.y}`}
+                          stroke="hsl(var(--hover-accent))"
+                          strokeWidth={2}
+                          fill="none"
+                          strokeDasharray="6 4"
+                        />
+                      );
+                    })() : null}
+                  </svg>
                   {activeStory.boardNodes.map((n) => {
                     const c = characters.find((x) => x.id === n.characterId);
                     if (!c) return null;
@@ -2389,16 +2497,40 @@ Return only the revised synopsis.`;
                       <div
                         key={n.characterId}
                         draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/character-id", n.characterId);
+                          setStoryDragCharacterId(n.characterId);
+                        }}
                         onDragEnd={(e) => {
                           const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
                           upsertBoardNode(n.characterId, e.clientX - rect.left - 60, e.clientY - rect.top - 28);
+                          setStoryDragCharacterId(null);
                         }}
-                        className="absolute w-32 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 text-sm shadow"
+                        className={cn(
+                          "absolute w-32 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow transition-all duration-200",
+                          storyDragCharacterId === n.characterId && "scale-95 opacity-70"
+                        )}
                         style={{ left: n.x, top: n.y }}
                       >
-                        <div className="font-medium truncate">{c.name}</div>
-                        <div className="mt-1 flex gap-1">
-                          <button className="clickable rounded border border-[hsl(var(--border))] px-1 text-xs" onClick={() => openRelationshipEditor(n.characterId, activeStory.characterIds.find((id) => id !== n.characterId) || "")}>Link</button>
+                        <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
+                          {c.imageDataUrl ? (
+                            <img src={c.imageDataUrl} alt={c.name} className="absolute inset-0 h-full w-full object-cover object-top" />
+                          ) : (
+                            <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
+                          )}
+                          <button
+                            type="button"
+                            className="absolute left-1 top-1 h-3 w-3 rounded-full bg-[hsl(var(--ring))]"
+                            onMouseUp={(e) => finishConnectionDrag(n.characterId, e)}
+                            aria-label="from-dot"
+                          />
+                          <button
+                            type="button"
+                            className="absolute right-1 top-1 h-3 w-3 rounded-full bg-[hsl(var(--hover-accent))]"
+                            onMouseDown={(e) => beginConnectionDrag(n.characterId, e)}
+                            aria-label="to-dot"
+                          />
+                          <div className="absolute inset-x-0 top-4 bg-black/45 px-1 py-0.5 text-center text-[11px] font-semibold text-white">{c.name}</div>
                         </div>
                       </div>
                     );
@@ -2433,10 +2565,10 @@ Return only the revised synopsis.`;
                       const a = characters.find((c) => c.id === r.fromCharacterId)?.name || "?";
                       const b = characters.find((c) => c.id === r.toCharacterId)?.name || "?";
                       return (
-                        <div key={r.id} className="rounded-lg border border-[hsl(var(--hover-accent))] bg-[hsl(var(--card))] px-3 py-2 text-xs">
+                        <button key={r.id} type="button" onClick={() => { setSelectedRelationshipId(r.id); setStoryRelFromId(r.fromCharacterId); setStoryRelToId(r.toCharacterId); setStoryRelAlignment(r.alignment); setStoryRelType(r.relationType); setStoryRelDetails(r.details); setStoryRelationshipEditorOpen(true); }} className={cn("w-full rounded-lg border px-3 py-2 text-left text-xs", selectedRelationshipId === r.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--card))]" : "border-[hsl(var(--border))] bg-[hsl(var(--card))]")}>
                           <div className="font-medium">{a} → {b}</div>
                           <div className="text-[hsl(var(--muted-foreground))]">{r.alignment}</div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -2490,6 +2622,7 @@ Return only the revised synopsis.`;
                     </div>
                   </div>
                 </div>
+                </div>
               </div>
             ) : (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
@@ -2524,8 +2657,8 @@ Return only the revised synopsis.`;
                 </div>
                 <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
                   <div className="text-sm font-medium">Generate detailed list</div>
-                  <Textarea value={storyPlotPointPrompt} onChange={(e) => setStoryPlotPointPrompt(e.target.value)} rows={3} placeholder="Prompt..." />
-                  <Button variant="secondary" onClick={generateStoryPlotPoints} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate</Button>
+                  <div className="text-xs text-[hsl(var(--muted-foreground))]">Turns your written list into a more described list (max 30 words per entry).</div>
+                  <Button variant="secondary" onClick={generateStoryPlotPoints} disabled={genLoading || !activeStory.plotPoints.length}><Sparkles className="h-4 w-4" /> Generate detailed list</Button>
                 </div>
                 <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
                   <div className="text-sm font-medium">Revise plot points</div>
@@ -3619,6 +3752,12 @@ Return only the revised synopsis.`;
         <div className="pointer-events-none fixed inset-x-0 bottom-3 px-4 text-center text-[10px] text-[hsl(var(--muted-foreground))] md:inset-x-auto md:bottom-4 md:right-4 md:px-0 md:text-xs">
           © {new Date().getFullYear()} Sancte™. All rights reserved.
         </div>
+
+        {saveToastOpen ? (
+          <div className="fixed bottom-4 right-4 z-[70] rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-4 py-2 text-sm shadow-lg">
+            Saved.
+          </div>
+        ) : null}
       </div>
     </div>
   );
