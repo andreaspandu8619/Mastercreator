@@ -698,6 +698,8 @@ export default function CharacterCreatorApp() {
   const [boardDragPreview, setBoardDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
   const [saveToastOpen, setSaveToastOpen] = useState(false);
   const dotPointerDownRef = useRef(false);
+  const connectingFromIdRef = useRef<string | null>(null);
+  const connectionSnapTargetIdRef = useRef<string | null>(null);
   const transparentDragImageRef = useRef<HTMLCanvasElement | null>(null);
   const boardContainerRef = useRef<HTMLDivElement | null>(null);
   const [showCreatePreview, setShowCreatePreview] = useState(true);
@@ -1503,6 +1505,8 @@ export default function CharacterCreatorApp() {
     setConnectingFromId(null);
     setConnectingPointer(null);
     setConnectionSnapTargetId(null);
+    connectingFromIdRef.current = null;
+    connectionSnapTargetIdRef.current = null;
     setDraggedToDeckCharacterId(null);
     setBoardDragPreview(null);
     setPage("story_editor");
@@ -1530,12 +1534,13 @@ export default function CharacterCreatorApp() {
   }
 
   function findConnectionSnapTarget(x: number, y: number) {
-    if (!activeStory || !connectingFromId) return null;
+    const currentFromId = connectingFromIdRef.current;
+    if (!activeStory || !currentFromId) return null;
     let best: { id: string; distSq: number } | null = null;
     const SNAP_RADIUS = 36;
     const SNAP_RADIUS_SQ = SNAP_RADIUS * SNAP_RADIUS;
     for (const node of activeStory.boardNodes) {
-      if (node.characterId === connectingFromId) continue;
+      if (node.characterId === currentFromId) continue;
       const center = getBoardNodeCenter(node.characterId, "from");
       if (!center) continue;
       const dx = center.x - x;
@@ -1550,21 +1555,28 @@ export default function CharacterCreatorApp() {
 
   function beginConnectionDrag(characterId: string, e: React.MouseEvent | React.TouchEvent) {
     e.stopPropagation();
+    connectingFromIdRef.current = characterId;
     setConnectingFromId(characterId);
+    connectionSnapTargetIdRef.current = null;
     setConnectionSnapTargetId(null);
   }
 
   function finishConnectionDrag(targetCharacterId: string, e: React.MouseEvent | React.TouchEvent) {
     e.stopPropagation();
-    if (!connectingFromId || connectingFromId === targetCharacterId) {
+    const currentFromId = connectingFromIdRef.current;
+    if (!currentFromId || currentFromId === targetCharacterId) {
+      connectingFromIdRef.current = null;
       setConnectingFromId(null);
       setConnectingPointer(null);
+      connectionSnapTargetIdRef.current = null;
       setConnectionSnapTargetId(null);
       return;
     }
-    openRelationshipEditor(connectingFromId, targetCharacterId);
+    openRelationshipEditor(currentFromId, targetCharacterId);
+    connectingFromIdRef.current = null;
     setConnectingFromId(null);
     setConnectingPointer(null);
+    connectionSnapTargetIdRef.current = null;
     setConnectionSnapTargetId(null);
   }
 
@@ -2668,11 +2680,12 @@ Return only the revised synopsis.`;
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={dropCharacterToRelationshipBoard}
                   onMouseMove={(e) => {
-                    if (!connectingFromId) return;
+                    if (!connectingFromIdRef.current) return;
                     const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
                     const px = e.clientX - rect.left;
                     const py = e.clientY - rect.top;
                     const snapTargetId = findConnectionSnapTarget(px, py);
+                    connectionSnapTargetIdRef.current = snapTargetId;
                     setConnectionSnapTargetId(snapTargetId);
                     if (snapTargetId) {
                       const snapPoint = getBoardNodeCenter(snapTargetId, "from");
@@ -2684,12 +2697,16 @@ Return only the revised synopsis.`;
                     setConnectingPointer({ x: px, y: py });
                   }}
                   onMouseUp={() => {
-                    if (connectingFromId && connectionSnapTargetId && connectingFromId !== connectionSnapTargetId) {
-                      openRelationshipEditor(connectingFromId, connectionSnapTargetId);
+                    const currentFromId = connectingFromIdRef.current;
+                    const snapTargetId = connectionSnapTargetIdRef.current;
+                    if (currentFromId && snapTargetId && currentFromId !== snapTargetId) {
+                      openRelationshipEditor(currentFromId, snapTargetId);
                     }
-                    if (connectingFromId) {
+                    if (currentFromId) {
+                      connectingFromIdRef.current = null;
                       setConnectingFromId(null);
                       setConnectingPointer(null);
+                      connectionSnapTargetIdRef.current = null;
                       setConnectionSnapTargetId(null);
                     }
                   }}
@@ -2784,7 +2801,10 @@ Return only the revised synopsis.`;
                           )}
                           <button
                             type="button"
-                            className="absolute left-1 top-1 h-3 w-3 rounded-full bg-[hsl(var(--ring))]"
+                            className={cn(
+                              "absolute left-1 top-1 h-3 w-3 rounded-full bg-[hsl(var(--ring))] transition-all",
+                              connectionSnapTargetId === n.characterId && "ring-2 ring-[hsl(var(--hover-accent))]"
+                            )}
                             onMouseDown={() => {
                               dotPointerDownRef.current = true;
                             }}
