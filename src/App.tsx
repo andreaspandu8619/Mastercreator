@@ -697,8 +697,14 @@ export default function CharacterCreatorApp() {
   const [connectingPointer, setConnectingPointer] = useState<{ x: number; y: number } | null>(null);
   const [connectionSnapTargetId, setConnectionSnapTargetId] = useState<string | null>(null);
   const [storyDragCharacterId, setStoryDragCharacterId] = useState<string | null>(null);
-  const [draggedToDeckCharacterId, setDraggedToDeckCharacterId] = useState<string | null>(null);
-  const [boardDragPreview, setBoardDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [relationshipDrag, setRelationshipDrag] = useState<{
+    id: string;
+    source: "board" | "deck";
+    x: number;
+    y: number;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
   const [storywritingDragPreview, setStorywritingDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
   const [boardPan, setBoardPan] = useState({ x: 0, y: 0 });
   const [boardPanning, setBoardPanning] = useState(false);
@@ -708,9 +714,8 @@ export default function CharacterCreatorApp() {
   const connectingFromIdRef = useRef<string | null>(null);
   const connectionSnapTargetIdRef = useRef<string | null>(null);
   const transparentDragImageRef = useRef<HTMLCanvasElement | null>(null);
-  const boardCardDragOffsetRef = useRef({ x: 128, y: 60 });
-  const deckCardDragOffsetRef = useRef({ x: 96, y: 120 });
   const boardContainerRef = useRef<HTMLDivElement | null>(null);
+  const relationshipDeckRef = useRef<HTMLDivElement | null>(null);
   const storywritingDndRef = useRef<HTMLDivElement | null>(null);
   const [showCreatePreview, setShowCreatePreview] = useState(true);
   const [createPreviewOpen, setCreatePreviewOpen] = useState(false);
@@ -779,6 +784,22 @@ export default function CharacterCreatorApp() {
       window.removeEventListener("mouseup", handleRelease);
     };
   }, [connectingFromId]);
+
+  useEffect(() => {
+    if (!relationshipDrag) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      updateRelationshipCardDrag(e.clientX, e.clientY);
+    };
+    const handleMouseUp = () => {
+      endRelationshipCardDrag();
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [relationshipDrag, boardPan.x, boardPan.y, activeStoryId]);
 
   const [backstoryRevisionFeedback, setBackstoryRevisionFeedback] = useState("");
   const [introRevisionFeedback, setIntroRevisionFeedback] = useState("");
@@ -1545,15 +1566,8 @@ export default function CharacterCreatorApp() {
     updateStory(activeStory.id, { boardNodes: nextNodes });
   }
 
-  function dropCharacterToRelationshipBoard(e: React.DragEvent<HTMLDivElement>) {
-    if (!activeStory) return;
-    e.preventDefault();
-    const id = e.dataTransfer.getData("text/character-id");
-    if (!id) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const offset = storyDragCharacterId ? boardCardDragOffsetRef.current : deckCardDragOffsetRef.current;
-    upsertBoardNode(id, e.clientX - rect.left - boardPan.x - offset.x, e.clientY - rect.top - boardPan.y - offset.y);
-    setDraggedToDeckCharacterId((prev) => (prev === id ? null : prev));
+  function moveCharacterOnRelationshipBoard(characterId: string, x: number, y: number) {
+    upsertBoardNode(characterId, x, y);
   }
 
   function removeBoardNode(characterId: string) {
@@ -1577,14 +1591,6 @@ export default function CharacterCreatorApp() {
     }
   }
 
-  function dropCharacterToBottomDeck(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    const id = e.dataTransfer.getData("text/character-id");
-    if (!id) return;
-    setDraggedToDeckCharacterId(id);
-    removeBoardNode(id);
-  }
-
   function closeRelationshipBoard() {
     setStoryRelationshipEditorOpen(false);
     setSelectedRelationshipId(null);
@@ -1593,8 +1599,7 @@ export default function CharacterCreatorApp() {
     setConnectionSnapTargetId(null);
     connectingFromIdRef.current = null;
     connectionSnapTargetIdRef.current = null;
-    setDraggedToDeckCharacterId(null);
-    setBoardDragPreview(null);
+    setRelationshipDrag(null);
     setBoardPanning(false);
     boardPanStartRef.current = null;
     navigateTo("story_editor");
@@ -1655,6 +1660,73 @@ export default function CharacterCreatorApp() {
     setConnectingPointer(startPoint);
     connectionSnapTargetIdRef.current = null;
     setConnectionSnapTargetId(null);
+  }
+
+  function beginRelationshipCardDrag(
+    characterId: string,
+    source: "board" | "deck",
+    e: React.MouseEvent<HTMLDivElement>,
+    boardX?: number,
+    boardY?: number
+  ) {
+    if (!boardContainerRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const boardRect = boardContainerRef.current.getBoundingClientRect();
+    const cardRect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+    const offsetX = e.clientX - cardRect.left;
+    const offsetY = e.clientY - cardRect.top;
+    const initialX = source === "board" ? boardX ?? 0 : e.clientX - boardRect.left - boardPan.x - offsetX;
+    const initialY = source === "board" ? boardY ?? 0 : e.clientY - boardRect.top - boardPan.y - offsetY;
+    setRelationshipDrag({
+      id: characterId,
+      source,
+      x: initialX,
+      y: initialY,
+      offsetX,
+      offsetY,
+    });
+    setStoryDragCharacterId(characterId);
+  }
+
+  function updateRelationshipCardDrag(clientX: number, clientY: number) {
+    if (!relationshipDrag || !boardContainerRef.current) return;
+    const boardRect = boardContainerRef.current.getBoundingClientRect();
+    setRelationshipDrag((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        x: clientX - boardRect.left - boardPan.x - prev.offsetX,
+        y: clientY - boardRect.top - boardPan.y - prev.offsetY,
+      };
+    });
+  }
+
+  function endRelationshipCardDrag() {
+    if (!relationshipDrag || !boardContainerRef.current || !activeStory) {
+      setRelationshipDrag(null);
+      setStoryDragCharacterId(null);
+      return;
+    }
+    const boardRect = boardContainerRef.current.getBoundingClientRect();
+    const absoluteLeft = boardRect.left + boardPan.x + relationshipDrag.x;
+    const absoluteTop = boardRect.top + boardPan.y + relationshipDrag.y;
+    const deckRect = relationshipDeckRef.current?.getBoundingClientRect();
+    const centerX = absoluteLeft + 128;
+    const centerY = absoluteTop + 190;
+    const droppedToDeck =
+      !!deckRect &&
+      centerX >= deckRect.left &&
+      centerX <= deckRect.right &&
+      centerY >= deckRect.top &&
+      centerY <= deckRect.bottom;
+    if (droppedToDeck) {
+      removeBoardNode(relationshipDrag.id);
+    } else {
+      moveCharacterOnRelationshipBoard(relationshipDrag.id, relationshipDrag.x, relationshipDrag.y);
+    }
+    setRelationshipDrag(null);
+    setStoryDragCharacterId(null);
   }
 
   function finishConnectionDrag(targetCharacterId: string, e: React.MouseEvent | React.TouchEvent) {
@@ -2846,7 +2918,6 @@ Return only the revised synopsis.`;
                     boardPanStartRef.current = { x: e.clientX, y: e.clientY, panX: boardPan.x, panY: boardPan.y };
                   }}
                   onDragOver={(e) => e.preventDefault()}
-                  onDrop={dropCharacterToRelationshipBoard}
                   onMouseMove={(e) => {
                     if (boardPanning && boardPanStartRef.current) {
                       const dx = e.clientX - boardPanStartRef.current.x;
@@ -2947,50 +3018,9 @@ Return only the revised synopsis.`;
                       <div
                         key={n.characterId}
                         data-board-item="1"
-                        draggable
-                        onDragStart={(e) => {
-                          if (dotPointerDownRef.current) {
-                            e.preventDefault();
-                            return;
-                          }
-                          if (!transparentDragImageRef.current) {
-                            const canvas = document.createElement("canvas");
-                            canvas.width = 1;
-                            canvas.height = 1;
-                            transparentDragImageRef.current = canvas;
-                          }
-                          e.dataTransfer.setDragImage(transparentDragImageRef.current, 0, 0);
-                          e.dataTransfer.setData("text/character-id", n.characterId);
-                          const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                          boardCardDragOffsetRef.current = {
-                            x: e.clientX - rect.left,
-                            y: e.clientY - rect.top,
-                          };
-                          setStoryDragCharacterId(n.characterId);
-                          setBoardDragPreview({ id: n.characterId, x: n.x, y: n.y });
-                        }}
-                        onDrag={(e) => {
-                          if (!boardContainerRef.current) return;
-                          if (e.clientX === 0 && e.clientY === 0) return;
-                          const rect = boardContainerRef.current.getBoundingClientRect();
-                          const offset = boardCardDragOffsetRef.current;
-                          setBoardDragPreview({
-                            id: n.characterId,
-                            x: e.clientX - rect.left - boardPan.x - offset.x,
-                            y: e.clientY - rect.top - boardPan.y - offset.y,
-                          });
-                        }}
-                        onDragEnd={(e) => {
-                          setBoardDragPreview(null);
-                          if (draggedToDeckCharacterId === n.characterId) {
-                            setStoryDragCharacterId(null);
-                            setDraggedToDeckCharacterId(null);
-                            return;
-                          }
-                          const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
-                          const offset = boardCardDragOffsetRef.current;
-                          upsertBoardNode(n.characterId, e.clientX - rect.left - boardPan.x - offset.x, e.clientY - rect.top - boardPan.y - offset.y);
-                          setStoryDragCharacterId(null);
+                        onMouseDown={(e) => {
+                          if (dotPointerDownRef.current || e.button !== 0) return;
+                          beginRelationshipCardDrag(n.characterId, "board", e, n.x, n.y);
                         }}
                         className={cn(
                           "absolute w-64 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow transition-all duration-200",
@@ -3041,13 +3071,13 @@ Return only the revised synopsis.`;
                       </div>
                     );
                   })}
-                  {boardDragPreview ? (() => {
-                    const c = characters.find((x) => x.id === boardDragPreview.id);
+                  {relationshipDrag ? (() => {
+                    const c = characters.find((x) => x.id === relationshipDrag.id);
                     if (!c) return null;
                     return (
                       <div
                         className="pointer-events-none absolute z-20 w-64 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow-2xl"
-                        style={{ left: boardDragPreview.x, top: boardDragPreview.y }}
+                        style={{ left: relationshipDrag.x, top: relationshipDrag.y }}
                       >
                         <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
                           {c.imageDataUrl ? (
@@ -3064,9 +3094,9 @@ Return only the revised synopsis.`;
                 </div>
 
                 <div
+                  ref={relationshipDeckRef}
                   className="absolute inset-x-6 bottom-0 z-20 h-44 rounded-t-2xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 px-3 pb-3 pt-1"
                   onDragOver={(e) => e.preventDefault()}
-                  onDrop={dropCharacterToBottomDeck}
                 >
                   <div className="flex gap-2 overflow-x-auto overflow-y-visible pt-1">
                     {activeStory.characterIds
@@ -3077,44 +3107,9 @@ Return only the revised synopsis.`;
                         return (
                           <div
                             key={id}
-                            draggable
-                            onDragStart={(e) => {
-                              if (!transparentDragImageRef.current) {
-                                const canvas = document.createElement("canvas");
-                                canvas.width = 1;
-                                canvas.height = 1;
-                                transparentDragImageRef.current = canvas;
-                              }
-                              e.dataTransfer.setDragImage(transparentDragImageRef.current, 0, 0);
-                              e.dataTransfer.setData("text/character-id", id);
-                              const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                              deckCardDragOffsetRef.current = {
-                                x: e.clientX - rect.left,
-                                y: e.clientY - rect.top,
-                              };
-                              setStoryDragCharacterId(id);
-                              if (!boardContainerRef.current) return;
-                              const boardRect = boardContainerRef.current.getBoundingClientRect();
-                              setBoardDragPreview({
-                                id,
-                                x: e.clientX - boardRect.left - boardPan.x - deckCardDragOffsetRef.current.x,
-                                y: e.clientY - boardRect.top - boardPan.y - deckCardDragOffsetRef.current.y,
-                              });
-                            }}
-                            onDrag={(e) => {
-                              if (!boardContainerRef.current) return;
-                              if (e.clientX === 0 && e.clientY === 0) return;
-                              const rect = boardContainerRef.current.getBoundingClientRect();
-                              const offset = deckCardDragOffsetRef.current;
-                              setBoardDragPreview({
-                                id,
-                                x: e.clientX - rect.left - boardPan.x - offset.x,
-                                y: e.clientY - rect.top - boardPan.y - offset.y,
-                              });
-                            }}
-                            onDragEnd={() => {
-                              setBoardDragPreview(null);
-                              setStoryDragCharacterId(null);
+                            onMouseDown={(e) => {
+                              if (e.button !== 0) return;
+                              beginRelationshipCardDrag(id, "deck", e);
                             }}
                             className="relative -mt-16 shrink-0 w-44 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-1 transition-transform duration-200 hover:-translate-y-3"
                           >
