@@ -72,6 +72,7 @@ type StoryProject = {
   id: string;
   title: string;
   characterIds: string[];
+  imageDataUrl: string;
   scenario: string;
   plotPoints: string[];
   relationships: StoryRelationship[];
@@ -681,6 +682,7 @@ export default function CharacterCreatorApp() {
   const [storyTab, setStoryTab] = useState<StoryTab>("scenario");
   const [storyScenarioPrompt, setStoryScenarioPrompt] = useState("");
   const [storyScenarioRevision, setStoryScenarioRevision] = useState("");
+  const [storyImageDataUrl, setStoryImageDataUrl] = useState("");
   const [storyPlotPointInput, setStoryPlotPointInput] = useState("");
   const [storyPlotPointRevision, setStoryPlotPointRevision] = useState("");
   const [storyRelationshipEditorOpen, setStoryRelationshipEditorOpen] = useState(false);
@@ -697,6 +699,7 @@ export default function CharacterCreatorApp() {
   const [storyDragCharacterId, setStoryDragCharacterId] = useState<string | null>(null);
   const [draggedToDeckCharacterId, setDraggedToDeckCharacterId] = useState<string | null>(null);
   const [boardDragPreview, setBoardDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [storywritingDragPreview, setStorywritingDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
   const [boardPan, setBoardPan] = useState({ x: 0, y: 0 });
   const [boardPanning, setBoardPanning] = useState(false);
   const boardPanStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
@@ -706,6 +709,7 @@ export default function CharacterCreatorApp() {
   const connectionSnapTargetIdRef = useRef<string | null>(null);
   const transparentDragImageRef = useRef<HTMLCanvasElement | null>(null);
   const boardContainerRef = useRef<HTMLDivElement | null>(null);
+  const storywritingDndRef = useRef<HTMLDivElement | null>(null);
   const [showCreatePreview, setShowCreatePreview] = useState(true);
   const [createPreviewOpen, setCreatePreviewOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
@@ -764,6 +768,8 @@ export default function CharacterCreatorApp() {
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
+  const storyImageFileRef = useRef<HTMLInputElement | null>(null);
+  const [historyStack, setHistoryStack] = useState<Page[]>([]);
 
   useEffect(() => {
     if (import.meta.env.MODE === "test") runTests();
@@ -839,6 +845,7 @@ export default function CharacterCreatorApp() {
             id,
             title: collapseWhitespace((s as any).title || "Untitled story"),
             characterIds: normalizeStringArray((s as any).characterIds),
+            imageDataUrl: typeof (s as any).imageDataUrl === "string" ? (s as any).imageDataUrl : "",
             scenario: typeof (s as any).scenario === "string" ? (s as any).scenario : "",
             plotPoints: normalizeStringArray((s as any).plotPoints),
             relationships: Array.isArray((s as any).relationships) ? (s as any).relationships : [],
@@ -1187,7 +1194,7 @@ export default function CharacterCreatorApp() {
     });
 
     setSelectedId(draft.id);
-    setPage("library");
+    navigateTo("library");
   }
 
   function deleteCharacter(id: string) {
@@ -1225,6 +1232,40 @@ export default function CharacterCreatorApp() {
     }
   }
 
+  async function handlePickStoryImage(file: File) {
+    const maxBytes = 10 * 1024 * 1024;
+    if (file.size > maxBytes || !file.type.startsWith("image/")) return;
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setStoryImageDataUrl(dataUrl);
+      if (activeStory) {
+        updateStory(activeStory.id, { imageDataUrl: dataUrl });
+      }
+    } catch {
+      // ignore invalid story image
+    }
+  }
+
+  function navigateTo(next: Page) {
+    setHistoryStack((prev) => {
+      if (prev[prev.length - 1] === page) return prev;
+      return [...prev, page];
+    });
+    setPage(next);
+  }
+
+  function goBack() {
+    setHistoryStack((prev) => {
+      if (!prev.length) {
+        setPage("library");
+        return prev;
+      }
+      const next = prev[prev.length - 1];
+      setPage(next);
+      return prev.slice(0, -1);
+    });
+  }
+
   function exportAll() {
     downloadJSON(
       "characters_" + new Date().toISOString().slice(0, 10) + ".json",
@@ -1252,7 +1293,7 @@ export default function CharacterCreatorApp() {
       await idbPutManyCharacters(cleaned);
     } catch {}
 
-    setPage("library");
+    navigateTo("library");
   }
 
   function loadCharacterIntoForm(c: Character) {
@@ -1293,7 +1334,7 @@ export default function CharacterCreatorApp() {
     setGenError(null);
     setGenLoading(false);
 
-    setPage("create");
+    navigateTo("create");
     setTab("overview");
     requestAnimationFrame(() =>
       window.scrollTo({ top: 0, behavior: "smooth" })
@@ -1315,7 +1356,7 @@ export default function CharacterCreatorApp() {
     setChatCharacter(linked);
     setChatInput("");
     setGenError(null);
-    setPage("chat");
+    navigateTo("chat");
   }
 
   function startChatWithCharacter(c: Character) {
@@ -1368,6 +1409,22 @@ export default function CharacterCreatorApp() {
     [stories, activeStoryId]
   );
 
+  useEffect(() => {
+    setStoryImageDataUrl(activeStory?.imageDataUrl || "");
+  }, [activeStory?.id, activeStory?.imageDataUrl]);
+
+  const latestCharacter = useMemo(
+    () => (characters.length ? [...characters].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] : null),
+    [characters]
+  );
+
+  const latestStory = useMemo(
+    () => (stories.length ? [...stories].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] : null),
+    [stories]
+  );
+
+  const canGoBack = historyStack.length > 0;
+
   function updateStory(id: string, patch: Partial<StoryProject>) {
     setStories((prev) =>
       prev.map((s) =>
@@ -1395,6 +1452,7 @@ export default function CharacterCreatorApp() {
       id: uid(),
       title,
       characterIds: Array.from(new Set(storyDraftCharacterIds)),
+      imageDataUrl: storyImageDataUrl,
       scenario: "",
       plotPoints: [],
       relationships: [],
@@ -1405,7 +1463,8 @@ export default function CharacterCreatorApp() {
     setStories((prev) => [story, ...prev]);
     setActiveStoryId(story.id);
     setStoryDraftCharacterIds([]);
-    setPage("story_editor");
+    setStoryImageDataUrl("");
+    navigateTo("story_editor");
     setStoryTab("scenario");
   }
 
@@ -1515,7 +1574,7 @@ export default function CharacterCreatorApp() {
     setBoardDragPreview(null);
     setBoardPanning(false);
     boardPanStartRef.current = null;
-    setPage("story_editor");
+    navigateTo("story_editor");
   }
 
   function openRelationshipEditor(fromId: string, toId: string) {
@@ -2202,7 +2261,20 @@ Return only the revised synopsis.`;
           </div>
         ) : null}
         <header className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Mastercreator</h1>
+          <div className="flex items-center gap-2">
+            {page !== "library" && canGoBack ? (
+              <Button variant="secondary" onClick={goBack}>
+                <ArrowLeft className="h-4 w-4" /> Back
+              </Button>
+            ) : null}
+            <button
+              type="button"
+              className="text-2xl font-semibold tracking-tight md:text-3xl"
+              onClick={() => navigateTo("library")}
+            >
+              Mastercreator
+            </button>
+          </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
             <Button variant="secondary" onClick={() => setProxyOpen(true)}>
               <SlidersHorizontal className="h-4 w-4" /> Proxy
@@ -2210,13 +2282,13 @@ Return only the revised synopsis.`;
             <Button variant="secondary" onClick={() => setPersonaOpen(true)}>
               <UserRound className="h-4 w-4" /> Persona
             </Button>
-            <Button variant="secondary" onClick={() => setPage("chat")}>
+            <Button variant="secondary" onClick={() => navigateTo("chat")}>
               <MessageCircle className="h-4 w-4" /> Chats
             </Button>
-            <Button variant="secondary" onClick={() => setPage("storywriting")}>
+            <Button variant="secondary" onClick={() => navigateTo("storywriting")}>
               <BookOpen className="h-4 w-4" /> Storywriting
             </Button>
-            <Button variant="secondary" onClick={() => setPage("my_stories")}>
+            <Button variant="secondary" onClick={() => navigateTo("my_stories")}>
               <Library className="h-4 w-4" /> My Stories
             </Button>
             <Button
@@ -2254,7 +2326,7 @@ Return only the revised synopsis.`;
                   <div className="text-sm font-semibold">Chats</div>
                   <div className="text-xs text-[hsl(var(--muted-foreground))]">Continue latest or pick a session.</div>
                 </div>
-                <Button variant="secondary" onClick={() => setPage("library")}>
+                <Button variant="secondary" onClick={() => navigateTo("library")}>
                   <ArrowLeft className="h-4 w-4" /> Dashboard
                 </Button>
               </div>
@@ -2356,13 +2428,13 @@ Return only the revised synopsis.`;
             </div>
           </div>
         ) : page === "storywriting" ? (
-          <div className="mt-6 space-y-4">
+          <div className="mt-6 space-y-4" ref={storywritingDndRef}>
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xl font-semibold">Storywriting</div>
                 <div className="text-sm text-[hsl(var(--muted-foreground))]">Build a cast by dragging characters into the story field.</div>
               </div>
-              <Button variant="secondary" onClick={() => setPage("library")}>
+              <Button variant="secondary" onClick={() => navigateTo("library")}>
                 <ArrowLeft className="h-4 w-4" /> Dashboard
               </Button>
             </div>
@@ -2380,10 +2452,27 @@ Return only the revised synopsis.`;
                         key={c.id}
                         draggable
                         onDragStart={(e) => {
+                          if (!transparentDragImageRef.current) {
+                            const canvas = document.createElement("canvas");
+                            canvas.width = 1;
+                            canvas.height = 1;
+                            transparentDragImageRef.current = canvas;
+                          }
+                          e.dataTransfer.setDragImage(transparentDragImageRef.current, 0, 0);
                           e.dataTransfer.setData("text/character-id", c.id);
                           setStoryDragCharacterId(c.id);
+                          setStorywritingDragPreview({ id: c.id, x: 20, y: 20 });
                         }}
-                        onDragEnd={() => setStoryDragCharacterId(null)}
+                        onDrag={(e) => {
+                          if (!storywritingDndRef.current) return;
+                          if (e.clientX === 0 && e.clientY === 0) return;
+                          const rect = storywritingDndRef.current.getBoundingClientRect();
+                          setStorywritingDragPreview({ id: c.id, x: e.clientX - rect.left - 80, y: e.clientY - rect.top - 90 });
+                        }}
+                        onDragEnd={() => {
+                          setStoryDragCharacterId(null);
+                          setStorywritingDragPreview(null);
+                        }}
                         className={cn(
                           "clickable rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-2 transition-all duration-200",
                           storyDragCharacterId === c.id && "scale-95 opacity-70"
@@ -2444,12 +2533,25 @@ Return only the revised synopsis.`;
                 Proceed
               </Button>
             </div>
+
+            {storywritingDragPreview ? (() => {
+              const c = characters.find((x) => x.id === storywritingDragPreview.id);
+              if (!c) return null;
+              return (
+                <div className="pointer-events-none fixed z-40 w-44 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 shadow-2xl" style={{ left: storywritingDragPreview.x, top: storywritingDragPreview.y }}>
+                  <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
+                    {c.imageDataUrl ? <img src={c.imageDataUrl} alt={c.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : <div className="absolute inset-0 bg-[hsl(var(--muted))]" />}
+                    <div className="absolute inset-x-0 top-0 bg-black/45 px-2 py-1 text-xs font-semibold text-white">{c.name}</div>
+                  </div>
+                </div>
+              );
+            })() : null}
           </div>
         ) : page === "my_stories" ? (
           <div className="mt-6 space-y-4">
             <div className="flex items-center justify-between gap-2">
               <div className="text-xl font-semibold">My Stories</div>
-              <Button variant="secondary" onClick={() => setPage("library")}>
+              <Button variant="secondary" onClick={() => navigateTo("library")}>
                 <ArrowLeft className="h-4 w-4" /> Dashboard
               </Button>
             </div>
@@ -2462,7 +2564,7 @@ Return only the revised synopsis.`;
                       <div className="text-xs text-[hsl(var(--muted-foreground))]">{new Date(s.updatedAt).toLocaleString()}</div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <Button variant="secondary" onClick={() => { setActiveStoryId(s.id); setPage("story_editor"); }}>Open</Button>
+                      <Button variant="secondary" onClick={() => { setActiveStoryId(s.id); navigateTo("story_editor"); }}>Open</Button>
                       <Button variant="secondary" onClick={() => downloadJSON((filenameSafe(s.title) || "story") + ".json", s)}>
                         <Download className="h-4 w-4" /> JSON
                       </Button>
@@ -2484,7 +2586,7 @@ Return only the revised synopsis.`;
                 <div className="text-sm text-[hsl(var(--muted-foreground))]">Scenario • Relationships • Plot Points</div>
               </div>
               <div className="flex gap-2">
-                <Button variant="secondary" onClick={() => setPage("my_stories")}>My Stories</Button>
+                <Button variant="secondary" onClick={() => navigateTo("my_stories")}>My Stories</Button>
                 <Button variant="secondary" onClick={() => activeStory && downloadJSON((filenameSafe(activeStory.title) || "story") + ".json", activeStory)}>
                   <Download className="h-4 w-4" /> JSON
                 </Button>
@@ -2525,12 +2627,25 @@ Return only the revised synopsis.`;
               <div className="text-sm text-[hsl(var(--muted-foreground))]">Select a story first.</div>
             ) : storyTab === "scenario" ? (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
-                <Textarea
-                  value={activeStory.scenario}
-                  onChange={(e) => updateStory(activeStory.id, { scenario: e.target.value })}
-                  rows={10}
-                  placeholder="Scenario..."
-                />
+                <div className="grid gap-4 md:grid-cols-[220px,1fr]">
+                  <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
+                    <div className="text-xs font-semibold text-[hsl(var(--muted-foreground))]">Story Image</div>
+                    <div className="mt-2 relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
+                      {storyImageDataUrl ? <img src={storyImageDataUrl} alt="Story" className="absolute inset-0 h-full w-full object-cover" /> : <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>}
+                    </div>
+                    <div className="mt-2 flex gap-2">
+                      <Button variant="secondary" className="w-full" onClick={() => storyImageFileRef.current?.click()}>Upload</Button>
+                      <Button variant="secondary" className="w-full" onClick={() => { setStoryImageDataUrl(""); updateStory(activeStory.id, { imageDataUrl: "" }); }}>Clear</Button>
+                    </div>
+                    <input ref={storyImageFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePickStoryImage(f); e.currentTarget.value = ""; }} />
+                  </div>
+                  <Textarea
+                    value={activeStory.scenario}
+                    onChange={(e) => updateStory(activeStory.id, { scenario: e.target.value })}
+                    rows={10}
+                    placeholder="Scenario..."
+                  />
+                </div>
                 <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
                   <div className="text-sm font-medium">Generate scenario</div>
                   <Textarea value={storyScenarioPrompt} onChange={(e) => setStoryScenarioPrompt(e.target.value)} rows={3} placeholder="Prompt..." />
@@ -2546,7 +2661,7 @@ Return only the revised synopsis.`;
               <div className="space-y-3">
                 <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                   <div className="mb-3 text-sm text-[hsl(var(--muted-foreground))]">Build one-way visual links between cast cards in the full relationship board.</div>
-                  <Button variant="secondary" onClick={() => setPage("story_relationship_board")}>Open Relationship Builder</Button>
+                  <Button variant="secondary" onClick={() => navigateTo("story_relationship_board")}>Open Relationship Builder</Button>
                 </div>
                 <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                   <div className="mb-2 text-sm font-medium">Relationships</div>
@@ -2994,7 +3109,76 @@ Return only the revised synopsis.`;
             </div>
           )
         ) : page === "library" ? (
-          <div className="mt-6 space-y-4">
+          <div className="mt-6 space-y-6">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <Button variant="primary" className="w-full justify-center py-3" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}>
+                  <Plus className="h-4 w-4" /> Create a new character
+                </Button>
+                <Button variant="secondary" className="mt-3 w-full" onClick={() => setQuery("")}>View characters</Button>
+              </div>
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <Button variant="primary" className="w-full justify-center py-3" onClick={() => navigateTo("storywriting")}>
+                  <Plus className="h-4 w-4" /> Create a new story
+                </Button>
+                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("my_stories")}>View stories</Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-sm font-semibold">Your latest character</div>
+              <button
+                type="button"
+                onClick={() => latestCharacter && setPreviewId(latestCharacter.id)}
+                className="group relative h-36 w-full overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--hover-accent))/0.18] text-left"
+              >
+                {latestCharacter?.imageDataUrl ? (
+                  <img src={latestCharacter.imageDataUrl} alt={latestCharacter.name} className="absolute inset-y-0 left-0 h-full w-1/2 object-cover opacity-35 transition-all duration-300 group-hover:scale-110 group-hover:opacity-100" />
+                ) : null}
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent to-[hsl(var(--card))]" />
+                <div className="relative z-10 p-4">
+                  <div className="text-lg font-semibold">{latestCharacter?.name || "No character yet"}</div>
+                  <div className="text-sm text-[hsl(var(--muted-foreground))]">Continue your last character</div>
+                </div>
+                <div className="absolute inset-y-0 right-0 w-24 translate-x-14 bg-[hsl(var(--foreground))/0.12] transition-transform duration-300 group-hover:translate-x-0">
+                  <div className="flex h-full items-center justify-center">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--card))]">
+                      <ArrowLeft className="h-4 w-4 rotate-180 animate-[spin_1.2s_linear_1]" />
+                    </div>
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-sm font-semibold">Your latest story</div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!latestStory) return;
+                  setActiveStoryId(latestStory.id);
+                  navigateTo("story_editor");
+                }}
+                className="group relative h-36 w-full overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--hover-accent))/0.18] text-left"
+              >
+                {latestStory?.imageDataUrl ? (
+                  <img src={latestStory.imageDataUrl} alt={latestStory.title} className="absolute inset-y-0 left-0 h-full w-1/2 object-cover opacity-35 transition-all duration-300 group-hover:scale-110 group-hover:opacity-100" />
+                ) : null}
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent to-[hsl(var(--card))]" />
+                <div className="relative z-10 p-4">
+                  <div className="text-lg font-semibold">{latestStory?.title || "No story yet"}</div>
+                  <div className="text-sm text-[hsl(var(--muted-foreground))]">Continue your last story</div>
+                </div>
+                <div className="absolute inset-y-0 right-0 w-24 translate-x-14 bg-[hsl(var(--foreground))/0.12] transition-transform duration-300 group-hover:translate-x-0">
+                  <div className="flex h-full items-center justify-center">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--card))]">
+                      <ArrowLeft className="h-4 w-4 rotate-180 animate-[spin_1.2s_linear_1]" />
+                    </div>
+                  </div>
+                </div>
+              </button>
+            </div>
+
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="relative w-full md:max-w-xl">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-[hsl(var(--muted-foreground))]" />
@@ -3004,18 +3188,6 @@ Return only the revised synopsis.`;
                   placeholder="Search characters…"
                   className="pl-9"
                 />
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    resetForm();
-                    setPage("create");
-                    setTab("overview");
-                  }}
-                >
-                  <Plus className="h-4 w-4" /> Create
-                </Button>
               </div>
             </div>
 
@@ -3073,7 +3245,7 @@ Return only the revised synopsis.`;
           <div className="mt-6 space-y-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-2">
-                <Button variant="secondary" onClick={() => setPage("library")}>
+                <Button variant="secondary" onClick={() => navigateTo("library")}>
                   <ArrowLeft className="h-4 w-4" /> Back
                 </Button>
                 <div className="text-sm text-[hsl(var(--muted-foreground))]">
