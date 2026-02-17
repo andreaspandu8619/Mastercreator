@@ -692,10 +692,14 @@ export default function CharacterCreatorApp() {
   const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
   const [connectingFromId, setConnectingFromId] = useState<string | null>(null);
   const [connectingPointer, setConnectingPointer] = useState<{ x: number; y: number } | null>(null);
+  const [connectionSnapTargetId, setConnectionSnapTargetId] = useState<string | null>(null);
   const [storyDragCharacterId, setStoryDragCharacterId] = useState<string | null>(null);
   const [draggedToDeckCharacterId, setDraggedToDeckCharacterId] = useState<string | null>(null);
+  const [boardDragPreview, setBoardDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
   const [saveToastOpen, setSaveToastOpen] = useState(false);
   const dotPointerDownRef = useRef(false);
+  const transparentDragImageRef = useRef<HTMLCanvasElement | null>(null);
+  const boardContainerRef = useRef<HTMLDivElement | null>(null);
   const [showCreatePreview, setShowCreatePreview] = useState(true);
   const [createPreviewOpen, setCreatePreviewOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
@@ -1498,7 +1502,9 @@ export default function CharacterCreatorApp() {
     setSelectedRelationshipId(null);
     setConnectingFromId(null);
     setConnectingPointer(null);
+    setConnectionSnapTargetId(null);
     setDraggedToDeckCharacterId(null);
+    setBoardDragPreview(null);
     setPage("story_editor");
   }
 
@@ -1518,14 +1524,34 @@ export default function CharacterCreatorApp() {
     const baseX = node.x;
     const baseY = node.y;
     return {
-      x: side === "from" ? baseX + 8 : baseX + 120,
+      x: side === "from" ? baseX + 10 : baseX + 134,
       y: baseY + 10,
     };
+  }
+
+  function findConnectionSnapTarget(x: number, y: number) {
+    if (!activeStory || !connectingFromId) return null;
+    let best: { id: string; distSq: number } | null = null;
+    const SNAP_RADIUS = 36;
+    const SNAP_RADIUS_SQ = SNAP_RADIUS * SNAP_RADIUS;
+    for (const node of activeStory.boardNodes) {
+      if (node.characterId === connectingFromId) continue;
+      const center = getBoardNodeCenter(node.characterId, "from");
+      if (!center) continue;
+      const dx = center.x - x;
+      const dy = center.y - y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq <= SNAP_RADIUS_SQ && (!best || distSq < best.distSq)) {
+        best = { id: node.characterId, distSq };
+      }
+    }
+    return best?.id || null;
   }
 
   function beginConnectionDrag(characterId: string, e: React.MouseEvent | React.TouchEvent) {
     e.stopPropagation();
     setConnectingFromId(characterId);
+    setConnectionSnapTargetId(null);
   }
 
   function finishConnectionDrag(targetCharacterId: string, e: React.MouseEvent | React.TouchEvent) {
@@ -1533,11 +1559,13 @@ export default function CharacterCreatorApp() {
     if (!connectingFromId || connectingFromId === targetCharacterId) {
       setConnectingFromId(null);
       setConnectingPointer(null);
+      setConnectionSnapTargetId(null);
       return;
     }
     openRelationshipEditor(connectingFromId, targetCharacterId);
     setConnectingFromId(null);
     setConnectingPointer(null);
+    setConnectionSnapTargetId(null);
   }
 
   function saveRelationshipEdge() {
@@ -2635,18 +2663,34 @@ Return only the revised synopsis.`;
               </div>
               <div className="relative h-[calc(100vh-86px)] w-full overflow-hidden rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-0">
                 <div
+                  ref={boardContainerRef}
                   className="h-full w-full rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))]"
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={dropCharacterToRelationshipBoard}
                   onMouseMove={(e) => {
                     if (!connectingFromId) return;
                     const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                    setConnectingPointer({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                    const px = e.clientX - rect.left;
+                    const py = e.clientY - rect.top;
+                    const snapTargetId = findConnectionSnapTarget(px, py);
+                    setConnectionSnapTargetId(snapTargetId);
+                    if (snapTargetId) {
+                      const snapPoint = getBoardNodeCenter(snapTargetId, "from");
+                      if (snapPoint) {
+                        setConnectingPointer(snapPoint);
+                        return;
+                      }
+                    }
+                    setConnectingPointer({ x: px, y: py });
                   }}
                   onMouseUp={() => {
+                    if (connectingFromId && connectionSnapTargetId && connectingFromId !== connectionSnapTargetId) {
+                      openRelationshipEditor(connectingFromId, connectionSnapTargetId);
+                    }
                     if (connectingFromId) {
                       setConnectingFromId(null);
                       setConnectingPointer(null);
+                      setConnectionSnapTargetId(null);
                     }
                   }}
                 >
@@ -2694,10 +2738,29 @@ Return only the revised synopsis.`;
                             e.preventDefault();
                             return;
                           }
+                          if (!transparentDragImageRef.current) {
+                            const canvas = document.createElement("canvas");
+                            canvas.width = 1;
+                            canvas.height = 1;
+                            transparentDragImageRef.current = canvas;
+                          }
+                          e.dataTransfer.setDragImage(transparentDragImageRef.current, 0, 0);
                           e.dataTransfer.setData("text/character-id", n.characterId);
                           setStoryDragCharacterId(n.characterId);
+                          setBoardDragPreview({ id: n.characterId, x: n.x, y: n.y });
+                        }}
+                        onDrag={(e) => {
+                          if (!boardContainerRef.current) return;
+                          if (e.clientX === 0 && e.clientY === 0) return;
+                          const rect = boardContainerRef.current.getBoundingClientRect();
+                          setBoardDragPreview({
+                            id: n.characterId,
+                            x: e.clientX - rect.left - 74,
+                            y: e.clientY - rect.top - 40,
+                          });
                         }}
                         onDragEnd={(e) => {
+                          setBoardDragPreview(null);
                           if (draggedToDeckCharacterId === n.characterId) {
                             setStoryDragCharacterId(null);
                             setDraggedToDeckCharacterId(null);
@@ -2708,7 +2771,7 @@ Return only the revised synopsis.`;
                           setStoryDragCharacterId(null);
                         }}
                         className={cn(
-                          "absolute w-32 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow transition-all duration-200",
+                          "absolute w-36 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow transition-all duration-200",
                           storyDragCharacterId === n.characterId && "scale-95 opacity-70"
                         )}
                         style={{ left: n.x, top: n.y }}
@@ -2753,14 +2816,33 @@ Return only the revised synopsis.`;
                       </div>
                     );
                   })}
+                  {boardDragPreview ? (() => {
+                    const c = characters.find((x) => x.id === boardDragPreview.id);
+                    if (!c) return null;
+                    return (
+                      <div
+                        className="pointer-events-none absolute z-20 w-36 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow-2xl"
+                        style={{ left: boardDragPreview.x, top: boardDragPreview.y }}
+                      >
+                        <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
+                          {c.imageDataUrl ? (
+                            <img src={c.imageDataUrl} alt={c.name} className="absolute inset-0 h-full w-full object-cover object-top" />
+                          ) : (
+                            <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
+                          )}
+                          <div className="absolute inset-x-0 top-4 bg-black/45 px-1 py-0.5 text-center text-[11px] font-semibold text-white">{c.name}</div>
+                        </div>
+                      </div>
+                    );
+                  })() : null}
                 </div>
 
                 <div
-                  className="absolute inset-x-6 bottom-0 h-36 rounded-t-2xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 p-3"
+                  className="absolute inset-x-6 bottom-0 h-36 rounded-t-2xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 px-3 pb-3 pt-1"
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={dropCharacterToBottomDeck}
                 >
-                  <div className="flex gap-2 overflow-x-auto">
+                  <div className="flex gap-2 overflow-x-auto pt-1">
                     {activeStory.characterIds
                       .filter((id) => !activeStory.boardNodes.some((n) => n.characterId === id))
                       .map((id) => {
@@ -2771,7 +2853,7 @@ Return only the revised synopsis.`;
                             key={id}
                             draggable
                             onDragStart={(e) => e.dataTransfer.setData("text/character-id", id)}
-                            className="relative shrink-0 w-24 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-1"
+                            className="relative -mt-10 shrink-0 w-28 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-1"
                           >
                             <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
                               {c.imageDataUrl ? (
