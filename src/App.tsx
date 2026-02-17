@@ -730,6 +730,20 @@ export default function CharacterCreatorApp() {
   const [introIndex, setIntroIndex] = useState(0);
   const [introPrompt, setIntroPrompt] = useState("");
 
+  useEffect(() => {
+    const resetDotState = () => {
+      dotPointerDownRef.current = false;
+    };
+    window.addEventListener("mouseup", resetDotState);
+    window.addEventListener("dragend", resetDotState);
+    window.addEventListener("blur", resetDotState);
+    return () => {
+      window.removeEventListener("mouseup", resetDotState);
+      window.removeEventListener("dragend", resetDotState);
+      window.removeEventListener("blur", resetDotState);
+    };
+  }, []);
+
   const [backstoryRevisionFeedback, setBackstoryRevisionFeedback] = useState("");
   const [introRevisionFeedback, setIntroRevisionFeedback] = useState("");
   const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
@@ -2516,10 +2530,8 @@ Return only the revised synopsis.`;
                     <div className="text-sm text-[hsl(var(--muted-foreground))]">No relationships yet.</div>
                   )}
                 </div>
-                <div className={cn(
-                  "fixed right-0 top-0 z-40 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 transition-transform",
-                  storyRelationshipEditorOpen ? "translate-x-0" : "translate-x-full"
-                )}>
+                {storyRelationshipEditorOpen ? (
+                <div className="fixed right-0 top-0 z-40 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                   <div className="text-sm font-semibold">Relationship Editor</div>
                   <div className="mt-3 space-y-3">
                     <div>
@@ -2564,6 +2576,7 @@ Return only the revised synopsis.`;
                     </div>
                   </div>
                 </div>
+                ) : null}
               </div>
             ) : (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
@@ -2714,7 +2727,9 @@ Return only the revised synopsis.`;
                             }}
                             onMouseUp={(e) => {
                               dotPointerDownRef.current = false;
-                              finishConnectionDrag(n.characterId, e);
+                              if (connectingFromId && connectingFromId !== n.characterId) {
+                                finishConnectionDrag(n.characterId, e);
+                              }
                             }}
                             aria-label="from-dot"
                           />
@@ -2741,11 +2756,11 @@ Return only the revised synopsis.`;
                 </div>
 
                 <div
-                  className="pointer-events-none absolute inset-x-6 bottom-0 h-36 rounded-t-2xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 p-3"
+                  className="absolute inset-x-6 bottom-0 h-36 rounded-t-2xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 p-3"
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={dropCharacterToBottomDeck}
                 >
-                  <div className="pointer-events-auto flex gap-2 overflow-x-auto">
+                  <div className="flex gap-2 overflow-x-auto">
                     {activeStory.characterIds
                       .filter((id) => !activeStory.boardNodes.some((n) => n.characterId === id))
                       .map((id) => {
