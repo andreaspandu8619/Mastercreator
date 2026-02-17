@@ -2440,7 +2440,13 @@ Return only the revised synopsis.`;
                     "clickable rounded-xl border px-3 py-2 text-sm",
                     storyTab === id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]"
                   )}
-                  onClick={() => setStoryTab(id as StoryTab)}
+                  onClick={() => {
+                    setStoryTab(id as StoryTab);
+                    if (id === "relationships") {
+                      setStoryRelationshipEditorOpen(false);
+                      setSelectedRelationshipId(null);
+                    }
+                  }}
                   type="button"
                 >
                   {label}
@@ -2719,8 +2725,11 @@ Return only the revised synopsis.`;
                               dotPointerDownRef.current = true;
                               beginConnectionDrag(n.characterId, e);
                             }}
-                            onMouseUp={() => {
+                            onMouseUp={(e) => {
                               dotPointerDownRef.current = false;
+                              if (connectingFromId && connectingFromId !== n.characterId) {
+                                finishConnectionDrag(n.characterId, e);
+                              }
                             }}
                             aria-label="to-dot"
                           />
