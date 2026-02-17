@@ -14,6 +14,8 @@ import {
   Sun,
   Trash2,
   MessageCircle,
+  BookOpen,
+  Library,
   UserRound,
   Upload,
   X,
@@ -22,8 +24,9 @@ import {
 
 type ThemeMode = "light" | "dark";
 type Gender = "Male" | "Female" | "";
-type Page = "library" | "create" | "chat";
+type Page = "library" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor";
 type CreateTab = "overview" | "definition" | "system" | "intro" | "synopsis";
+type StoryTab = "scenario" | "relationships" | "plot_points";
 
 type ProxyConfig = {
   chatUrl: string;
@@ -45,6 +48,34 @@ type ChatSession = {
   characterName: string;
   characterImageDataUrl: string;
   messages: ChatMessage[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+type StoryRelationship = {
+  id: string;
+  fromCharacterId: string;
+  toCharacterId: string;
+  alignment: string;
+  relationType: string;
+  details: string;
+  createdAt: string;
+};
+
+type StoryBoardNode = {
+  characterId: string;
+  x: number;
+  y: number;
+};
+
+type StoryProject = {
+  id: string;
+  title: string;
+  characterIds: string[];
+  scenario: string;
+  plotPoints: string[];
+  relationships: StoryRelationship[];
+  boardNodes: StoryBoardNode[];
   createdAt: string;
   updatedAt: string;
 };
@@ -77,6 +108,7 @@ const THEME_KEY = "mastercreator_theme";
 const PROXY_KEY = "mastercreator_proxy";
 const PERSONA_KEY = "mastercreator_persona";
 const CHAT_SESSIONS_KEY = "mastercreator_chat_sessions_v1";
+const STORIES_KEY = "mastercreator_stories_v1";
 
 const DEFAULT_PROXY: ProxyConfig = {
   chatUrl: "https://llm.chutes.ai/v1/chat/completions",
@@ -130,6 +162,29 @@ const RACES: string[] = [
   "Merfolk",
   "Dragonborn",
   "Undead",
+  "Other",
+];
+
+const REL_ALIGNMENTS = [
+  "Allied",
+  "Friendly",
+  "Neutral",
+  "Tense",
+  "Hostile",
+  "Rival",
+  "Dependent",
+  "Manipulative",
+];
+
+const REL_TYPES = [
+  "Romantic",
+  "Platonic",
+  "Familial",
+  "Step-familial",
+  "Professional",
+  "Mentor/Student",
+  "Enemy",
+  "Ally",
   "Other",
 ];
 
@@ -618,6 +673,23 @@ export default function CharacterCreatorApp() {
 
   const [query, setQuery] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
+
+  const [stories, setStories] = useState<StoryProject[]>([]);
+  const [storyDraftCharacterIds, setStoryDraftCharacterIds] = useState<string[]>([]);
+  const [storySidebarHidden, setStorySidebarHidden] = useState(false);
+  const [activeStoryId, setActiveStoryId] = useState<string | null>(null);
+  const [storyTab, setStoryTab] = useState<StoryTab>("scenario");
+  const [storyScenarioPrompt, setStoryScenarioPrompt] = useState("");
+  const [storyScenarioRevision, setStoryScenarioRevision] = useState("");
+  const [storyPlotPointInput, setStoryPlotPointInput] = useState("");
+  const [storyPlotPointPrompt, setStoryPlotPointPrompt] = useState("");
+  const [storyPlotPointRevision, setStoryPlotPointRevision] = useState("");
+  const [storyRelationshipEditorOpen, setStoryRelationshipEditorOpen] = useState(false);
+  const [storyRelFromId, setStoryRelFromId] = useState("");
+  const [storyRelToId, setStoryRelToId] = useState("");
+  const [storyRelAlignment, setStoryRelAlignment] = useState("Neutral");
+  const [storyRelType, setStoryRelType] = useState("Platonic");
+  const [storyRelDetails, setStoryRelDetails] = useState("");
   const [showCreatePreview, setShowCreatePreview] = useState(true);
   const [createPreviewOpen, setCreatePreviewOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
@@ -726,6 +798,30 @@ export default function CharacterCreatorApp() {
       setChatSessions(normalized);
     }
 
+    const savedStories = safeParseJSON(localStorage.getItem(STORIES_KEY) || "");
+    if (Array.isArray(savedStories)) {
+      const normalizedStories = savedStories
+        .map((s) => {
+          if (!s || typeof s !== "object") return null;
+          const id = typeof (s as any).id === "string" ? (s as any).id : uid();
+          const now = new Date().toISOString();
+          return {
+            id,
+            title: collapseWhitespace((s as any).title || "Untitled story"),
+            characterIds: normalizeStringArray((s as any).characterIds),
+            scenario: typeof (s as any).scenario === "string" ? (s as any).scenario : "",
+            plotPoints: normalizeStringArray((s as any).plotPoints),
+            relationships: Array.isArray((s as any).relationships) ? (s as any).relationships : [],
+            boardNodes: Array.isArray((s as any).boardNodes) ? (s as any).boardNodes : [],
+            createdAt: typeof (s as any).createdAt === "string" ? (s as any).createdAt : now,
+            updatedAt: typeof (s as any).updatedAt === "string" ? (s as any).updatedAt : now,
+          } as StoryProject;
+        })
+        .filter((x): x is StoryProject => !!x)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      setStories(normalizedStories);
+    }
+
     (async () => {
       try {
         const fromIdb = await idbGetAllCharacters();
@@ -820,6 +916,10 @@ export default function CharacterCreatorApp() {
   useEffect(() => {
     localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(chatSessions));
   }, [chatSessions]);
+
+  useEffect(() => {
+    localStorage.setItem(STORIES_KEY, JSON.stringify(stories));
+  }, [stories]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -1231,6 +1331,147 @@ export default function CharacterCreatorApp() {
       persona ? `User persona: ${persona}` : "User persona: (not provided)",
       "Respond as the character in chat. Keep continuity with prior messages.",
     ].join("\n");
+  }
+
+  const activeStory = useMemo(
+    () => stories.find((s) => s.id === activeStoryId) || null,
+    [stories, activeStoryId]
+  );
+
+  function updateStory(id: string, patch: Partial<StoryProject>) {
+    setStories((prev) =>
+      prev.map((s) =>
+        s.id === id
+          ? {
+              ...s,
+              ...patch,
+              updatedAt: new Date().toISOString(),
+            }
+          : s
+      )
+    );
+  }
+
+  function proceedStoryDraft() {
+    if (!storyDraftCharacterIds.length) {
+      alert("Add at least one character to the story field.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const title = `Story ${new Date().toLocaleDateString()}`;
+    const story: StoryProject = {
+      id: uid(),
+      title,
+      characterIds: Array.from(new Set(storyDraftCharacterIds)),
+      scenario: "",
+      plotPoints: [],
+      relationships: [],
+      boardNodes: Array.from(new Set(storyDraftCharacterIds)).map((id, i) => ({
+        characterId: id,
+        x: 60 + (i % 4) * 170,
+        y: 80 + Math.floor(i / 4) * 110,
+      })),
+      createdAt: now,
+      updatedAt: now,
+    };
+    setStories((prev) => [story, ...prev]);
+    setActiveStoryId(story.id);
+    setStoryDraftCharacterIds([]);
+    setPage("story_editor");
+    setStoryTab("scenario");
+  }
+
+  function exportStoryTxt(story: StoryProject) {
+    const chars = story.characterIds
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c);
+    const relLines = story.relationships.map((r) => {
+      const a = chars.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
+      const b = chars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
+      return `- ${a} -> ${b} | ${r.alignment} | ${r.relationType}${r.details ? ` | ${r.details}` : ""}`;
+    });
+    const text = [
+      `# ${story.title}`,
+      "",
+      "## Characters",
+      ...chars.map((c) => characterToTxt(c)),
+      "",
+      "## Storywriting",
+      "### Scenario",
+      story.scenario || "",
+      "",
+      "### Relationships",
+      ...(relLines.length ? relLines : ["- None"]),
+      "",
+      "### Plot Points",
+      ...(story.plotPoints.length ? story.plotPoints.map((p) => `- ${p}`) : ["- None"]),
+      "",
+    ].join("\n");
+    downloadText((filenameSafe(story.title) || "story") + ".txt", text);
+  }
+
+  function toggleStoryDraftCharacter(id: string) {
+    setStoryDraftCharacterIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
+
+  function dropCharacterToStoryDraft(e: React.DragEvent) {
+    e.preventDefault();
+    const id = e.dataTransfer.getData("text/character-id");
+    if (!id) return;
+    setStoryDraftCharacterIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }
+
+  function upsertBoardNode(characterId: string, x: number, y: number) {
+    if (!activeStory) return;
+    const clampedX = Math.max(20, Math.min(1200, x));
+    const clampedY = Math.max(20, Math.min(900, y));
+    const exists = activeStory.boardNodes.some((n) => n.characterId === characterId);
+    const nextNodes = exists
+      ? activeStory.boardNodes.map((n) =>
+          n.characterId === characterId ? { ...n, x: clampedX, y: clampedY } : n
+        )
+      : [...activeStory.boardNodes, { characterId, x: clampedX, y: clampedY }];
+    updateStory(activeStory.id, { boardNodes: nextNodes });
+  }
+
+  function dropCharacterToRelationshipBoard(e: React.DragEvent<HTMLDivElement>) {
+    if (!activeStory) return;
+    e.preventDefault();
+    const id = e.dataTransfer.getData("text/character-id");
+    if (!id) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    upsertBoardNode(id, e.clientX - rect.left - 60, e.clientY - rect.top - 28);
+    if (!activeStory.characterIds.includes(id)) {
+      updateStory(activeStory.id, { characterIds: [...activeStory.characterIds, id] });
+    }
+  }
+
+  function openRelationshipEditor(fromId: string, toId: string) {
+    setStoryRelFromId(fromId);
+    setStoryRelToId(toId);
+    setStoryRelAlignment("Neutral");
+    setStoryRelType("Platonic");
+    setStoryRelDetails("");
+    setStoryRelationshipEditorOpen(true);
+  }
+
+  function saveRelationshipEdge() {
+    if (!activeStory || !storyRelFromId || !storyRelToId) return;
+    const rel: StoryRelationship = {
+      id: uid(),
+      fromCharacterId: storyRelFromId,
+      toCharacterId: storyRelToId,
+      alignment: storyRelAlignment,
+      relationType: storyRelType,
+      details: storyRelDetails,
+      createdAt: new Date().toISOString(),
+    };
+    updateStory(activeStory.id, {
+      relationships: [rel, ...activeStory.relationships],
+    });
+    setStoryRelationshipEditorOpen(false);
   }
 
   async function sendChatMessage() {
@@ -1672,6 +1913,107 @@ Return only the revised synopsis.`;
     setIntroIndex((i) => clampIndex(i, Math.max(1, introMessages.length)));
   }, [introMessages.length]);
 
+  async function generateStoryScenario() {
+    if (!activeStory) return;
+    const prompt = collapseWhitespace(storyScenarioPrompt);
+    if (!prompt) {
+      setGenError("Write a scenario prompt first.");
+      return;
+    }
+    const charBlob = activeStory.characterIds
+      .map((id) => characters.find((c) => c.id === id)?.name || id)
+      .join(", ");
+    setGenError(null);
+    setGenLoading(true);
+    try {
+      const out = await callProxyChatCompletion({
+        system:
+          "You create roleplay story scenarios for multi-character casts. Return only scenario prose.",
+        user: `Characters: ${charBlob}\nPrompt: ${prompt}`,
+        maxTokens: Math.min(400, Math.max(120, proxyMaxTokens)),
+      });
+      updateStory(activeStory.id, { scenario: out });
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Scenario generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  async function reviseStoryScenario() {
+    if (!activeStory) return;
+    const feedback = collapseWhitespace(storyScenarioRevision);
+    if (!feedback) {
+      setGenError("Write scenario revision feedback first.");
+      return;
+    }
+    setGenError(null);
+    setGenLoading(true);
+    try {
+      const out = await callProxyChatCompletion({
+        system: "Revise scenario text based on feedback. Return only revised scenario.",
+        user: `Current scenario:\n${activeStory.scenario}\n\nFeedback:\n${feedback}`,
+        maxTokens: Math.min(450, Math.max(140, proxyMaxTokens)),
+      });
+      updateStory(activeStory.id, { scenario: out });
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Scenario revision failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  async function generateStoryPlotPoints() {
+    if (!activeStory) return;
+    const prompt = collapseWhitespace(storyPlotPointPrompt);
+    if (!prompt) {
+      setGenError("Write a plot point prompt first.");
+      return;
+    }
+    setGenError(null);
+    setGenLoading(true);
+    try {
+      const out = await callProxyChatCompletion({
+        system:
+          "Generate detailed plot point list. Return JSON array of strings only.",
+        user: `Prompt: ${prompt}`,
+        maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
+      });
+      const items = parseGeneratedBackstoryEntries(out);
+      if (!items.length) throw new Error("No valid plot points returned.");
+      updateStory(activeStory.id, { plotPoints: items });
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Plot point generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  async function reviseStoryPlotPoints() {
+    if (!activeStory) return;
+    const feedback = collapseWhitespace(storyPlotPointRevision);
+    if (!feedback) {
+      setGenError("Write plot point revision feedback first.");
+      return;
+    }
+    setGenError(null);
+    setGenLoading(true);
+    try {
+      const out = await callProxyChatCompletion({
+        system: "Revise plot point list. Return JSON array of strings only.",
+        user: `Current points:\n${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}\n\nFeedback:\n${feedback}`,
+        maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
+      });
+      const items = parseGeneratedBackstoryEntries(out);
+      if (!items.length) throw new Error("No valid revised plot points returned.");
+      updateStory(activeStory.id, { plotPoints: items });
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Plot point revision failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
   const draft = getDraftCharacter();
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
@@ -1729,6 +2071,12 @@ Return only the revised synopsis.`;
             </Button>
             <Button variant="secondary" onClick={() => setPage("chat")}>
               <MessageCircle className="h-4 w-4" /> Chats
+            </Button>
+            <Button variant="secondary" onClick={() => setPage("storywriting")}>
+              <BookOpen className="h-4 w-4" /> Storywriting
+            </Button>
+            <Button variant="secondary" onClick={() => setPage("my_stories")}>
+              <Library className="h-4 w-4" /> My Stories
             </Button>
             <Button
               variant="secondary"
@@ -1865,6 +2213,329 @@ Return only the revised synopsis.`;
                 <div className="text-sm text-[hsl(var(--muted-foreground))]">Pick a chat session from the left.</div>
               )}
             </div>
+          </div>
+        ) : page === "storywriting" ? (
+          <div className="mt-6 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-xl font-semibold">Storywriting</div>
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">Build a cast by dragging characters into the story field.</div>
+              </div>
+              <Button variant="secondary" onClick={() => setPage("library")}>
+                <ArrowLeft className="h-4 w-4" /> Dashboard
+              </Button>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-4">
+              {!storySidebarHidden ? (
+                <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 lg:col-span-1">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div className="text-sm font-semibold">Character Field</div>
+                    <Button variant="secondary" onClick={() => setStorySidebarHidden(true)}>Hide</Button>
+                  </div>
+                  <div className="space-y-2">
+                    {characters.map((c) => (
+                      <div
+                        key={c.id}
+                        draggable
+                        onDragStart={(e) => e.dataTransfer.setData("text/character-id", c.id)}
+                        className="clickable rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3"
+                      >
+                        <div className="text-sm font-medium">{c.name}</div>
+                        <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">Drag to story field</div>
+                      </div>
+                    ))}
+                    {characters.length === 0 ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No characters available.</div> : null}
+                  </div>
+                </div>
+              ) : (
+                <div className="lg:col-span-1">
+                  <Button variant="secondary" onClick={() => setStorySidebarHidden(false)}>Unhide Character Field</Button>
+                </div>
+              )}
+
+              <div
+                className="rounded-2xl border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 lg:col-span-3"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={dropCharacterToStoryDraft}
+              >
+                <div className="mb-3 text-sm font-semibold">Story Field (drop characters here)</div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {storyDraftCharacterIds.map((id) => {
+                    const c = characters.find((x) => x.id === id);
+                    if (!c) return null;
+                    return (
+                      <div key={id} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
+                        <div className="text-sm font-medium">{c.name}</div>
+                        <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">In this story draft</div>
+                        <Button className="mt-2 w-full" variant="secondary" onClick={() => toggleStoryDraftCharacter(id)}>Remove</Button>
+                      </div>
+                    );
+                  })}
+                </div>
+                {!storyDraftCharacterIds.length ? (
+                  <div className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">No characters dropped yet.</div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="fixed bottom-4 right-4">
+              <Button variant="primary" className="rounded-full px-6 py-3" onClick={proceedStoryDraft}>
+                Proceed
+              </Button>
+            </div>
+          </div>
+        ) : page === "my_stories" ? (
+          <div className="mt-6 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xl font-semibold">My Stories</div>
+              <Button variant="secondary" onClick={() => setPage("library")}>
+                <ArrowLeft className="h-4 w-4" /> Dashboard
+              </Button>
+            </div>
+            <div className="space-y-2">
+              {stories.map((s) => (
+                <div key={s.id} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="font-medium">{s.title}</div>
+                      <div className="text-xs text-[hsl(var(--muted-foreground))]">{new Date(s.updatedAt).toLocaleString()}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="secondary" onClick={() => { setActiveStoryId(s.id); setPage("story_editor"); }}>Open</Button>
+                      <Button variant="secondary" onClick={() => downloadJSON((filenameSafe(s.title) || "story") + ".json", s)}>
+                        <Download className="h-4 w-4" /> JSON
+                      </Button>
+                      <Button variant="secondary" onClick={() => exportStoryTxt(s)}>
+                        <Download className="h-4 w-4" /> TXT
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {stories.length === 0 ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No stories yet.</div> : null}
+            </div>
+          </div>
+        ) : page === "story_editor" ? (
+          <div className="mt-6 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-xl font-semibold">{activeStory?.title || "Story Editor"}</div>
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">Scenario • Relationships • Plot Points</div>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => setPage("my_stories")}>My Stories</Button>
+                <Button variant="secondary" onClick={() => activeStory && downloadJSON((filenameSafe(activeStory.title) || "story") + ".json", activeStory)}>
+                  <Download className="h-4 w-4" /> JSON
+                </Button>
+                <Button variant="secondary" onClick={() => activeStory && exportStoryTxt(activeStory)}>
+                  <Download className="h-4 w-4" /> TXT
+                </Button>
+                <Button variant="primary" onClick={() => activeStory && updateStory(activeStory.id, {})}>Save</Button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {[
+                ["scenario", "Scenario"],
+                ["relationships", "Relationships"],
+                ["plot_points", "Plot Points"],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  className={cn(
+                    "clickable rounded-xl border px-3 py-2 text-sm",
+                    storyTab === id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]"
+                  )}
+                  onClick={() => setStoryTab(id as StoryTab)}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {!activeStory ? (
+              <div className="text-sm text-[hsl(var(--muted-foreground))]">Select a story first.</div>
+            ) : storyTab === "scenario" ? (
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
+                <Textarea
+                  value={activeStory.scenario}
+                  onChange={(e) => updateStory(activeStory.id, { scenario: e.target.value })}
+                  rows={10}
+                  placeholder="Scenario..."
+                />
+                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                  <div className="text-sm font-medium">Generate scenario</div>
+                  <Textarea value={storyScenarioPrompt} onChange={(e) => setStoryScenarioPrompt(e.target.value)} rows={3} placeholder="Prompt..." />
+                  <Button variant="secondary" onClick={generateStoryScenario} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate</Button>
+                </div>
+                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                  <div className="text-sm font-medium">Revise scenario</div>
+                  <Textarea value={storyScenarioRevision} onChange={(e) => setStoryScenarioRevision(e.target.value)} rows={3} placeholder="Revision feedback..." />
+                  <Button variant="secondary" onClick={reviseStoryScenario} disabled={genLoading}><Sparkles className="h-4 w-4" /> Revise</Button>
+                </div>
+              </div>
+            ) : storyTab === "relationships" ? (
+              <div className="relative min-h-[72vh] overflow-hidden rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-0">
+                <div className="h-full min-h-[72vh] w-full rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))]"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={dropCharacterToRelationshipBoard}
+                >
+                  {activeStory.boardNodes.map((n) => {
+                    const c = characters.find((x) => x.id === n.characterId);
+                    if (!c) return null;
+                    return (
+                      <div
+                        key={n.characterId}
+                        draggable
+                        onDragEnd={(e) => {
+                          const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+                          upsertBoardNode(n.characterId, e.clientX - rect.left - 60, e.clientY - rect.top - 28);
+                        }}
+                        className="absolute w-32 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 text-sm shadow"
+                        style={{ left: n.x, top: n.y }}
+                      >
+                        <div className="font-medium truncate">{c.name}</div>
+                        <div className="mt-1 flex gap-1">
+                          <button className="clickable rounded border border-[hsl(var(--border))] px-1 text-xs" onClick={() => openRelationshipEditor(n.characterId, activeStory.characterIds.find((id) => id !== n.characterId) || "")}>Link</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="pointer-events-none absolute inset-x-6 bottom-0 h-28 rounded-t-2xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 p-3">
+                  <div className="pointer-events-auto flex gap-2 overflow-x-auto">
+                    {activeStory.characterIds.map((id) => {
+                      const c = characters.find((x) => x.id === id);
+                      if (!c) return null;
+                      return (
+                        <div
+                          key={id}
+                          draggable
+                          onDragStart={(e) => e.dataTransfer.setData("text/character-id", id)}
+                          className="shrink-0 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm"
+                        >
+                          {c.name}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className={cn(
+                  "absolute left-3 top-3 w-72 transition-all",
+                  activeStory.relationships.length ? "translate-x-0 opacity-100" : "-translate-x-4 opacity-0"
+                )}>
+                  <div className="space-y-2">
+                    {activeStory.relationships.map((r) => {
+                      const a = characters.find((c) => c.id === r.fromCharacterId)?.name || "?";
+                      const b = characters.find((c) => c.id === r.toCharacterId)?.name || "?";
+                      return (
+                        <div key={r.id} className="rounded-lg border border-[hsl(var(--hover-accent))] bg-[hsl(var(--card))] px-3 py-2 text-xs">
+                          <div className="font-medium">{a} → {b}</div>
+                          <div className="text-[hsl(var(--muted-foreground))]">{r.alignment}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className={cn(
+                  "absolute right-0 top-0 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 transition-transform",
+                  storyRelationshipEditorOpen ? "translate-x-0" : "translate-x-full"
+                )}>
+                  <div className="text-sm font-semibold">Relationship Editor</div>
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <div className="text-xs">From</div>
+                      <Select value={storyRelFromId} onChange={(e) => setStoryRelFromId(e.target.value)}>
+                        <option value="">Select character…</option>
+                        {activeStory.characterIds.map((id) => {
+                          const c = characters.find((x) => x.id === id);
+                          return c ? <option key={id} value={id}>{c.name}</option> : null;
+                        })}
+                      </Select>
+                    </div>
+                    <div>
+                      <div className="text-xs">To</div>
+                      <Select value={storyRelToId} onChange={(e) => setStoryRelToId(e.target.value)}>
+                        <option value="">Select character…</option>
+                        {activeStory.characterIds.map((id) => {
+                          const c = characters.find((x) => x.id === id);
+                          return c ? <option key={id} value={id}>{c.name}</option> : null;
+                        })}
+                      </Select>
+                    </div>
+                    <div>
+                      <div className="text-xs">Alignment</div>
+                      <Select value={storyRelAlignment} onChange={(e) => setStoryRelAlignment(e.target.value)}>
+                        {REL_ALIGNMENTS.map((a) => <option key={a} value={a}>{a}</option>)}
+                      </Select>
+                    </div>
+                    <div>
+                      <div className="text-xs">Relationship</div>
+                      <Select value={storyRelType} onChange={(e) => setStoryRelType(e.target.value)}>
+                        {REL_TYPES.map((a) => <option key={a} value={a}>{a}</option>)}
+                      </Select>
+                    </div>
+                    <div>
+                      <div className="text-xs">Details</div>
+                      <Textarea value={storyRelDetails} onChange={(e) => setStoryRelDetails(e.target.value)} rows={4} />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="primary" onClick={saveRelationshipEdge}>Save relation</Button>
+                      <Button variant="secondary" onClick={() => setStoryRelationshipEditorOpen(false)}>Close</Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
+                <div className="flex gap-2">
+                  <Input
+                    value={storyPlotPointInput}
+                    onChange={(e) => setStoryPlotPointInput(e.target.value)}
+                    onKeyDown={(e) => onEnterAdd(e, () => {
+                      if (!activeStory) return;
+                      const v = collapseWhitespace(storyPlotPointInput);
+                      if (!v) return;
+                      updateStory(activeStory.id, { plotPoints: [...activeStory.plotPoints, v] });
+                      setStoryPlotPointInput("");
+                    })}
+                    placeholder="Add plot point..."
+                  />
+                  <Button variant="secondary" onClick={() => {
+                    if (!activeStory) return;
+                    const v = collapseWhitespace(storyPlotPointInput);
+                    if (!v) return;
+                    updateStory(activeStory.id, { plotPoints: [...activeStory.plotPoints, v] });
+                    setStoryPlotPointInput("");
+                  }}>Add</Button>
+                </div>
+                <div className="space-y-2">
+                  {activeStory.plotPoints.map((p, i) => (
+                    <div key={p + i} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 text-sm">
+                      <RichText text={p} />
+                    </div>
+                  ))}
+                  {!activeStory.plotPoints.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No plot points yet.</div> : null}
+                </div>
+                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                  <div className="text-sm font-medium">Generate detailed list</div>
+                  <Textarea value={storyPlotPointPrompt} onChange={(e) => setStoryPlotPointPrompt(e.target.value)} rows={3} placeholder="Prompt..." />
+                  <Button variant="secondary" onClick={generateStoryPlotPoints} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate</Button>
+                </div>
+                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                  <div className="text-sm font-medium">Revise plot points</div>
+                  <Textarea value={storyPlotPointRevision} onChange={(e) => setStoryPlotPointRevision(e.target.value)} rows={3} placeholder="Revision feedback..." />
+                  <Button variant="secondary" onClick={reviseStoryPlotPoints} disabled={genLoading}><Sparkles className="h-4 w-4" /> Revise</Button>
+                </div>
+              </div>
+            )}
+
+            {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
           </div>
         ) : page === "library" ? (
           <div className="mt-6 space-y-4">
