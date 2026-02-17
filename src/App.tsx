@@ -696,6 +696,9 @@ export default function CharacterCreatorApp() {
   const [storyDragCharacterId, setStoryDragCharacterId] = useState<string | null>(null);
   const [draggedToDeckCharacterId, setDraggedToDeckCharacterId] = useState<string | null>(null);
   const [boardDragPreview, setBoardDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [boardPan, setBoardPan] = useState({ x: 0, y: 0 });
+  const [boardPanning, setBoardPanning] = useState(false);
+  const boardPanStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const [saveToastOpen, setSaveToastOpen] = useState(false);
   const dotPointerDownRef = useRef(false);
   const connectingFromIdRef = useRef<string | null>(null);
@@ -1449,8 +1452,8 @@ export default function CharacterCreatorApp() {
 
   function upsertBoardNode(characterId: string, x: number, y: number) {
     if (!activeStory) return;
-    const clampedX = Math.max(20, Math.min(1200, x));
-    const clampedY = Math.max(20, Math.min(900, y));
+    const clampedX = Math.max(-100000, Math.min(100000, x));
+    const clampedY = Math.max(-100000, Math.min(100000, y));
     const exists = activeStory.boardNodes.some((n) => n.characterId === characterId);
     const nextNodes = exists
       ? activeStory.boardNodes.map((n) =>
@@ -1466,7 +1469,7 @@ export default function CharacterCreatorApp() {
     const id = e.dataTransfer.getData("text/character-id");
     if (!id) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    upsertBoardNode(id, e.clientX - rect.left - 60, e.clientY - rect.top - 28);
+    upsertBoardNode(id, e.clientX - rect.left - boardPan.x - 128, e.clientY - rect.top - boardPan.y - 60);
     setDraggedToDeckCharacterId((prev) => (prev === id ? null : prev));
   }
 
@@ -1509,6 +1512,8 @@ export default function CharacterCreatorApp() {
     connectionSnapTargetIdRef.current = null;
     setDraggedToDeckCharacterId(null);
     setBoardDragPreview(null);
+    setBoardPanning(false);
+    boardPanStartRef.current = null;
     setPage("story_editor");
   }
 
@@ -1528,7 +1533,7 @@ export default function CharacterCreatorApp() {
     const baseX = node.x;
     const baseY = node.y;
     return {
-      x: side === "from" ? baseX + 10 : baseX + 134,
+      x: side === "from" ? baseX + 14 : baseX + 242,
       y: baseY + 10,
     };
   }
@@ -2676,14 +2681,30 @@ Return only the revised synopsis.`;
               <div className="relative h-[calc(100vh-86px)] w-full overflow-hidden rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-0">
                 <div
                   ref={boardContainerRef}
-                  className="h-full w-full rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))]"
+                  className={cn(
+                    "h-full w-full rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))]",
+                    boardPanning ? "cursor-grabbing" : "cursor-grab"
+                  )}
+                  onMouseDown={(e) => {
+                    if (e.button !== 0) return;
+                    const target = e.target as HTMLElement;
+                    if (target.closest("[data-board-item],button,input,textarea,select")) return;
+                    setBoardPanning(true);
+                    boardPanStartRef.current = { x: e.clientX, y: e.clientY, panX: boardPan.x, panY: boardPan.y };
+                  }}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={dropCharacterToRelationshipBoard}
                   onMouseMove={(e) => {
+                    if (boardPanning && boardPanStartRef.current) {
+                      const dx = e.clientX - boardPanStartRef.current.x;
+                      const dy = e.clientY - boardPanStartRef.current.y;
+                      setBoardPan({ x: boardPanStartRef.current.panX + dx, y: boardPanStartRef.current.panY + dy });
+                      return;
+                    }
                     if (!connectingFromIdRef.current) return;
                     const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                    const px = e.clientX - rect.left;
-                    const py = e.clientY - rect.top;
+                    const px = e.clientX - rect.left - boardPan.x;
+                    const py = e.clientY - rect.top - boardPan.y;
                     const snapTargetId = findConnectionSnapTarget(px, py);
                     connectionSnapTargetIdRef.current = snapTargetId;
                     setConnectionSnapTargetId(snapTargetId);
@@ -2697,6 +2718,8 @@ Return only the revised synopsis.`;
                     setConnectingPointer({ x: px, y: py });
                   }}
                   onMouseUp={() => {
+                    setBoardPanning(false);
+                    boardPanStartRef.current = null;
                     const currentFromId = connectingFromIdRef.current;
                     const snapTargetId = connectionSnapTargetIdRef.current;
                     if (currentFromId && snapTargetId && currentFromId !== snapTargetId) {
@@ -2710,7 +2733,12 @@ Return only the revised synopsis.`;
                       setConnectionSnapTargetId(null);
                     }
                   }}
+                  onMouseLeave={() => {
+                    setBoardPanning(false);
+                    boardPanStartRef.current = null;
+                  }}
                 >
+                  <div className="absolute inset-0" style={{ transform: `translate(${boardPan.x}px, ${boardPan.y}px)` }}>
                   <svg className="pointer-events-none absolute inset-0 h-full w-full">
                     {activeStory.relationships.map((r) => {
                       const from = getBoardNodeCenter(r.fromCharacterId, "to");
@@ -2749,6 +2777,7 @@ Return only the revised synopsis.`;
                     return (
                       <div
                         key={n.characterId}
+                        data-board-item="1"
                         draggable
                         onDragStart={(e) => {
                           if (dotPointerDownRef.current) {
@@ -2772,8 +2801,8 @@ Return only the revised synopsis.`;
                           const rect = boardContainerRef.current.getBoundingClientRect();
                           setBoardDragPreview({
                             id: n.characterId,
-                            x: e.clientX - rect.left - 74,
-                            y: e.clientY - rect.top - 40,
+                            x: e.clientX - rect.left - boardPan.x - 128,
+                            y: e.clientY - rect.top - boardPan.y - 60,
                           });
                         }}
                         onDragEnd={(e) => {
@@ -2784,11 +2813,11 @@ Return only the revised synopsis.`;
                             return;
                           }
                           const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
-                          upsertBoardNode(n.characterId, e.clientX - rect.left - 60, e.clientY - rect.top - 28);
+                          upsertBoardNode(n.characterId, e.clientX - rect.left - boardPan.x - 128, e.clientY - rect.top - boardPan.y - 60);
                           setStoryDragCharacterId(null);
                         }}
                         className={cn(
-                          "absolute w-36 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow transition-all duration-200",
+                          "absolute w-64 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow transition-all duration-200",
                           storyDragCharacterId === n.characterId && "scale-95 opacity-70"
                         )}
                         style={{ left: n.x, top: n.y }}
@@ -2810,7 +2839,7 @@ Return only the revised synopsis.`;
                             }}
                             onMouseUp={(e) => {
                               dotPointerDownRef.current = false;
-                              if (connectingFromId && connectingFromId !== n.characterId) {
+                              if (connectingFromIdRef.current && connectingFromIdRef.current !== n.characterId) {
                                 finishConnectionDrag(n.characterId, e);
                               }
                             }}
@@ -2825,7 +2854,7 @@ Return only the revised synopsis.`;
                             }}
                             onMouseUp={(e) => {
                               dotPointerDownRef.current = false;
-                              if (connectingFromId && connectingFromId !== n.characterId) {
+                              if (connectingFromIdRef.current && connectingFromIdRef.current !== n.characterId) {
                                 finishConnectionDrag(n.characterId, e);
                               }
                             }}
@@ -2841,7 +2870,7 @@ Return only the revised synopsis.`;
                     if (!c) return null;
                     return (
                       <div
-                        className="pointer-events-none absolute z-20 w-36 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow-2xl"
+                        className="pointer-events-none absolute z-20 w-64 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow-2xl"
                         style={{ left: boardDragPreview.x, top: boardDragPreview.y }}
                       >
                         <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
@@ -2855,6 +2884,7 @@ Return only the revised synopsis.`;
                       </div>
                     );
                   })() : null}
+                  </div>
                 </div>
 
                 <div
