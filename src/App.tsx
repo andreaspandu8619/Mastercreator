@@ -705,7 +705,13 @@ export default function CharacterCreatorApp() {
     offsetX: number;
     offsetY: number;
   } | null>(null);
-  const [storywritingDragPreview, setStorywritingDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [storywritingDragPreview, setStorywritingDragPreview] = useState<{
+    id: string;
+    x: number;
+    y: number;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
   const [boardPan, setBoardPan] = useState({ x: 0, y: 0 });
   const [boardPanning, setBoardPanning] = useState(false);
   const boardPanStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
@@ -713,10 +719,10 @@ export default function CharacterCreatorApp() {
   const dotPointerDownRef = useRef(false);
   const connectingFromIdRef = useRef<string | null>(null);
   const connectionSnapTargetIdRef = useRef<string | null>(null);
-  const transparentDragImageRef = useRef<HTMLCanvasElement | null>(null);
   const boardContainerRef = useRef<HTMLDivElement | null>(null);
   const relationshipDeckRef = useRef<HTMLDivElement | null>(null);
   const storywritingDndRef = useRef<HTMLDivElement | null>(null);
+  const storywritingFieldRef = useRef<HTMLDivElement | null>(null);
   const [showCreatePreview, setShowCreatePreview] = useState(true);
   const [createPreviewOpen, setCreatePreviewOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
@@ -800,6 +806,22 @@ export default function CharacterCreatorApp() {
       window.removeEventListener("mouseup", handleMouseUp);
     };
   }, [relationshipDrag, boardPan.x, boardPan.y, activeStoryId]);
+
+  useEffect(() => {
+    if (!storywritingDragPreview) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      updateStorywritingCardDrag(e.clientX, e.clientY);
+    };
+    const handleMouseUp = () => {
+      endStorywritingCardDrag();
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [storywritingDragPreview]);
 
   const [backstoryRevisionFeedback, setBackstoryRevisionFeedback] = useState("");
   const [introRevisionFeedback, setIntroRevisionFeedback] = useState("");
@@ -1551,6 +1573,58 @@ export default function CharacterCreatorApp() {
     const id = e.dataTransfer.getData("text/character-id");
     if (!id) return;
     setStoryDraftCharacterIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }
+
+  function beginStorywritingCardDrag(characterId: string, e: React.MouseEvent<HTMLDivElement>) {
+    if (!storywritingDndRef.current) return;
+    e.preventDefault();
+    const dragRootRect = storywritingDndRef.current.getBoundingClientRect();
+    const cardRect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+    const offsetX = e.clientX - cardRect.left;
+    const offsetY = e.clientY - cardRect.top;
+    setStoryDragCharacterId(characterId);
+    setStorywritingDragPreview({
+      id: characterId,
+      x: e.clientX - dragRootRect.left - offsetX,
+      y: e.clientY - dragRootRect.top - offsetY,
+      offsetX,
+      offsetY,
+    });
+  }
+
+  function updateStorywritingCardDrag(clientX: number, clientY: number) {
+    if (!storywritingDndRef.current) return;
+    const dragRootRect = storywritingDndRef.current.getBoundingClientRect();
+    setStorywritingDragPreview((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        x: clientX - dragRootRect.left - prev.offsetX,
+        y: clientY - dragRootRect.top - prev.offsetY,
+      };
+    });
+  }
+
+  function endStorywritingCardDrag() {
+    if (!storywritingDragPreview || !storywritingDndRef.current || !storywritingFieldRef.current) {
+      setStorywritingDragPreview(null);
+      setStoryDragCharacterId(null);
+      return;
+    }
+    const dragRootRect = storywritingDndRef.current.getBoundingClientRect();
+    const cardCenterX = dragRootRect.left + storywritingDragPreview.x + 88;
+    const cardCenterY = dragRootRect.top + storywritingDragPreview.y + 120;
+    const fieldRect = storywritingFieldRef.current.getBoundingClientRect();
+    const droppedInField =
+      cardCenterX >= fieldRect.left &&
+      cardCenterX <= fieldRect.right &&
+      cardCenterY >= fieldRect.top &&
+      cardCenterY <= fieldRect.bottom;
+    if (droppedInField) {
+      setStoryDraftCharacterIds((prev) => (prev.includes(storywritingDragPreview.id) ? prev : [...prev, storywritingDragPreview.id]));
+    }
+    setStorywritingDragPreview(null);
+    setStoryDragCharacterId(null);
   }
 
   function upsertBoardNode(characterId: string, x: number, y: number) {
@@ -2547,28 +2621,9 @@ Return only the revised synopsis.`;
                     {characters.map((c) => (
                       <div
                         key={c.id}
-                        draggable
-                        onDragStart={(e) => {
-                          if (!transparentDragImageRef.current) {
-                            const canvas = document.createElement("canvas");
-                            canvas.width = 1;
-                            canvas.height = 1;
-                            transparentDragImageRef.current = canvas;
-                          }
-                          e.dataTransfer.setDragImage(transparentDragImageRef.current, 0, 0);
-                          e.dataTransfer.setData("text/character-id", c.id);
-                          setStoryDragCharacterId(c.id);
-                          setStorywritingDragPreview({ id: c.id, x: 20, y: 20 });
-                        }}
-                        onDrag={(e) => {
-                          if (!storywritingDndRef.current) return;
-                          if (e.clientX === 0 && e.clientY === 0) return;
-                          const rect = storywritingDndRef.current.getBoundingClientRect();
-                          setStorywritingDragPreview({ id: c.id, x: e.clientX - rect.left - 80, y: e.clientY - rect.top - 90 });
-                        }}
-                        onDragEnd={() => {
-                          setStoryDragCharacterId(null);
-                          setStorywritingDragPreview(null);
+                        onMouseDown={(e) => {
+                          if (e.button !== 0) return;
+                          beginStorywritingCardDrag(c.id, e);
                         }}
                         className={cn(
                           "clickable rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-2 transition-all duration-200",
@@ -2595,6 +2650,7 @@ Return only the revised synopsis.`;
               )}
 
               <div
+                ref={storywritingFieldRef}
                 className="rounded-2xl border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 lg:col-span-3"
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={dropCharacterToStoryDraft}
@@ -2635,7 +2691,7 @@ Return only the revised synopsis.`;
               const c = characters.find((x) => x.id === storywritingDragPreview.id);
               if (!c) return null;
               return (
-                <div className="pointer-events-none fixed z-40 w-44 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 shadow-2xl" style={{ left: storywritingDragPreview.x, top: storywritingDragPreview.y }}>
+                <div className="pointer-events-none absolute z-40 w-44 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 shadow-2xl" style={{ left: storywritingDragPreview.x, top: storywritingDragPreview.y }}>
                   <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
                     {c.imageDataUrl ? <img src={c.imageDataUrl} alt={c.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : <div className="absolute inset-0 bg-[hsl(var(--muted))]" />}
                     <div className="absolute inset-x-0 top-0 bg-black/45 px-2 py-1 text-xs font-semibold text-white">{c.name}</div>
@@ -3095,10 +3151,10 @@ Return only the revised synopsis.`;
 
                 <div
                   ref={relationshipDeckRef}
-                  className="absolute inset-x-6 bottom-0 z-20 h-44 overflow-visible rounded-t-2xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 px-3 pb-3 pt-1"
+                  className="absolute inset-x-6 bottom-0 z-20 h-32 overflow-visible rounded-t-2xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 px-3 pb-3 pt-1"
                   onDragOver={(e) => e.preventDefault()}
                 >
-                  <div className="flex gap-2 overflow-x-auto pb-2 pt-14">
+                  <div className="flex items-end gap-2 overflow-x-auto overflow-y-visible pb-1 pt-1">
                     {activeStory.characterIds
                       .filter((id) => !activeStory.boardNodes.some((n) => n.characterId === id))
                       .map((id) => {
@@ -3111,7 +3167,7 @@ Return only the revised synopsis.`;
                               if (e.button !== 0) return;
                               beginRelationshipCardDrag(id, "deck", e);
                             }}
-                            className="relative z-10 shrink-0 w-44 -translate-y-10 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-1 transition-transform duration-200 hover:-translate-y-14"
+                            className="relative z-10 shrink-0 w-44 -translate-y-24 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-1 transition-transform duration-200 hover:-translate-y-28"
                           >
                             <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
                               {c.imageDataUrl ? (
