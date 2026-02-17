@@ -24,7 +24,7 @@ import {
 
 type ThemeMode = "light" | "dark";
 type Gender = "Male" | "Female" | "";
-type Page = "library" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor";
+type Page = "library" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board";
 type CreateTab = "overview" | "definition" | "system" | "intro" | "synopsis";
 type StoryTab = "scenario" | "relationships" | "plot_points";
 
@@ -693,7 +693,9 @@ export default function CharacterCreatorApp() {
   const [connectingFromId, setConnectingFromId] = useState<string | null>(null);
   const [connectingPointer, setConnectingPointer] = useState<{ x: number; y: number } | null>(null);
   const [storyDragCharacterId, setStoryDragCharacterId] = useState<string | null>(null);
+  const [draggedToDeckCharacterId, setDraggedToDeckCharacterId] = useState<string | null>(null);
   const [saveToastOpen, setSaveToastOpen] = useState(false);
+  const dotPointerDownRef = useRef(false);
   const [showCreatePreview, setShowCreatePreview] = useState(true);
   const [createPreviewOpen, setCreatePreviewOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
@@ -1372,11 +1374,7 @@ export default function CharacterCreatorApp() {
       scenario: "",
       plotPoints: [],
       relationships: [],
-      boardNodes: Array.from(new Set(storyDraftCharacterIds)).map((id, i) => ({
-        characterId: id,
-        x: 60 + (i % 4) * 170,
-        y: 80 + Math.floor(i / 4) * 110,
-      })),
+      boardNodes: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -1449,9 +1447,45 @@ export default function CharacterCreatorApp() {
     if (!id) return;
     const rect = e.currentTarget.getBoundingClientRect();
     upsertBoardNode(id, e.clientX - rect.left - 60, e.clientY - rect.top - 28);
-    if (!activeStory.characterIds.includes(id)) {
-      updateStory(activeStory.id, { characterIds: [...activeStory.characterIds, id] });
+    setDraggedToDeckCharacterId((prev) => (prev === id ? null : prev));
+  }
+
+  function removeBoardNode(characterId: string) {
+    if (!activeStory) return;
+    updateStory(activeStory.id, {
+      boardNodes: activeStory.boardNodes.filter((n) => n.characterId !== characterId),
+      relationships: activeStory.relationships.filter(
+        (r) => r.fromCharacterId !== characterId && r.toCharacterId !== characterId
+      ),
+    });
+    if (selectedRelationshipId) {
+      const stillExists = activeStory.relationships.some(
+        (r) =>
+          r.id === selectedRelationshipId &&
+          r.fromCharacterId !== characterId &&
+          r.toCharacterId !== characterId
+      );
+      if (!stillExists) {
+        setSelectedRelationshipId(null);
+      }
     }
+  }
+
+  function dropCharacterToBottomDeck(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const id = e.dataTransfer.getData("text/character-id");
+    if (!id) return;
+    setDraggedToDeckCharacterId(id);
+    removeBoardNode(id);
+  }
+
+  function closeRelationshipBoard() {
+    setStoryRelationshipEditorOpen(false);
+    setSelectedRelationshipId(null);
+    setConnectingFromId(null);
+    setConnectingPointer(null);
+    setDraggedToDeckCharacterId(null);
+    setPage("story_editor");
   }
 
   function openRelationshipEditor(fromId: string, toId: string) {
@@ -2436,12 +2470,151 @@ Return only the revised synopsis.`;
                 </div>
               </div>
             ) : storyTab === "relationships" ? (
-              <div className="fixed inset-0 z-30 bg-[hsl(var(--background))] p-3 md:p-6">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="text-sm text-[hsl(var(--muted-foreground))]">Drag cards and connect To → From dots</div>
-                  <Button variant="secondary" onClick={() => setPage("story_editor")}>Close full board</Button>
+              <div className="space-y-3">
+                <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                  <div className="mb-3 text-sm text-[hsl(var(--muted-foreground))]">Build one-way visual links between cast cards in the full relationship board.</div>
+                  <Button variant="secondary" onClick={() => setPage("story_relationship_board")}>Open Relationship Builder</Button>
                 </div>
-                <div className="relative h-[calc(100vh-86px)] w-full overflow-hidden rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-0">
+                <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                  <div className="mb-2 text-sm font-medium">Relationships</div>
+                  {activeStory.relationships.length ? (
+                    <div className="space-y-2">
+                      {activeStory.relationships.map((r) => {
+                        const a = characters.find((c) => c.id === r.fromCharacterId)?.name || "?";
+                        const b = characters.find((c) => c.id === r.toCharacterId)?.name || "?";
+                        return (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedRelationshipId(r.id);
+                              setStoryRelFromId(r.fromCharacterId);
+                              setStoryRelToId(r.toCharacterId);
+                              setStoryRelAlignment(r.alignment);
+                              setStoryRelType(r.relationType);
+                              setStoryRelDetails(r.details);
+                              setStoryRelationshipEditorOpen(true);
+                            }}
+                            className={cn(
+                              "w-full rounded-lg border px-3 py-2 text-left text-xs transition-colors",
+                              selectedRelationshipId === r.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--background))]" : "border-[hsl(var(--border))] bg-[hsl(var(--background))]"
+                            )}
+                          >
+                            <div className="font-medium">{a} → {b}</div>
+                            <div className="text-[hsl(var(--muted-foreground))]">{r.alignment}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-[hsl(var(--muted-foreground))]">No relationships yet.</div>
+                  )}
+                </div>
+                <div className={cn(
+                  "fixed right-0 top-0 z-40 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 transition-transform",
+                  storyRelationshipEditorOpen ? "translate-x-0" : "translate-x-full"
+                )}>
+                  <div className="text-sm font-semibold">Relationship Editor</div>
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <div className="text-xs">From</div>
+                      <Select value={storyRelFromId} onChange={(e) => setStoryRelFromId(e.target.value)}>
+                        <option value="">Select character…</option>
+                        {activeStory.characterIds.map((id) => {
+                          const c = characters.find((x) => x.id === id);
+                          return c ? <option key={id} value={id}>{c.name}</option> : null;
+                        })}
+                      </Select>
+                    </div>
+                    <div>
+                      <div className="text-xs">To</div>
+                      <Select value={storyRelToId} onChange={(e) => setStoryRelToId(e.target.value)}>
+                        <option value="">Select character…</option>
+                        {activeStory.characterIds.map((id) => {
+                          const c = characters.find((x) => x.id === id);
+                          return c ? <option key={id} value={id}>{c.name}</option> : null;
+                        })}
+                      </Select>
+                    </div>
+                    <div>
+                      <div className="text-xs">Alignment</div>
+                      <Select value={storyRelAlignment} onChange={(e) => setStoryRelAlignment(e.target.value)}>
+                        {REL_ALIGNMENTS.map((a) => <option key={a} value={a}>{a}</option>)}
+                      </Select>
+                    </div>
+                    <div>
+                      <div className="text-xs">Relationship</div>
+                      <Select value={storyRelType} onChange={(e) => setStoryRelType(e.target.value)}>
+                        {REL_TYPES.map((a) => <option key={a} value={a}>{a}</option>)}
+                      </Select>
+                    </div>
+                    <div>
+                      <div className="text-xs">Details</div>
+                      <Textarea value={storyRelDetails} onChange={(e) => setStoryRelDetails(e.target.value)} rows={4} />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="primary" onClick={saveRelationshipEdge}>Save relation</Button>
+                      <Button variant="secondary" onClick={() => setStoryRelationshipEditorOpen(false)}>Close</Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
+                <div className="flex gap-2">
+                  <Input
+                    value={storyPlotPointInput}
+                    onChange={(e) => setStoryPlotPointInput(e.target.value)}
+                    onKeyDown={(e) => onEnterAdd(e, () => {
+                      if (!activeStory) return;
+                      const v = collapseWhitespace(storyPlotPointInput);
+                      if (!v) return;
+                      updateStory(activeStory.id, { plotPoints: [...activeStory.plotPoints, v] });
+                      setStoryPlotPointInput("");
+                    })}
+                    placeholder="Add plot point..."
+                  />
+                  <Button variant="secondary" onClick={() => {
+                    if (!activeStory) return;
+                    const v = collapseWhitespace(storyPlotPointInput);
+                    if (!v) return;
+                    updateStory(activeStory.id, { plotPoints: [...activeStory.plotPoints, v] });
+                    setStoryPlotPointInput("");
+                  }}>Add</Button>
+                </div>
+                <div className="space-y-2">
+                  {activeStory.plotPoints.map((p, i) => (
+                    <div key={p + i} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 text-sm">
+                      <RichText text={p} />
+                    </div>
+                  ))}
+                  {!activeStory.plotPoints.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No plot points yet.</div> : null}
+                </div>
+                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                  <div className="text-sm font-medium">Generate detailed list</div>
+                  <div className="text-xs text-[hsl(var(--muted-foreground))]">Turns your written list into a more described list (max 30 words per entry).</div>
+                  <Button variant="secondary" onClick={generateStoryPlotPoints} disabled={genLoading || !activeStory.plotPoints.length}><Sparkles className="h-4 w-4" /> Generate detailed list</Button>
+                </div>
+                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                  <div className="text-sm font-medium">Revise plot points</div>
+                  <Textarea value={storyPlotPointRevision} onChange={(e) => setStoryPlotPointRevision(e.target.value)} rows={3} placeholder="Revision feedback..." />
+                  <Button variant="secondary" onClick={reviseStoryPlotPoints} disabled={genLoading}><Sparkles className="h-4 w-4" /> Revise</Button>
+                </div>
+              </div>
+            )}
+
+            {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
+          </div>
+        ) : page === "story_relationship_board" ? (
+          !activeStory ? (
+            <div className="mt-6 text-sm text-[hsl(var(--muted-foreground))]">Select a story first.</div>
+          ) : (
+            <div className="fixed inset-0 z-30 bg-[hsl(var(--background))] p-3 md:p-6">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">Drag picture cards and connect To → From dots</div>
+                <Button variant="secondary" onClick={closeRelationshipBoard}>Close full board</Button>
+              </div>
+              <div className="relative h-[calc(100vh-86px)] w-full overflow-hidden rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-0">
                 <div
                   className="h-full w-full rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))]"
                   onDragOver={(e) => e.preventDefault()}
@@ -2498,10 +2671,19 @@ Return only the revised synopsis.`;
                         key={n.characterId}
                         draggable
                         onDragStart={(e) => {
+                          if (dotPointerDownRef.current) {
+                            e.preventDefault();
+                            return;
+                          }
                           e.dataTransfer.setData("text/character-id", n.characterId);
                           setStoryDragCharacterId(n.characterId);
                         }}
                         onDragEnd={(e) => {
+                          if (draggedToDeckCharacterId === n.characterId) {
+                            setStoryDragCharacterId(null);
+                            setDraggedToDeckCharacterId(null);
+                            return;
+                          }
                           const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
                           upsertBoardNode(n.characterId, e.clientX - rect.left - 60, e.clientY - rect.top - 28);
                           setStoryDragCharacterId(null);
@@ -2521,13 +2703,25 @@ Return only the revised synopsis.`;
                           <button
                             type="button"
                             className="absolute left-1 top-1 h-3 w-3 rounded-full bg-[hsl(var(--ring))]"
-                            onMouseUp={(e) => finishConnectionDrag(n.characterId, e)}
+                            onMouseDown={() => {
+                              dotPointerDownRef.current = true;
+                            }}
+                            onMouseUp={(e) => {
+                              dotPointerDownRef.current = false;
+                              finishConnectionDrag(n.characterId, e);
+                            }}
                             aria-label="from-dot"
                           />
                           <button
                             type="button"
                             className="absolute right-1 top-1 h-3 w-3 rounded-full bg-[hsl(var(--hover-accent))]"
-                            onMouseDown={(e) => beginConnectionDrag(n.characterId, e)}
+                            onMouseDown={(e) => {
+                              dotPointerDownRef.current = true;
+                              beginConnectionDrag(n.characterId, e);
+                            }}
+                            onMouseUp={() => {
+                              dotPointerDownRef.current = false;
+                            }}
                             aria-label="to-dot"
                           />
                           <div className="absolute inset-x-0 top-4 bg-black/45 px-1 py-0.5 text-center text-[11px] font-semibold text-white">{c.name}</div>
@@ -2537,139 +2731,40 @@ Return only the revised synopsis.`;
                   })}
                 </div>
 
-                <div className="pointer-events-none absolute inset-x-6 bottom-0 h-28 rounded-t-2xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 p-3">
+                <div
+                  className="pointer-events-none absolute inset-x-6 bottom-0 h-36 rounded-t-2xl border border-b-0 border-[hsl(var(--border))] bg-[hsl(var(--card))]/90 p-3"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={dropCharacterToBottomDeck}
+                >
                   <div className="pointer-events-auto flex gap-2 overflow-x-auto">
-                    {activeStory.characterIds.map((id) => {
-                      const c = characters.find((x) => x.id === id);
-                      if (!c) return null;
-                      return (
-                        <div
-                          key={id}
-                          draggable
-                          onDragStart={(e) => e.dataTransfer.setData("text/character-id", id)}
-                          className="shrink-0 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm"
-                        >
-                          {c.name}
-                        </div>
-                      );
-                    })}
+                    {activeStory.characterIds
+                      .filter((id) => !activeStory.boardNodes.some((n) => n.characterId === id))
+                      .map((id) => {
+                        const c = characters.find((x) => x.id === id);
+                        if (!c) return null;
+                        return (
+                          <div
+                            key={id}
+                            draggable
+                            onDragStart={(e) => e.dataTransfer.setData("text/character-id", id)}
+                            className="relative shrink-0 w-24 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-1"
+                          >
+                            <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
+                              {c.imageDataUrl ? (
+                                <img src={c.imageDataUrl} alt={c.name} className="absolute inset-0 h-full w-full object-cover object-top" />
+                              ) : (
+                                <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
+                              )}
+                              <div className="absolute inset-x-0 top-0 bg-black/45 px-1 py-0.5 text-center text-[10px] font-semibold text-white">{c.name}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
                   </div>
-                </div>
-
-                <div className={cn(
-                  "absolute left-3 top-3 w-72 transition-all",
-                  activeStory.relationships.length ? "translate-x-0 opacity-100" : "-translate-x-4 opacity-0"
-                )}>
-                  <div className="space-y-2">
-                    {activeStory.relationships.map((r) => {
-                      const a = characters.find((c) => c.id === r.fromCharacterId)?.name || "?";
-                      const b = characters.find((c) => c.id === r.toCharacterId)?.name || "?";
-                      return (
-                        <button key={r.id} type="button" onClick={() => { setSelectedRelationshipId(r.id); setStoryRelFromId(r.fromCharacterId); setStoryRelToId(r.toCharacterId); setStoryRelAlignment(r.alignment); setStoryRelType(r.relationType); setStoryRelDetails(r.details); setStoryRelationshipEditorOpen(true); }} className={cn("w-full rounded-lg border px-3 py-2 text-left text-xs", selectedRelationshipId === r.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--card))]" : "border-[hsl(var(--border))] bg-[hsl(var(--card))]")}>
-                          <div className="font-medium">{a} → {b}</div>
-                          <div className="text-[hsl(var(--muted-foreground))]">{r.alignment}</div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className={cn(
-                  "absolute right-0 top-0 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 transition-transform",
-                  storyRelationshipEditorOpen ? "translate-x-0" : "translate-x-full"
-                )}>
-                  <div className="text-sm font-semibold">Relationship Editor</div>
-                  <div className="mt-3 space-y-3">
-                    <div>
-                      <div className="text-xs">From</div>
-                      <Select value={storyRelFromId} onChange={(e) => setStoryRelFromId(e.target.value)}>
-                        <option value="">Select character…</option>
-                        {activeStory.characterIds.map((id) => {
-                          const c = characters.find((x) => x.id === id);
-                          return c ? <option key={id} value={id}>{c.name}</option> : null;
-                        })}
-                      </Select>
-                    </div>
-                    <div>
-                      <div className="text-xs">To</div>
-                      <Select value={storyRelToId} onChange={(e) => setStoryRelToId(e.target.value)}>
-                        <option value="">Select character…</option>
-                        {activeStory.characterIds.map((id) => {
-                          const c = characters.find((x) => x.id === id);
-                          return c ? <option key={id} value={id}>{c.name}</option> : null;
-                        })}
-                      </Select>
-                    </div>
-                    <div>
-                      <div className="text-xs">Alignment</div>
-                      <Select value={storyRelAlignment} onChange={(e) => setStoryRelAlignment(e.target.value)}>
-                        {REL_ALIGNMENTS.map((a) => <option key={a} value={a}>{a}</option>)}
-                      </Select>
-                    </div>
-                    <div>
-                      <div className="text-xs">Relationship</div>
-                      <Select value={storyRelType} onChange={(e) => setStoryRelType(e.target.value)}>
-                        {REL_TYPES.map((a) => <option key={a} value={a}>{a}</option>)}
-                      </Select>
-                    </div>
-                    <div>
-                      <div className="text-xs">Details</div>
-                      <Textarea value={storyRelDetails} onChange={(e) => setStoryRelDetails(e.target.value)} rows={4} />
-                    </div>
-                    <div className="flex gap-2">
-                      <Button variant="primary" onClick={saveRelationshipEdge}>Save relation</Button>
-                      <Button variant="secondary" onClick={() => setStoryRelationshipEditorOpen(false)}>Close</Button>
-                    </div>
-                  </div>
-                </div>
                 </div>
               </div>
-            ) : (
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
-                <div className="flex gap-2">
-                  <Input
-                    value={storyPlotPointInput}
-                    onChange={(e) => setStoryPlotPointInput(e.target.value)}
-                    onKeyDown={(e) => onEnterAdd(e, () => {
-                      if (!activeStory) return;
-                      const v = collapseWhitespace(storyPlotPointInput);
-                      if (!v) return;
-                      updateStory(activeStory.id, { plotPoints: [...activeStory.plotPoints, v] });
-                      setStoryPlotPointInput("");
-                    })}
-                    placeholder="Add plot point..."
-                  />
-                  <Button variant="secondary" onClick={() => {
-                    if (!activeStory) return;
-                    const v = collapseWhitespace(storyPlotPointInput);
-                    if (!v) return;
-                    updateStory(activeStory.id, { plotPoints: [...activeStory.plotPoints, v] });
-                    setStoryPlotPointInput("");
-                  }}>Add</Button>
-                </div>
-                <div className="space-y-2">
-                  {activeStory.plotPoints.map((p, i) => (
-                    <div key={p + i} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 text-sm">
-                      <RichText text={p} />
-                    </div>
-                  ))}
-                  {!activeStory.plotPoints.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No plot points yet.</div> : null}
-                </div>
-                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
-                  <div className="text-sm font-medium">Generate detailed list</div>
-                  <div className="text-xs text-[hsl(var(--muted-foreground))]">Turns your written list into a more described list (max 30 words per entry).</div>
-                  <Button variant="secondary" onClick={generateStoryPlotPoints} disabled={genLoading || !activeStory.plotPoints.length}><Sparkles className="h-4 w-4" /> Generate detailed list</Button>
-                </div>
-                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
-                  <div className="text-sm font-medium">Revise plot points</div>
-                  <Textarea value={storyPlotPointRevision} onChange={(e) => setStoryPlotPointRevision(e.target.value)} rows={3} placeholder="Revision feedback..." />
-                  <Button variant="secondary" onClick={reviseStoryPlotPoints} disabled={genLoading}><Sparkles className="h-4 w-4" /> Revise</Button>
-                </div>
-              </div>
-            )}
-
-            {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
-          </div>
+            </div>
+          )
         ) : page === "library" ? (
           <div className="mt-6 space-y-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
