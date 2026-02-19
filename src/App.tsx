@@ -78,6 +78,7 @@ type StoryProject = {
   plotPoints: string[];
   relationships: StoryRelationship[];
   boardNodes: StoryBoardNode[];
+  assignedLorebookIds: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -155,6 +156,7 @@ type Character = {
   synopsis: string;
   introMessages: string[];
   selectedIntroIndex: number;
+  assignedLorebookIds: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -473,6 +475,9 @@ function characterToTxt(c: Character) {
     "## System Rules",
     c.systemRules || "",
     "",
+    "## Assigned Lorebooks",
+    (c.assignedLorebookIds || []).join(", "),
+    "",
     "## Intro Messages",
     ...(c.introMessages || []).map((m, i) => {
       const mark = i === c.selectedIntroIndex ? "*" : "-";
@@ -533,6 +538,7 @@ function normalizeCharacter(x: any): Character | null {
     synopsis: typeof x.synopsis === "string" ? x.synopsis : "",
     introMessages: introMessages.length ? introMessages : [""],
     selectedIntroIndex,
+    assignedLorebookIds: normalizeStringArray(x.assignedLorebookIds),
     createdAt: typeof x.createdAt === "string" ? x.createdAt : now,
     updatedAt: typeof x.updatedAt === "string" ? x.updatedAt : now,
   };
@@ -729,6 +735,7 @@ function runTests() {
     synopsis: "A hunter.",
     introMessages: ["Hello", "Hi"],
     selectedIntroIndex: 1,
+    assignedLorebookIds: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
@@ -776,6 +783,9 @@ export default function CharacterCreatorApp() {
   const [activeLorebookId, setActiveLorebookId] = useState<string | null>(null);
   const [lorebookTab, setLorebookTab] = useState<LorebookTab>("overview");
   const [lorebookWorldPrompt, setLorebookWorldPrompt] = useState("");
+  const [characterAssignedLorebookIds, setCharacterAssignedLorebookIds] = useState<string[]>([]);
+  const [characterLorebookPickerOpen, setCharacterLorebookPickerOpen] = useState(false);
+  const [storyLorebookPickerOpen, setStoryLorebookPickerOpen] = useState(false);
   const [factionEditorOpen, setFactionEditorOpen] = useState(false);
   const [editingFactionId, setEditingFactionId] = useState<string | null>(null);
   const [factionNameInput, setFactionNameInput] = useState("");
@@ -1035,6 +1045,7 @@ export default function CharacterCreatorApp() {
             plotPoints: normalizeStringArray((s as any).plotPoints),
             relationships: Array.isArray((s as any).relationships) ? (s as any).relationships : [],
             boardNodes: Array.isArray((s as any).boardNodes) ? (s as any).boardNodes : [],
+            assignedLorebookIds: normalizeStringArray((s as any).assignedLorebookIds),
             createdAt: typeof (s as any).createdAt === "string" ? (s as any).createdAt : now,
             updatedAt: typeof (s as any).updatedAt === "string" ? (s as any).updatedAt : now,
           } as StoryProject;
@@ -1359,6 +1370,7 @@ export default function CharacterCreatorApp() {
     setActiveChatSessionId(null);
     setChatMessages([]);
     setChatInput("");
+    setCharacterAssignedLorebookIds([]);
   }
 
   function addToList(
@@ -1468,6 +1480,7 @@ export default function CharacterCreatorApp() {
       synopsis,
       introMessages: baseIntro,
       selectedIntroIndex: safeIntroIndex,
+      assignedLorebookIds: characterAssignedLorebookIds,
     };
 
     if (selected && selectedId) {
@@ -1639,6 +1652,7 @@ export default function CharacterCreatorApp() {
     setIntroMessages(im);
     setIntroIndex(clampIndex(c.selectedIntroIndex ?? 0, im.length));
     setIntroPrompt("");
+    setCharacterAssignedLorebookIds(Array.isArray(c.assignedLorebookIds) ? c.assignedLorebookIds : []);
 
     setBackstoryRevisionFeedback("");
     setIntroRevisionFeedback("");
@@ -1717,6 +1731,29 @@ export default function CharacterCreatorApp() {
     ].join("\n");
   }
 
+  function serializeLorebookForContext(book: Lorebook) {
+    const parts: string[] = [];
+    if (book.worldEntry?.name || book.worldEntry?.content) {
+      parts.push(`[World] ${book.worldEntry.name || "World"}: ${book.worldEntry.content || ""}`);
+    }
+    for (const e of book.locationEntries || []) parts.push(`[Location] ${e.name}: ${e.content}`);
+    for (const f of book.factions || []) parts.push(`[Faction] ${f.name}: ${f.details || f.entry?.content || ""}`);
+    for (const e of book.rulesEntries || []) parts.push(`[Rule] ${e.name}: ${e.content}`);
+    for (const e of book.itemEntries || []) parts.push(`[Item] ${e.name}: ${e.content}`);
+    for (const e of book.specialsEntries || []) parts.push(`[Special] ${e.name}: ${e.content}`);
+    return `# Lorebook: ${book.name}\n${parts.join("\n")}`;
+  }
+
+  function getAssignedLorebookContext(assignedLorebookIds: string[] = []) {
+    const ids = Array.from(new Set((assignedLorebookIds || []).filter(Boolean)));
+    if (!ids.length) return "";
+    const assigned = ids
+      .map((id) => lorebooks.find((b) => b.id === id))
+      .filter((b): b is Lorebook => !!b);
+    if (!assigned.length) return "";
+    return assigned.map(serializeLorebookForContext).join("\n\n");
+  }
+
   const activeStory = useMemo(
     () => stories.find((s) => s.id === activeStoryId) || null,
     [stories, activeStoryId]
@@ -1773,6 +1810,21 @@ export default function CharacterCreatorApp() {
     );
     setSaveToastOpen(true);
     window.setTimeout(() => setSaveToastOpen(false), 1400);
+  }
+
+
+  function toggleCharacterLorebookAssignment(lorebookId: string) {
+    setCharacterAssignedLorebookIds((prev) =>
+      prev.includes(lorebookId) ? prev.filter((id) => id !== lorebookId) : [...prev, lorebookId]
+    );
+  }
+
+  function toggleStoryLorebookAssignment(lorebookId: string) {
+    if (!activeStory) return;
+    const next = activeStory.assignedLorebookIds.includes(lorebookId)
+      ? activeStory.assignedLorebookIds.filter((id) => id !== lorebookId)
+      : [...activeStory.assignedLorebookIds, lorebookId];
+    updateStory(activeStory.id, { assignedLorebookIds: next });
   }
 
   function createLorebook() {
@@ -2031,6 +2083,7 @@ Return world background text only.`,
       plotPoints: [],
       relationships: [],
       boardNodes: [],
+      assignedLorebookIds: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -2395,6 +2448,7 @@ Write the character's next reply to the latest user message.`;
         system,
         user,
         stream: chatStreamEnabled,
+        lorebookIds: chatCharacter.assignedLorebookIds,
       });
       const finalMessages = [...newHistory, { role: "assistant" as const, content: reply }];
       setChatMessages(finalMessages);
@@ -2495,6 +2549,7 @@ Write the character's next reply to the latest user message.`;
     maxTokens?: number;
     temperature?: number;
     stream?: boolean;
+    lorebookIds?: string[];
   }) {
     const chatUrl = collapseWhitespace(proxyChatUrl);
     const apiKey = collapseWhitespace(proxyApiKey);
@@ -2503,6 +2558,14 @@ Write the character's next reply to the latest user message.`;
     if (!chatUrl) throw new Error("Please set a Chat Completion URL in Proxy.");
     if (!apiKey) throw new Error("Please set an API key in Proxy.");
     if (!model) throw new Error("Please set a model name in Proxy.");
+
+    const lorebookContext = getAssignedLorebookContext(args.lorebookIds || []);
+    const effectiveSystem = lorebookContext
+      ? `${args.system}
+
+Always-active assigned lorebooks context:
+${lorebookContext}`
+      : args.system;
 
     const res = await fetch(chatUrl, {
       method: "POST",
@@ -2513,7 +2576,7 @@ Write the character's next reply to the latest user message.`;
       body: JSON.stringify({
         model,
         messages: [
-          { role: "system", content: args.system },
+          { role: "system", content: effectiveSystem },
           { role: "user", content: args.user },
         ],
         temperature: args.temperature ?? proxyTemperature,
@@ -2582,6 +2645,7 @@ Write the character's next reply to the latest user message.`;
         user,
         temperature: 0.95,
         stream: introStreamEnabled,
+        lorebookIds: characterAssignedLorebookIds,
       });
       setIntroMessages((prev) => {
         const base = prev.length ? [...prev] : [""];
@@ -2612,6 +2676,7 @@ Write the character's next reply to the latest user message.`;
         maxTokens: Math.min(220, Math.max(64, proxyMaxTokens)),
         temperature: 0.9,
         stream: synopsisStreamEnabled,
+        lorebookIds: characterAssignedLorebookIds,
       });
       setSynopsis(text);
     } catch (e: any) {
@@ -2644,6 +2709,7 @@ Write the character's next reply to the latest user message.`;
         maxTokens: Math.min(1000, Math.max(300, proxyMaxTokens * 3)),
         temperature: 0.8,
         stream: backstoryStreamEnabled,
+        lorebookIds: characterAssignedLorebookIds,
       });
       const generated = parseGeneratedBackstoryEntries(text);
       if (!generated.length) {
@@ -2692,6 +2758,7 @@ Revise the backstory entries now.`;
         user,
         maxTokens: Math.min(1200, Math.max(300, proxyMaxTokens * 3)),
         temperature: 0.8,
+        lorebookIds: characterAssignedLorebookIds,
       });
       const revised = parseGeneratedBackstoryEntries(text);
       if (!revised.length) throw new Error("The model did not return usable revised backstory entries.");
@@ -2738,6 +2805,7 @@ Return only the revised intro message.`;
         system,
         user,
         temperature: 0.9,
+        lorebookIds: characterAssignedLorebookIds,
       });
       setIntroMessages((prev) => {
         const base = prev.length ? [...prev] : [""];
@@ -2785,6 +2853,7 @@ Return only the revised synopsis.`;
         user,
         maxTokens: Math.min(280, Math.max(80, proxyMaxTokens)),
         temperature: 0.9,
+        lorebookIds: characterAssignedLorebookIds,
       });
       setSynopsis(text);
     } catch (e: any) {
@@ -2825,6 +2894,7 @@ Return only the revised synopsis.`;
           "You create roleplay story scenarios for multi-character casts. Return only scenario prose.",
         user: `Characters: ${charBlob}\nPrompt: ${prompt}`,
         maxTokens: Math.min(400, Math.max(120, proxyMaxTokens)),
+        lorebookIds: activeStory.assignedLorebookIds,
       });
       updateStory(activeStory.id, { scenario: out });
     } catch (e: any) {
@@ -2848,6 +2918,7 @@ Return only the revised synopsis.`;
         system: "Revise scenario text based on feedback. Return only revised scenario.",
         user: `Current scenario:\n${activeStory.scenario}\n\nFeedback:\n${feedback}`,
         maxTokens: Math.min(450, Math.max(140, proxyMaxTokens)),
+        lorebookIds: activeStory.assignedLorebookIds,
       });
       updateStory(activeStory.id, { scenario: out });
     } catch (e: any) {
@@ -2871,6 +2942,7 @@ Return only the revised synopsis.`;
           "Expand plot points into more detailed entries, each max 30 words. Return JSON array of strings only.",
         user: `Current plot points:\n${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}`,
         maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
+        lorebookIds: activeStory.assignedLorebookIds,
       });
       const items = parseGeneratedBackstoryEntries(out);
       if (!items.length) throw new Error("No valid plot points returned.");
@@ -2899,6 +2971,7 @@ Return only the revised synopsis.`;
         system: "Revise plot point list with each entry max 30 words. Return JSON array of strings only.",
         user: `Current points:\n${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}\n\nFeedback:\n${feedback}`,
         maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
+        lorebookIds: activeStory.assignedLorebookIds,
       });
       const items = parseGeneratedBackstoryEntries(out);
       if (!items.length) throw new Error("No valid revised plot points returned.");
@@ -3395,25 +3468,25 @@ Return only the revised synopsis.`;
                 </Button>
               </div>
             </div>
-            <div className="space-y-2">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {lorebooks.map((book) => (
-                <div key={book.id} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
+                <div key={book.id} className="overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]">
+                  <button type="button" className="w-full text-left" onClick={() => { setActiveLorebookId(book.id); navigateTo("lorebook_create"); }}>
+                    <div className="relative aspect-[4/3] border-b border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                      {book.coverImageDataUrl ? <img src={book.coverImageDataUrl} alt={book.name} className="absolute inset-0 h-full w-full object-cover" /> : null}
+                    </div>
+                    <div className="p-3">
                       <div className="font-medium">{book.name}</div>
                       <div className="text-xs text-[hsl(var(--muted-foreground))]">{new Date(book.updatedAt).toLocaleString()}</div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button variant="secondary" onClick={() => { setActiveLorebookId(book.id); navigateTo("lorebook_create"); }}>
-                        Open
-                      </Button>
-                      <Button variant="secondary" onClick={() => exportLorebookAsEntries(book)}>
-                        <Download className="h-4 w-4" /> Export
-                      </Button>
-                      <Button variant="secondary" onClick={() => setLorebooks((prev) => prev.filter((x) => x.id !== book.id))}>
-                        <Trash2 className="h-4 w-4" /> Delete
-                      </Button>
-                    </div>
+                  </button>
+                  <div className="flex gap-2 border-t border-[hsl(var(--border))] p-3">
+                    <Button variant="secondary" className="w-full" onClick={() => exportLorebookAsEntries(book)}>
+                      <Download className="h-4 w-4" /> Export
+                    </Button>
+                    <Button variant="secondary" className="w-full" onClick={() => setLorebooks((prev) => prev.filter((x) => x.id !== book.id))}>
+                      <Trash2 className="h-4 w-4" /> Delete
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -3727,7 +3800,7 @@ Return only the revised synopsis.`;
               <div className="text-sm text-[hsl(var(--muted-foreground))]">Select a story first.</div>
             ) : storyTab === "scenario" ? (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
-                <div className="grid gap-4 md:grid-cols-[220px,1fr]">
+                <div className="grid gap-4 md:grid-cols-[220px,1fr,220px]">
                   <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
                     <div className="text-xs font-semibold text-[hsl(var(--muted-foreground))]">Story Image</div>
                     <div className="mt-2 relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
@@ -3745,6 +3818,25 @@ Return only the revised synopsis.`;
                     rows={10}
                     placeholder="Scenario..."
                   />
+                  <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                    <div className="text-xs font-semibold text-[hsl(var(--muted-foreground))]">Assigned Lorebooks</div>
+                    <button
+                      type="button"
+                      onClick={() => setStoryLorebookPickerOpen(true)}
+                      className="clickable flex aspect-[3/4] w-full flex-col items-center justify-center rounded-xl border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted))/0.6]"
+                    >
+                      <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))]"><Plus className="h-5 w-5" /></div>
+                      <div className="text-xs font-medium">Assign lorebook</div>
+                    </button>
+                    {activeStory.assignedLorebookIds.length ? (
+                      <div className="flex flex-wrap gap-1">
+                        {activeStory.assignedLorebookIds.map((id) => {
+                          const b = lorebooks.find((x) => x.id === id);
+                          return b ? <Badge key={id}>{b.name}</Badge> : null;
+                        })}
+                      </div>
+                    ) : <div className="text-xs text-[hsl(var(--muted-foreground))]">None assigned.</div>}
+                  </div>
                 </div>
                 <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
                   <div className="text-sm font-medium">Generate scenario</div>
@@ -4474,6 +4566,26 @@ Return only the revised synopsis.`;
                         )}
                       </div>
 
+                      <div className="space-y-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
+                        <div className="text-sm font-medium">Assigned lorebooks</div>
+                        <button
+                          type="button"
+                          onClick={() => setCharacterLorebookPickerOpen(true)}
+                          className="clickable flex aspect-[3/4] w-full flex-col items-center justify-center rounded-2xl border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted))/0.6]"
+                        >
+                          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-full border border-[hsl(var(--border))]"><Plus className="h-6 w-6" /></div>
+                          <div className="text-sm font-medium">Assign lorebook</div>
+                        </button>
+                        {characterAssignedLorebookIds.length ? (
+                          <div className="flex flex-wrap gap-2">
+                            {characterAssignedLorebookIds.map((id) => {
+                              const book = lorebooks.find((x) => x.id === id);
+                              return book ? <Badge key={id}>{book.name}</Badge> : null;
+                            })}
+                          </div>
+                        ) : <div className="text-xs text-[hsl(var(--muted-foreground))]">No lorebooks assigned.</div>}
+                      </div>
+
                       <div className="grid gap-4 md:grid-cols-2">
                         <div className="space-y-2">
                           <div className="text-sm font-medium">Name</div>
@@ -5130,6 +5242,68 @@ Return only the revised synopsis.`;
           </div>
         ) : null}
 
+
+        <Modal open={characterLorebookPickerOpen} onClose={() => setCharacterLorebookPickerOpen(false)} title="Assign Lorebooks to Character" widthClass="max-w-4xl">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {lorebooks.map((book) => {
+              const selected = characterAssignedLorebookIds.includes(book.id);
+              return (
+                <button
+                  key={book.id}
+                  type="button"
+                  onClick={() => toggleCharacterLorebookAssignment(book.id)}
+                  className={cn(
+                    "overflow-hidden rounded-2xl border text-left",
+                    selected ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))] bg-[hsl(var(--card))]"
+                  )}
+                >
+                  <div className="relative aspect-[4/3] border-b border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                    {book.coverImageDataUrl ? <img src={book.coverImageDataUrl} alt={book.name} className="absolute inset-0 h-full w-full object-cover" /> : null}
+                  </div>
+                  <div className="p-3">
+                    <div className="font-medium">{book.name}</div>
+                    <div className="text-xs text-[hsl(var(--muted-foreground))]">{selected ? "Assigned" : "Not assigned"}</div>
+                  </div>
+                </button>
+              );
+            })}
+            {!lorebooks.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No lorebooks available yet.</div> : null}
+          </div>
+          <div className="mt-4 flex justify-end">
+            <Button variant="primary" onClick={() => setCharacterLorebookPickerOpen(false)}>Done</Button>
+          </div>
+        </Modal>
+
+        <Modal open={storyLorebookPickerOpen} onClose={() => setStoryLorebookPickerOpen(false)} title="Assign Lorebooks to Story" widthClass="max-w-4xl">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {lorebooks.map((book) => {
+              const selected = !!activeStory?.assignedLorebookIds.includes(book.id);
+              return (
+                <button
+                  key={book.id}
+                  type="button"
+                  onClick={() => toggleStoryLorebookAssignment(book.id)}
+                  className={cn(
+                    "overflow-hidden rounded-2xl border text-left",
+                    selected ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))] bg-[hsl(var(--card))]"
+                  )}
+                >
+                  <div className="relative aspect-[4/3] border-b border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                    {book.coverImageDataUrl ? <img src={book.coverImageDataUrl} alt={book.name} className="absolute inset-0 h-full w-full object-cover" /> : null}
+                  </div>
+                  <div className="p-3">
+                    <div className="font-medium">{book.name}</div>
+                    <div className="text-xs text-[hsl(var(--muted-foreground))]">{selected ? "Assigned" : "Not assigned"}</div>
+                  </div>
+                </button>
+              );
+            })}
+            {!lorebooks.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No lorebooks available yet.</div> : null}
+          </div>
+          <div className="mt-4 flex justify-end">
+            <Button variant="primary" onClick={() => setStoryLorebookPickerOpen(false)}>Done</Button>
+          </div>
+        </Modal>
 
         <Modal open={proxyOpen} onClose={() => setProxyOpen(false)} title="Proxy" widthClass="max-w-xl">
           <div className="space-y-4">
