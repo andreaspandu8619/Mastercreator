@@ -27,7 +27,7 @@ type Gender = "Male" | "Female" | "";
 type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board" | "lorebooks" | "lorebook_create";
 type CreateTab = "overview" | "definition" | "system" | "intro" | "synopsis";
 type StoryTab = "scenario" | "relationships" | "plot_points";
-type LorebookTab = "world" | "factions" | "rules" | "specials";
+type LorebookTab = "overview" | "world" | "locations" | "factions" | "rules" | "items" | "specials";
 
 type ProxyConfig = {
   chatUrl: string;
@@ -107,7 +107,7 @@ type LorebookEntry = {
   activationSetting: "any_key" | "selective" | "always_active" | "disabled";
   keyMatchMode: "partial" | "exact";
   tagsRaw: string;
-  category: "world" | "faction" | "rule" | "special" | "character";
+  category: "world" | "location" | "faction" | "rule" | "item" | "special" | "character";
 };
 
 type LorebookFaction = {
@@ -127,8 +127,11 @@ type Lorebook = {
   description: string;
   author: string;
   metaTagsRaw: string;
+  coverImageDataUrl: string;
   worldEntry: LorebookEntry;
+  locationEntries: LorebookEntry[];
   rulesEntries: LorebookEntry[];
+  itemEntries: LorebookEntry[];
   specialsEntries: LorebookEntry[];
   factions: LorebookFaction[];
   createdAt: string;
@@ -771,7 +774,7 @@ export default function CharacterCreatorApp() {
   const [stories, setStories] = useState<StoryProject[]>([]);
   const [lorebooks, setLorebooks] = useState<Lorebook[]>([]);
   const [activeLorebookId, setActiveLorebookId] = useState<string | null>(null);
-  const [lorebookTab, setLorebookTab] = useState<LorebookTab>("world");
+  const [lorebookTab, setLorebookTab] = useState<LorebookTab>("overview");
   const [lorebookWorldPrompt, setLorebookWorldPrompt] = useState("");
   const [factionEditorOpen, setFactionEditorOpen] = useState(false);
   const [editingFactionId, setEditingFactionId] = useState<string | null>(null);
@@ -786,7 +789,9 @@ export default function CharacterCreatorApp() {
   const [factionPriorityInput, setFactionPriorityInput] = useState(1);
   const [factionEnabledInput, setFactionEnabledInput] = useState(true);
   const [factionEntryDraft, setFactionEntryDraft] = useState<LorebookEntry>(createDefaultLoreEntry("", "faction", 100));
+  const [activeLocationEntryId, setActiveLocationEntryId] = useState<string | null>(null);
   const [activeRuleEntryId, setActiveRuleEntryId] = useState<string | null>(null);
+  const [activeItemEntryId, setActiveItemEntryId] = useState<string | null>(null);
   const [activeSpecialEntryId, setActiveSpecialEntryId] = useState<string | null>(null);
   const [storyDraftCharacterIds, setStoryDraftCharacterIds] = useState<string[]>([]);
   const [storySidebarHidden, setStorySidebarHidden] = useState(false);
@@ -947,6 +952,7 @@ export default function CharacterCreatorApp() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
   const storyImageFileRef = useRef<HTMLInputElement | null>(null);
+  const lorebookCoverFileRef = useRef<HTMLInputElement | null>(null);
   const factionImageFileRef = useRef<HTMLInputElement | null>(null);
   const [historyStack, setHistoryStack] = useState<Page[]>([]);
 
@@ -1075,7 +1081,7 @@ export default function CharacterCreatorApp() {
               activationSetting,
               keyMatchMode: raw.keyMatchMode === "exact" ? "exact" : "partial",
               tagsRaw: typeof raw.tagsRaw === "string" ? raw.tagsRaw : base.tagsRaw,
-              category: ["world","faction","rule","special","character"].includes(raw.category) ? raw.category : category,
+              category: ["world","location","faction","rule","item","special","character"].includes(raw.category) ? raw.category : category,
             } as LorebookEntry;
           };
 
@@ -1110,8 +1116,16 @@ export default function CharacterCreatorApp() {
                 keysRaw: "world",
               }, "World Overview", "world", 100);
 
+          const locationEntries = Array.isArray((book as any).locationEntries)
+            ? (book as any).locationEntries.map((entry: any, idx: number) => normalizeEntry(entry, `Location ${idx + 1}`, "location", (idx + 1) * 100))
+            : [];
+
           const rulesEntries = Array.isArray((book as any).rulesEntries)
             ? (book as any).rulesEntries.map((entry: any, idx: number) => normalizeEntry(entry, `Rule ${idx + 1}`, "rule", (idx + 1) * 100))
+            : [];
+
+          const itemEntries = Array.isArray((book as any).itemEntries)
+            ? (book as any).itemEntries.map((entry: any, idx: number) => normalizeEntry(entry, `Item ${idx + 1}`, "item", (idx + 1) * 100))
             : [];
 
           const specialsEntries = Array.isArray((book as any).specialsEntries)
@@ -1126,8 +1140,11 @@ export default function CharacterCreatorApp() {
             description: typeof (book as any).description === "string" ? (book as any).description : "",
             author: typeof (book as any).author === "string" ? (book as any).author : "",
             metaTagsRaw: typeof (book as any).metaTagsRaw === "string" ? (book as any).metaTagsRaw : "",
+            coverImageDataUrl: typeof (book as any).coverImageDataUrl === "string" ? (book as any).coverImageDataUrl : "",
             worldEntry,
+            locationEntries,
             rulesEntries,
+            itemEntries,
             specialsEntries,
             factions,
             createdAt: typeof (book as any).createdAt === "string" ? (book as any).createdAt : now,
@@ -1530,6 +1547,18 @@ export default function CharacterCreatorApp() {
     }
   }
 
+  async function handlePickLorebookCover(file: File) {
+    if (!activeLorebook) return;
+    const maxBytes = 10 * 1024 * 1024;
+    if (file.size > maxBytes || !file.type.startsWith("image/")) return;
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      updateLorebook(activeLorebook.id, { coverImageDataUrl: dataUrl });
+    } catch {
+      // ignore invalid lorebook cover
+    }
+  }
+
   function navigateTo(next: Page) {
     setHistoryStack((prev) => {
       if (prev[prev.length - 1] === page) return prev;
@@ -1714,13 +1743,19 @@ export default function CharacterCreatorApp() {
 
   useEffect(() => {
     if (!activeLorebook) return;
+    if (!activeLocationEntryId && activeLorebook.locationEntries.length) {
+      setActiveLocationEntryId(activeLorebook.locationEntries[0].id);
+    }
     if (!activeRuleEntryId && activeLorebook.rulesEntries.length) {
       setActiveRuleEntryId(activeLorebook.rulesEntries[0].id);
+    }
+    if (!activeItemEntryId && activeLorebook.itemEntries.length) {
+      setActiveItemEntryId(activeLorebook.itemEntries[0].id);
     }
     if (!activeSpecialEntryId && activeLorebook.specialsEntries.length) {
       setActiveSpecialEntryId(activeLorebook.specialsEntries[0].id);
     }
-  }, [activeLorebook?.id, activeLorebook?.rulesEntries.length, activeLorebook?.specialsEntries.length]);
+  }, [activeLorebook?.id, activeLorebook?.locationEntries.length, activeLorebook?.rulesEntries.length, activeLorebook?.itemEntries.length, activeLorebook?.specialsEntries.length]);
 
   const canGoBack = historyStack.length > 0;
 
@@ -1748,8 +1783,11 @@ export default function CharacterCreatorApp() {
       description: "",
       author: "",
       metaTagsRaw: "",
+      coverImageDataUrl: "",
       worldEntry: createDefaultLoreEntry("World Overview", "world", 100),
+      locationEntries: [],
       rulesEntries: [],
+      itemEntries: [],
       specialsEntries: [],
       factions: [],
       createdAt: now,
@@ -1757,7 +1795,7 @@ export default function CharacterCreatorApp() {
     };
     setLorebooks((prev) => [book, ...prev]);
     setActiveLorebookId(book.id);
-    setLorebookTab("world");
+    setLorebookTab("overview");
     navigateTo("lorebook_create");
   }
 
@@ -1775,25 +1813,30 @@ export default function CharacterCreatorApp() {
     );
   }
 
-  function updateLorebookEntry(listKey: "rulesEntries" | "specialsEntries", entryId: string, patch: Partial<LorebookEntry>) {
+  function updateLorebookEntry(listKey: "locationEntries" | "rulesEntries" | "itemEntries" | "specialsEntries", entryId: string, patch: Partial<LorebookEntry>) {
     if (!activeLorebook) return;
     const next = activeLorebook[listKey].map((entry) => (entry.id === entryId ? { ...entry, ...patch } : entry));
     updateLorebook(activeLorebook.id, { [listKey]: next } as Partial<Lorebook>);
   }
 
-  function addLorebookEntry(listKey: "rulesEntries" | "specialsEntries", baseName: string) {
+  function addLorebookEntry(listKey: "locationEntries" | "rulesEntries" | "itemEntries" | "specialsEntries", baseName: string) {
     if (!activeLorebook) return;
     const current = activeLorebook[listKey];
-    const entry = createDefaultLoreEntry(`${baseName} ${current.length + 1}`, listKey === "specialsEntries" ? "special" : "rule", (current.length + 1) * 100);
+    const entryCategory = listKey === "locationEntries" ? "location" : listKey === "itemEntries" ? "item" : listKey === "specialsEntries" ? "special" : "rule";
+    const entry = createDefaultLoreEntry(`${baseName} ${current.length + 1}`, entryCategory, (current.length + 1) * 100);
     updateLorebook(activeLorebook.id, { [listKey]: [entry, ...current] } as Partial<Lorebook>);
+    if (listKey === "locationEntries") setActiveLocationEntryId(entry.id);
     if (listKey === "rulesEntries") setActiveRuleEntryId(entry.id);
+    if (listKey === "itemEntries") setActiveItemEntryId(entry.id);
     if (listKey === "specialsEntries") setActiveSpecialEntryId(entry.id);
   }
 
-  function removeLorebookEntry(listKey: "rulesEntries" | "specialsEntries", entryId: string) {
+  function removeLorebookEntry(listKey: "locationEntries" | "rulesEntries" | "itemEntries" | "specialsEntries", entryId: string) {
     if (!activeLorebook) return;
     updateLorebook(activeLorebook.id, { [listKey]: activeLorebook[listKey].filter((entry) => entry.id !== entryId) } as Partial<Lorebook>);
+    if (listKey === "locationEntries" && activeLocationEntryId === entryId) setActiveLocationEntryId(null);
     if (listKey === "rulesEntries" && activeRuleEntryId === entryId) setActiveRuleEntryId(null);
+    if (listKey === "itemEntries" && activeItemEntryId === entryId) setActiveItemEntryId(null);
     if (listKey === "specialsEntries" && activeSpecialEntryId === entryId) setActiveSpecialEntryId(null);
   }
 
@@ -1878,8 +1921,10 @@ export default function CharacterCreatorApp() {
   function exportLorebookAsEntries(book: Lorebook) {
     const allEntries: Array<{ entry: LorebookEntry; contentOverride?: string }> = [
       { entry: { ...book.worldEntry, category: "world" as const, tagsRaw: "world" } },
+      ...book.locationEntries.map((entry) => ({ entry: { ...entry, category: "location" as const, tagsRaw: "important" } })),
       ...book.factions.map((f) => ({ entry: { ...f.entry, category: "faction" as const, tagsRaw: "faction", name: f.name }, contentOverride: f.details || f.entry.content })),
       ...book.rulesEntries.map((entry) => ({ entry: { ...entry, category: "rule" as const, tagsRaw: "important" } })),
+      ...book.itemEntries.map((entry) => ({ entry: { ...entry, category: "item" as const, tagsRaw: "important" } })),
       ...book.specialsEntries.map((entry) => ({ entry: { ...entry, category: "special" as const, tagsRaw: "important" } })),
     ];
 
@@ -1889,7 +1934,8 @@ export default function CharacterCreatorApp() {
       const key = String(index + 1);
       entries[key] = {
         uid: index + 1,
-        key: splitCsv(entry.keysRaw),
+        name: entry.name,
+        key: splitCsv(entry.keysRaw).length ? splitCsv(entry.keysRaw) : [entry.name],
         keysecondary: splitCsv(entry.keysecondaryRaw),
         comment: entry.comment,
         content: item.contentOverride ?? entry.content,
@@ -2867,95 +2913,117 @@ Return only the revised synopsis.`;
     }
   }
 
-  function renderLoreEntryFields(entry: LorebookEntry, onPatch: (patch: Partial<LorebookEntry>) => void, contentRows = 10) {
+  function renderLoreEntryFields(
+    entry: LorebookEntry,
+    onPatch: (patch: Partial<LorebookEntry>) => void,
+    options?: {
+      nameLabel?: string;
+      contentLabel?: string;
+      contentRows?: number;
+      forceCategory?: LorebookEntry["category"];
+    }
+  ) {
+    const nameLabel = options?.nameLabel || "Entry name";
+    const contentLabel = options?.contentLabel || "Content";
+    const contentRows = options?.contentRows ?? 10;
+    const forceCategory = options?.forceCategory;
     return (
       <div className="space-y-3">
-        <div className="grid gap-3 md:grid-cols-2">
+        <div>
+          <div className="mb-1 text-sm">{nameLabel}</div>
+          <Input value={entry.name} onChange={(e) => onPatch({ name: e.target.value })} />
+        </div>
+        <div>
+          <div className="mb-1 text-sm">Tags (comma-separated)</div>
+          <Input value={entry.tagsRaw} onChange={(e) => onPatch({ tagsRaw: e.target.value })} />
+        </div>
+        <div>
+          <div className="mb-1 text-sm">{contentLabel}</div>
+          <Textarea value={entry.content} onChange={(e) => onPatch({ content: e.target.value })} rows={contentRows} />
+        </div>
+
+        <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--muted))/0.45] p-4 space-y-3">
+          <div className="text-sm font-semibold">Technical settings</div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <div className="mb-1 text-sm">Primary keys (comma-separated)</div>
+              <Input value={entry.keysRaw} onChange={(e) => onPatch({ keysRaw: e.target.value })} />
+            </div>
+            <div>
+              <div className="mb-1 text-sm">Secondary keys (comma-separated)</div>
+              <Input value={entry.keysecondaryRaw} onChange={(e) => onPatch({ keysecondaryRaw: e.target.value })} />
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <div className="mb-1 text-sm">Order (1-100)</div>
+              <Input type="number" value={String(entry.order)} onChange={(e) => onPatch({ order: Number(e.target.value) || 1 })} />
+            </div>
+            <div>
+              <div className="mb-1 text-sm">Position (0-100)</div>
+              <Input type="number" value={String(entry.position)} onChange={(e) => onPatch({ position: Number(e.target.value) || 0 })} />
+            </div>
+          </div>
           <div>
-            <div className="mb-1 text-sm">Entry name</div>
-            <Input value={entry.name} onChange={(e) => onPatch({ name: e.target.value })} />
+            <div className="mb-1 text-sm">Activation setting</div>
+            <Select
+              value={entry.activationSetting}
+              onChange={(e) => {
+                const value = e.target.value as LorebookEntry["activationSetting"];
+                onPatch({
+                  activationSetting: value,
+                  constant: value === "always_active",
+                  selective: value === "selective",
+                  disable: value === "disabled",
+                  enabled: value !== "disabled",
+                });
+              }}
+            >
+              <option value="any_key">Any Key</option>
+              <option value="selective">Selective</option>
+              <option value="always_active">Always Active</option>
+              <option value="disabled">Disabled</option>
+            </Select>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.enabled} onChange={(e) => onPatch({ enabled: e.target.checked, disable: !e.target.checked })} /> Enabled</label>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.caseSensitive} onChange={(e) => onPatch({ caseSensitive: e.target.checked })} /> Case sensitive</label>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.matchWholeWords} onChange={(e) => onPatch({ matchWholeWords: e.target.checked })} /> Match whole words</label>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div>
+              <div className="mb-1 text-sm">Priority</div>
+              <Input type="number" value={String(entry.priority)} onChange={(e) => onPatch({ priority: Number(e.target.value) || 1 })} />
+            </div>
+            <div>
+              <div className="mb-1 text-sm">Category</div>
+              <Select value={entry.category} onChange={(e) => onPatch({ category: (forceCategory || e.target.value) as LorebookEntry["category"] })} disabled={!!forceCategory}>
+                <option value="world">World</option>
+                <option value="location">Location</option>
+                <option value="faction">Faction</option>
+                <option value="rule">Rule</option>
+                <option value="item">Item</option>
+                <option value="special">Special</option>
+                <option value="character">Character</option>
+              </Select>
+            </div>
+            <div>
+              <div className="mb-1 text-sm">Key match mode</div>
+              <Select value={entry.keyMatchMode} onChange={(e) => onPatch({ keyMatchMode: e.target.value as LorebookEntry["keyMatchMode"] })}>
+                <option value="partial">Partial</option>
+                <option value="exact">Exact</option>
+              </Select>
+            </div>
           </div>
           <div>
             <div className="mb-1 text-sm">Comment</div>
             <Input value={entry.comment} onChange={(e) => onPatch({ comment: e.target.value })} />
           </div>
         </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <div>
-            <div className="mb-1 text-sm">Primary keys (comma-separated)</div>
-            <Input value={entry.keysRaw} onChange={(e) => onPatch({ keysRaw: e.target.value })} />
-          </div>
-          <div>
-            <div className="mb-1 text-sm">Secondary keys (comma-separated)</div>
-            <Input value={entry.keysecondaryRaw} onChange={(e) => onPatch({ keysecondaryRaw: e.target.value })} />
-          </div>
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <div>
-            <div className="mb-1 text-sm">Order (1-100)</div>
-            <Input type="number" value={String(entry.order)} onChange={(e) => onPatch({ order: Number(e.target.value) || 1 })} />
-          </div>
-          <div>
-            <div className="mb-1 text-sm">Position (0-100)</div>
-            <Input type="number" value={String(entry.position)} onChange={(e) => onPatch({ position: Number(e.target.value) || 0 })} />
-          </div>
-        </div>
-        <div>
-          <div className="mb-1 text-sm">Activation setting</div>
-          <Select
-            value={entry.activationSetting}
-            onChange={(e) => {
-              const value = e.target.value as LorebookEntry["activationSetting"];
-              onPatch({
-                activationSetting: value,
-                constant: value === "always_active",
-                selective: value === "selective",
-                disable: value === "disabled",
-                enabled: value !== "disabled",
-              });
-            }}
-          >
-            <option value="any_key">Any Key</option>
-            <option value="selective">Selective</option>
-            <option value="always_active">Always Active</option>
-            <option value="disabled">Disabled</option>
-          </Select>
-        </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.enabled} onChange={(e) => onPatch({ enabled: e.target.checked, disable: !e.target.checked })} /> Enabled</label>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.caseSensitive} onChange={(e) => onPatch({ caseSensitive: e.target.checked })} /> Case sensitive</label>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.matchWholeWords} onChange={(e) => onPatch({ matchWholeWords: e.target.checked })} /> Match whole words</label>
-        </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          <div>
-            <div className="mb-1 text-sm">Priority</div>
-            <Input type="number" value={String(entry.priority)} onChange={(e) => onPatch({ priority: Number(e.target.value) || 1 })} />
-          </div>
-          <div>
-            <div className="mb-1 text-sm">Category</div>
-            <Select value={entry.category} onChange={(e) => onPatch({ category: e.target.value as LorebookEntry["category"] })}>
-              <option value="world">World</option>
-              <option value="faction">Faction</option>
-              <option value="rule">Rule</option>
-              <option value="special">Special</option>
-              <option value="character">Character</option>
-            </Select>
-          </div>
-          <div>
-            <div className="mb-1 text-sm">Key match mode</div>
-            <Select value={entry.keyMatchMode} onChange={(e) => onPatch({ keyMatchMode: e.target.value as LorebookEntry["keyMatchMode"] })}>
-              <option value="partial">Partial</option>
-              <option value="exact">Exact</option>
-            </Select>
-          </div>
-        </div>
-        <div>
-          <div className="mb-1 text-sm">Content</div>
-          <Textarea value={entry.content} onChange={(e) => onPatch({ content: e.target.value })} rows={contentRows} />
-        </div>
       </div>
     );
   }
+
 
   const draft = getDraftCharacter();
 
@@ -3359,7 +3427,7 @@ Return only the revised synopsis.`;
             ) : (
               <>
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Input value={activeLorebook.name} onChange={(e) => updateLorebook(activeLorebook.id, { name: e.target.value })} className="max-w-md" />
+                  <div className="text-lg font-semibold">{activeLorebook.name || "Lorebook"}</div>
                   <div className="flex gap-2">
                     <Button variant="secondary" onClick={() => exportLorebookAsEntries(activeLorebook)}>
                       <Download className="h-4 w-4" /> Export JSON
@@ -3372,9 +3440,12 @@ Return only the revised synopsis.`;
 
                 <div className="flex flex-wrap gap-2">
                   {([
+                    ["overview", "Overview"],
                     ["world", "World"],
+                    ["locations", "Locations"],
                     ["factions", "Factions"],
                     ["rules", "Rules"],
+                    ["items", "Items"],
                     ["specials", "Specials"],
                   ] as Array<[LorebookTab, string]>).map(([id, label]) => (
                     <button
@@ -3393,12 +3464,36 @@ Return only the revised synopsis.`;
                   ))}
                 </div>
 
-                {lorebookTab === "world" ? (
+                {lorebookTab === "overview" ? (
                   <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                    <div>
+                      <div className="mb-1 text-sm">Upload your lorebook cover (4:3)</div>
+                      <input
+                        ref={lorebookCoverFileRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) handlePickLorebookCover(f);
+                          e.currentTarget.value = "";
+                        }}
+                      />
+                      <Button variant="secondary" onClick={() => lorebookCoverFileRef.current?.click()}>
+                        <Upload className="h-4 w-4" /> Upload cover
+                      </Button>
+                      {activeLorebook.coverImageDataUrl ? (
+                        <div className="mt-3 max-w-md overflow-hidden rounded-xl border border-[hsl(var(--border))]">
+                          <div className="aspect-[4/3] bg-[hsl(var(--muted))]">
+                            <img src={activeLorebook.coverImageDataUrl} alt={activeLorebook.name} className="h-full w-full object-cover" />
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <div>
-                        <div className="mb-1 text-sm">Lorebook description</div>
-                        <Input value={activeLorebook.description} onChange={(e) => updateLorebook(activeLorebook.id, { description: e.target.value })} />
+                        <div className="mb-1 text-sm">Lorebook name</div>
+                        <Input value={activeLorebook.name} onChange={(e) => updateLorebook(activeLorebook.id, { name: e.target.value })} />
                       </div>
                       <div>
                         <div className="mb-1 text-sm">Author</div>
@@ -3406,10 +3501,23 @@ Return only the revised synopsis.`;
                       </div>
                     </div>
                     <div>
+                      <div className="mb-1 text-sm">Lorebook description</div>
+                      <Textarea value={activeLorebook.description} onChange={(e) => updateLorebook(activeLorebook.id, { description: e.target.value })} rows={4} />
+                    </div>
+                    <div>
                       <div className="mb-1 text-sm">Lorebook tags (comma-separated)</div>
                       <Input value={activeLorebook.metaTagsRaw} onChange={(e) => updateLorebook(activeLorebook.id, { metaTagsRaw: e.target.value })} />
                     </div>
-                    {renderLoreEntryFields(activeLorebook.worldEntry, (patch) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, ...patch, category: "world" } }), 12)}
+                  </div>
+                ) : null}
+
+                {lorebookTab === "world" ? (
+                  <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                    {renderLoreEntryFields(
+                      activeLorebook.worldEntry,
+                      (patch) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, ...patch, category: "world" } }),
+                      { nameLabel: "World name", contentLabel: "World description", contentRows: 12, forceCategory: "world" }
+                    )}
                     <div className="grid gap-2 md:grid-cols-[1fr_auto]">
                       <div>
                         <div className="mb-1 text-sm">Generation prompt</div>
@@ -3417,6 +3525,24 @@ Return only the revised synopsis.`;
                       </div>
                       <div className="flex items-end">
                         <Button variant="secondary" onClick={generateLorebookWorld} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate</Button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                {lorebookTab === "locations" ? (
+                  <div className="space-y-3">
+                    <div className="flex justify-end"><Button variant="primary" onClick={() => addLorebookEntry("locationEntries", "Location")}><Plus className="h-4 w-4" /> Add location entry</Button></div>
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <div className="space-y-2 lg:col-span-1">
+                        {activeLorebook.locationEntries.map((entry) => <button key={entry.id} type="button" onClick={() => setActiveLocationEntryId(entry.id)} className={cn("w-full rounded-xl border p-3 text-left", activeLocationEntryId === entry.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))] bg-[hsl(var(--card))]")}>{entry.name || "Untitled"}</button>)}
+                      </div>
+                      <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 lg:col-span-2">
+                        {(() => {
+                          const entry = activeLorebook.locationEntries.find((x) => x.id === activeLocationEntryId) || activeLorebook.locationEntries[0];
+                          if (!entry) return <div className="text-sm text-[hsl(var(--muted-foreground))]">No location entries yet.</div>;
+                          return <div className="space-y-3">{renderLoreEntryFields(entry, (patch) => updateLorebookEntry("locationEntries", entry.id, { ...patch, category: "location" }), { nameLabel: "Location name", contentLabel: "Location description", contentRows: 10, forceCategory: "location" })}<div><Button variant="secondary" onClick={() => removeLorebookEntry("locationEntries", entry.id)}><Trash2 className="h-4 w-4" /> Remove entry</Button></div></div>;
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -3458,34 +3584,34 @@ Return only the revised synopsis.`;
                             <div><div className="mb-1 text-sm">Size</div><Select value={factionSizeInput} onChange={(e) => setFactionSizeInput(e.target.value as any)}><option value="micro">&lt;100 (micro)</option><option value="small">101-500 (small)</option><option value="medium">501-1000 (medium)</option><option value="large">1001-5000 (large)</option><option value="massive">5001-10000 (massive)</option><option value="colossal">10001-100000 (colossal)</option><option value="mega-faction">&gt;100000 (mega-faction)</option></Select></div>
                           </div>
                           <div>
-                            <div className="mb-1 text-sm">Faction details</div>
-                            <Textarea value={factionDetailsInput} onChange={(e) => setFactionDetailsInput(e.target.value)} rows={6} />
-                          </div>
-                          <div>
                             <div className="mb-1 text-sm">Faction image (1:1)</div>
                             <input ref={factionImageFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePickFactionImage(f); e.currentTarget.value = ""; }} />
                             <Button variant="secondary" onClick={() => factionImageFileRef.current?.click()}><Upload className="h-4 w-4" /> Upload image</Button>
                           </div>
-                          {renderLoreEntryFields({
-                            ...factionEntryDraft,
-                            name: factionNameInput || factionEntryDraft.name,
-                            comment: factionCommentInput,
-                            content: factionDetailsInput,
-                            keysRaw: factionKeysInput,
-                            priority: factionPriorityInput,
-                            enabled: factionEnabledInput,
-                            tagsRaw: factionTagsInput || "faction",
-                            category: "faction",
-                          }, (patch) => {
-                            setFactionEntryDraft((prev) => ({ ...prev, ...patch, category: "faction" }));
-                            if (patch.name !== undefined) setFactionNameInput(patch.name);
-                            if (patch.comment !== undefined) setFactionCommentInput(patch.comment);
-                            if (patch.content !== undefined) setFactionDetailsInput(patch.content);
-                            if (patch.keysRaw !== undefined) setFactionKeysInput(patch.keysRaw);
-                            if (patch.priority !== undefined) setFactionPriorityInput(patch.priority);
-                            if (patch.enabled !== undefined) setFactionEnabledInput(patch.enabled);
-                            if (patch.tagsRaw !== undefined) setFactionTagsInput(patch.tagsRaw);
-                          }, 8)}
+                          {renderLoreEntryFields(
+                            {
+                              ...factionEntryDraft,
+                              name: factionNameInput || factionEntryDraft.name,
+                              comment: factionCommentInput,
+                              content: factionDetailsInput,
+                              keysRaw: factionKeysInput,
+                              priority: factionPriorityInput,
+                              enabled: factionEnabledInput,
+                              tagsRaw: factionTagsInput || "faction",
+                              category: "faction",
+                            },
+                            (patch) => {
+                              setFactionEntryDraft((prev) => ({ ...prev, ...patch, category: "faction" }));
+                              if (patch.name !== undefined) setFactionNameInput(patch.name);
+                              if (patch.comment !== undefined) setFactionCommentInput(patch.comment);
+                              if (patch.content !== undefined) setFactionDetailsInput(patch.content);
+                              if (patch.keysRaw !== undefined) setFactionKeysInput(patch.keysRaw);
+                              if (patch.priority !== undefined) setFactionPriorityInput(patch.priority);
+                              if (patch.enabled !== undefined) setFactionEnabledInput(patch.enabled);
+                              if (patch.tagsRaw !== undefined) setFactionTagsInput(patch.tagsRaw);
+                            },
+                            { nameLabel: "Faction name", contentLabel: "Description", contentRows: 8, forceCategory: "faction" }
+                          )}
                           <div className="flex gap-2">
                             <Button variant="primary" onClick={saveFactionEditor}>Done</Button>
                             {editingFactionId ? <Button variant="secondary" onClick={() => { if (!activeLorebook || !editingFactionId) return; updateLorebook(activeLorebook.id, { factions: activeLorebook.factions.filter((f) => f.id !== editingFactionId) }); setFactionEditorOpen(false); }}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
@@ -3507,7 +3633,25 @@ Return only the revised synopsis.`;
                         {(() => {
                           const entry = activeLorebook.rulesEntries.find((x) => x.id === activeRuleEntryId) || activeLorebook.rulesEntries[0];
                           if (!entry) return <div className="text-sm text-[hsl(var(--muted-foreground))]">No rule entries yet.</div>;
-                          return <div className="space-y-3">{renderLoreEntryFields(entry, (patch) => updateLorebookEntry("rulesEntries", entry.id, { ...patch, category: "rule" }), 10)}<div><Button variant="secondary" onClick={() => removeLorebookEntry("rulesEntries", entry.id)}><Trash2 className="h-4 w-4" /> Remove entry</Button></div></div>;
+                          return <div className="space-y-3">{renderLoreEntryFields(entry, (patch) => updateLorebookEntry("rulesEntries", entry.id, { ...patch, category: "rule" }), { nameLabel: "Rule name", contentLabel: "Rule description", contentRows: 10, forceCategory: "rule" })}<div><Button variant="secondary" onClick={() => removeLorebookEntry("rulesEntries", entry.id)}><Trash2 className="h-4 w-4" /> Remove entry</Button></div></div>;
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                {lorebookTab === "items" ? (
+                  <div className="space-y-3">
+                    <div className="flex justify-end"><Button variant="primary" onClick={() => addLorebookEntry("itemEntries", "Item")}><Plus className="h-4 w-4" /> Add item entry</Button></div>
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <div className="space-y-2 lg:col-span-1">
+                        {activeLorebook.itemEntries.map((entry) => <button key={entry.id} type="button" onClick={() => setActiveItemEntryId(entry.id)} className={cn("w-full rounded-xl border p-3 text-left", activeItemEntryId === entry.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))] bg-[hsl(var(--card))]")}>{entry.name || "Untitled"}</button>)}
+                      </div>
+                      <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 lg:col-span-2">
+                        {(() => {
+                          const entry = activeLorebook.itemEntries.find((x) => x.id === activeItemEntryId) || activeLorebook.itemEntries[0];
+                          if (!entry) return <div className="text-sm text-[hsl(var(--muted-foreground))]">No item entries yet.</div>;
+                          return <div className="space-y-3">{renderLoreEntryFields(entry, (patch) => updateLorebookEntry("itemEntries", entry.id, { ...patch, category: "item" }), { nameLabel: "Item name", contentLabel: "Item description", contentRows: 10, forceCategory: "item" })}<div><Button variant="secondary" onClick={() => removeLorebookEntry("itemEntries", entry.id)}><Trash2 className="h-4 w-4" /> Remove entry</Button></div></div>;
                         })()}
                       </div>
                     </div>
@@ -3525,7 +3669,7 @@ Return only the revised synopsis.`;
                         {(() => {
                           const entry = activeLorebook.specialsEntries.find((x) => x.id === activeSpecialEntryId) || activeLorebook.specialsEntries[0];
                           if (!entry) return <div className="text-sm text-[hsl(var(--muted-foreground))]">No special entries yet.</div>;
-                          return <div className="space-y-3">{renderLoreEntryFields(entry, (patch) => updateLorebookEntry("specialsEntries", entry.id, { ...patch, category: "special" }), 10)}<div><Button variant="secondary" onClick={() => removeLorebookEntry("specialsEntries", entry.id)}><Trash2 className="h-4 w-4" /> Remove entry</Button></div></div>;
+                          return <div className="space-y-3">{renderLoreEntryFields(entry, (patch) => updateLorebookEntry("specialsEntries", entry.id, { ...patch, category: "special" }), { nameLabel: "Special name", contentLabel: "Special description", contentRows: 10, forceCategory: "special" })}<div><Button variant="secondary" onClick={() => removeLorebookEntry("specialsEntries", entry.id)}><Trash2 className="h-4 w-4" /> Remove entry</Button></div></div>;
                         })()}
                       </div>
                     </div>
