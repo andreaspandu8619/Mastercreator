@@ -91,6 +91,8 @@ type LorebookEntry = {
   keysecondaryRaw: string;
   enabled: boolean;
   constant: boolean;
+  selective: boolean;
+  disable: boolean;
   caseSensitive: boolean;
   matchWholeWords: boolean;
   keyMatchPriority: boolean;
@@ -99,8 +101,13 @@ type LorebookEntry = {
   minMessages: number;
   groupWeight: number;
   insertionOrder: number;
+  order: number;
+  position: number;
   activationMode: "standard";
+  activationSetting: "any_key" | "selective" | "always_active" | "disabled";
+  keyMatchMode: "partial" | "exact";
   tagsRaw: string;
+  category: "world" | "faction" | "rule" | "special" | "character";
 };
 
 type LorebookFaction = {
@@ -117,6 +124,9 @@ type LorebookFaction = {
 type Lorebook = {
   id: string;
   name: string;
+  description: string;
+  author: string;
+  metaTagsRaw: string;
   worldEntry: LorebookEntry;
   rulesEntries: LorebookEntry[];
   specialsEntries: LorebookEntry[];
@@ -277,7 +287,8 @@ function splitCsv(input: string): string[] {
     .filter(Boolean);
 }
 
-function createDefaultLoreEntry(name = "", tag = "important", order = 100): LorebookEntry {
+function createDefaultLoreEntry(name = "", category: LorebookEntry["category"] = "rule", order = 100): LorebookEntry {
+  const tag = category === "world" ? "world" : category === "faction" ? "faction" : "important";
   return {
     id: uid(),
     name,
@@ -287,6 +298,8 @@ function createDefaultLoreEntry(name = "", tag = "important", order = 100): Lore
     keysecondaryRaw: "",
     enabled: true,
     constant: false,
+    selective: false,
+    disable: false,
     caseSensitive: false,
     matchWholeWords: true,
     keyMatchPriority: false,
@@ -295,8 +308,13 @@ function createDefaultLoreEntry(name = "", tag = "important", order = 100): Lore
     minMessages: 0,
     groupWeight: 100,
     insertionOrder: order,
+    order,
+    position: 0,
     activationMode: "standard",
+    activationSetting: "any_key",
+    keyMatchMode: "partial",
     tagsRaw: tag,
+    category,
   };
 }
 
@@ -767,6 +785,7 @@ export default function CharacterCreatorApp() {
   const [factionTagsInput, setFactionTagsInput] = useState("faction");
   const [factionPriorityInput, setFactionPriorityInput] = useState(1);
   const [factionEnabledInput, setFactionEnabledInput] = useState(true);
+  const [factionEntryDraft, setFactionEntryDraft] = useState<LorebookEntry>(createDefaultLoreEntry("", "faction", 100));
   const [activeRuleEntryId, setActiveRuleEntryId] = useState<string | null>(null);
   const [activeSpecialEntryId, setActiveSpecialEntryId] = useState<string | null>(null);
   const [storyDraftCharacterIds, setStoryDraftCharacterIds] = useState<string[]>([]);
@@ -1027,28 +1046,36 @@ export default function CharacterCreatorApp() {
           const id = typeof (book as any).id === "string" ? (book as any).id : uid();
           const now = new Date().toISOString();
 
-          const normalizeEntry = (raw: any, defaultName: string, tag: string, order: number) => {
-            const base = createDefaultLoreEntry(defaultName, tag, order);
+          const normalizeEntry = (raw: any, defaultName: string, category: LorebookEntry["category"], order: number) => {
+            const base = createDefaultLoreEntry(defaultName, category, order);
             if (!raw || typeof raw !== "object") return base;
+            const activationSetting = raw.activationSetting === "selective" || raw.activationSetting === "always_active" || raw.activationSetting === "disabled" ? raw.activationSetting : "any_key";
             return {
               ...base,
               id: typeof raw.id === "string" ? raw.id : base.id,
               name: collapseWhitespace(raw.name ?? base.name),
               comment: typeof raw.comment === "string" ? raw.comment : base.comment,
               content: typeof raw.content === "string" ? raw.content : base.content,
-              keysRaw: typeof raw.keysRaw === "string" ? raw.keysRaw : base.keysRaw,
-              keysecondaryRaw: typeof raw.keysecondaryRaw === "string" ? raw.keysecondaryRaw : base.keysecondaryRaw,
-              enabled: raw.enabled !== false,
+              keysRaw: typeof raw.keysRaw === "string" ? raw.keysRaw : Array.isArray(raw.key) ? raw.key.join(", ") : base.keysRaw,
+              keysecondaryRaw: typeof raw.keysecondaryRaw === "string" ? raw.keysecondaryRaw : Array.isArray(raw.keysecondary) ? raw.keysecondary.join(", ") : base.keysecondaryRaw,
+              enabled: raw.enabled !== false && raw.disable !== true,
               constant: !!raw.constant,
-              caseSensitive: !!raw.caseSensitive,
+              selective: !!raw.selective,
+              disable: !!raw.disable,
+              caseSensitive: !!raw.caseSensitive || !!raw.case_sensitive,
               matchWholeWords: raw.matchWholeWords !== false,
               keyMatchPriority: !!raw.keyMatchPriority,
               priority: Number.isFinite(Number(raw.priority)) ? Number(raw.priority) : base.priority,
               probability: Number.isFinite(Number(raw.probability)) ? Number(raw.probability) : base.probability,
               minMessages: Number.isFinite(Number(raw.minMessages)) ? Number(raw.minMessages) : base.minMessages,
               groupWeight: Number.isFinite(Number(raw.groupWeight)) ? Number(raw.groupWeight) : base.groupWeight,
-              insertionOrder: Number.isFinite(Number(raw.insertionOrder)) ? Number(raw.insertionOrder) : base.insertionOrder,
+              insertionOrder: Number.isFinite(Number(raw.insertionOrder)) ? Number(raw.insertionOrder) : Number.isFinite(Number(raw.insertion_order)) ? Number(raw.insertion_order) : base.insertionOrder,
+              order: Number.isFinite(Number(raw.order)) ? Number(raw.order) : base.order,
+              position: Number.isFinite(Number(raw.position)) ? Number(raw.position) : base.position,
+              activationSetting,
+              keyMatchMode: raw.keyMatchMode === "exact" ? "exact" : "partial",
               tagsRaw: typeof raw.tagsRaw === "string" ? raw.tagsRaw : base.tagsRaw,
+              category: ["world","faction","rule","special","character"].includes(raw.category) ? raw.category : category,
             } as LorebookEntry;
           };
 
@@ -1084,18 +1111,21 @@ export default function CharacterCreatorApp() {
               }, "World Overview", "world", 100);
 
           const rulesEntries = Array.isArray((book as any).rulesEntries)
-            ? (book as any).rulesEntries.map((entry: any, idx: number) => normalizeEntry(entry, `Rule ${idx + 1}`, "important", (idx + 1) * 100))
+            ? (book as any).rulesEntries.map((entry: any, idx: number) => normalizeEntry(entry, `Rule ${idx + 1}`, "rule", (idx + 1) * 100))
             : [];
 
           const specialsEntries = Array.isArray((book as any).specialsEntries)
-            ? (book as any).specialsEntries.map((entry: any, idx: number) => normalizeEntry(entry, `Special ${idx + 1}`, "important", (idx + 1) * 100))
+            ? (book as any).specialsEntries.map((entry: any, idx: number) => normalizeEntry(entry, `Special ${idx + 1}`, "special", (idx + 1) * 100))
             : Array.isArray((book as any).powers)
-              ? (book as any).powers.map((entry: any, idx: number) => normalizeEntry(entry, `Special ${idx + 1}`, "important", (idx + 1) * 100))
+              ? (book as any).powers.map((entry: any, idx: number) => normalizeEntry(entry, `Special ${idx + 1}`, "special", (idx + 1) * 100))
               : [];
 
           return {
             id,
             name: collapseWhitespace((book as any).name || "Untitled lorebook"),
+            description: typeof (book as any).description === "string" ? (book as any).description : "",
+            author: typeof (book as any).author === "string" ? (book as any).author : "",
+            metaTagsRaw: typeof (book as any).metaTagsRaw === "string" ? (book as any).metaTagsRaw : "",
             worldEntry,
             rulesEntries,
             specialsEntries,
@@ -1715,6 +1745,9 @@ export default function CharacterCreatorApp() {
     const book: Lorebook = {
       id: uid(),
       name: `Lorebook ${lorebooks.length + 1}`,
+      description: "",
+      author: "",
+      metaTagsRaw: "",
       worldEntry: createDefaultLoreEntry("World Overview", "world", 100),
       rulesEntries: [],
       specialsEntries: [],
@@ -1751,7 +1784,7 @@ export default function CharacterCreatorApp() {
   function addLorebookEntry(listKey: "rulesEntries" | "specialsEntries", baseName: string) {
     if (!activeLorebook) return;
     const current = activeLorebook[listKey];
-    const entry = createDefaultLoreEntry(`${baseName} ${current.length + 1}`, "important", (current.length + 1) * 100);
+    const entry = createDefaultLoreEntry(`${baseName} ${current.length + 1}`, listKey === "specialsEntries" ? "special" : "rule", (current.length + 1) * 100);
     updateLorebook(activeLorebook.id, { [listKey]: [entry, ...current] } as Partial<Lorebook>);
     if (listKey === "rulesEntries") setActiveRuleEntryId(entry.id);
     if (listKey === "specialsEntries") setActiveSpecialEntryId(entry.id);
@@ -1788,6 +1821,7 @@ export default function CharacterCreatorApp() {
       setFactionTagsInput("faction");
       setFactionPriorityInput(1);
       setFactionEnabledInput(true);
+      setFactionEntryDraft(createDefaultLoreEntry("", "faction", 100));
       setFactionEditorOpen(true);
       return;
     }
@@ -1802,6 +1836,7 @@ export default function CharacterCreatorApp() {
     setFactionTagsInput(faction.entry.tagsRaw || "faction");
     setFactionPriorityInput(faction.entry.priority || 1);
     setFactionEnabledInput(faction.entry.enabled !== false);
+    setFactionEntryDraft({ ...createDefaultLoreEntry(faction.name, "faction", 100), ...faction.entry, category: "faction" });
     setFactionEditorOpen(true);
   }
 
@@ -1810,7 +1845,7 @@ export default function CharacterCreatorApp() {
     const cleanName = collapseWhitespace(factionNameInput);
     if (!cleanName) return;
     const now = new Date().toISOString();
-    const entryBase = createDefaultLoreEntry(cleanName, factionTagsInput || "faction", 100);
+    const entryBase = createDefaultLoreEntry(cleanName, "faction", factionEntryDraft.order || 100);
     const payload: LorebookFaction = {
       id: editingFactionId || uid(),
       name: cleanName,
@@ -1820,6 +1855,7 @@ export default function CharacterCreatorApp() {
       details: factionDetailsInput,
       entry: {
         ...entryBase,
+        ...factionEntryDraft,
         id: editingFactionId || uid(),
         name: cleanName,
         comment: factionCommentInput,
@@ -1828,6 +1864,7 @@ export default function CharacterCreatorApp() {
         priority: Math.max(1, Number(factionPriorityInput) || 1),
         enabled: factionEnabledInput,
         tagsRaw: factionTagsInput || "faction",
+        category: "faction",
       },
       createdAt: now,
     };
@@ -1839,43 +1876,70 @@ export default function CharacterCreatorApp() {
   }
 
   function exportLorebookAsEntries(book: Lorebook) {
-    const toEntry = (entry: LorebookEntry, category: string, tagOverride: string) => ({
-      activationMode: "standard",
-      activationScript: "",
-      case_sensitive: entry.caseSensitive,
-      category,
-      comment: entry.comment,
-      constant: entry.constant,
-      content: entry.content,
-      enabled: entry.enabled,
-      extensions: {},
-      groupWeight: entry.groupWeight,
-      id: entry.id,
-      inclusionGroupRaw: "",
-      insertion_order: entry.insertionOrder,
-      key: splitCsv(entry.keysRaw),
-      keyMatchPriority: entry.keyMatchPriority,
-      keysecondary: splitCsv(entry.keysecondaryRaw),
-      keysecondaryRaw: entry.keysecondaryRaw,
-      keysRaw: entry.keysRaw,
-      matchWholeWords: entry.matchWholeWords,
-      minMessages: entry.minMessages,
-      name: entry.name,
-      prioritizeInclusion: false,
-      priority: entry.priority,
-      probability: entry.probability,
-      selectiveLogic: 0,
-      tags: [tagOverride],
-    });
-
-    const entries = [
-      toEntry({ ...book.worldEntry, tagsRaw: "world" }, "general", "world"),
-      ...book.factions.map((f) => toEntry({ ...f.entry, name: f.name, content: f.details || f.entry.content }, "general", "faction")),
-      ...book.rulesEntries.map((entry) => toEntry(entry, "other", "important")),
-      ...book.specialsEntries.map((entry) => toEntry(entry, "other", "important")),
+    const allEntries: Array<{ entry: LorebookEntry; contentOverride?: string }> = [
+      { entry: { ...book.worldEntry, category: "world" as const, tagsRaw: "world" } },
+      ...book.factions.map((f) => ({ entry: { ...f.entry, category: "faction" as const, tagsRaw: "faction", name: f.name }, contentOverride: f.details || f.entry.content })),
+      ...book.rulesEntries.map((entry) => ({ entry: { ...entry, category: "rule" as const, tagsRaw: "important" } })),
+      ...book.specialsEntries.map((entry) => ({ entry: { ...entry, category: "special" as const, tagsRaw: "important" } })),
     ];
 
-    downloadJSON((filenameSafe(book.name) || "lorebook") + "_entries.json", entries);
+    const entries: Record<string, any> = {};
+    allEntries.forEach((item, index) => {
+      const entry = item.entry;
+      const key = String(index + 1);
+      entries[key] = {
+        uid: index + 1,
+        key: splitCsv(entry.keysRaw),
+        keysecondary: splitCsv(entry.keysecondaryRaw),
+        comment: entry.comment,
+        content: item.contentOverride ?? entry.content,
+        constant: entry.activationSetting === "always_active" ? true : entry.constant,
+        selective: entry.activationSetting === "selective" ? true : entry.selective,
+        disable: entry.activationSetting === "disabled" ? true : entry.disable || !entry.enabled,
+        order: entry.order,
+        position: entry.position,
+        category: entry.category,
+        keyMatchMode: entry.keyMatchMode,
+      };
+    });
+
+    const out = {
+      name: book.name,
+      description: book.description || "",
+      entries,
+      extensions: {
+        world_info_depth: 2,
+        world_info_budget: 2048,
+        world_info_min_activations: 0,
+        world_info_max_activations: 100,
+        world_info_recursive_scanning: true,
+        world_info_overflow_alert: true,
+        world_info_case_sensitive: false,
+        world_info_match_whole_words: false,
+      },
+      meta: {
+        title: book.name,
+        author: book.author || "",
+        description: book.description || "",
+        category: "original",
+        tags: splitCsv(book.metaTagsRaw),
+        entryCount: allEntries.length,
+        totalTokens: 0,
+        featured: false,
+        lastChanges: {
+          descriptionChanged: false,
+          entriesChanged: [],
+          entriesAdded: [],
+          entriesDeleted: [],
+          metaChanged: [],
+        },
+        changelog: [],
+        source: "LoreBary",
+        version: "1.0",
+      },
+    };
+
+    downloadJSON((filenameSafe(book.name) || "lorebook") + "_entries.json", out);
   }
 
   async function generateLorebookWorld() {
@@ -1897,7 +1961,7 @@ Return world background text only.`,
         maxTokens: Math.min(700, Math.max(180, proxyMaxTokens * 2)),
         temperature: 0.85,
       });
-      updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, content: text, tagsRaw: "world" } });
+      updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, content: text, tagsRaw: "world", category: "world" } });
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "World generation failed.");
     } finally {
@@ -2803,6 +2867,96 @@ Return only the revised synopsis.`;
     }
   }
 
+  function renderLoreEntryFields(entry: LorebookEntry, onPatch: (patch: Partial<LorebookEntry>) => void, contentRows = 10) {
+    return (
+      <div className="space-y-3">
+        <div className="grid gap-3 md:grid-cols-2">
+          <div>
+            <div className="mb-1 text-sm">Entry name</div>
+            <Input value={entry.name} onChange={(e) => onPatch({ name: e.target.value })} />
+          </div>
+          <div>
+            <div className="mb-1 text-sm">Comment</div>
+            <Input value={entry.comment} onChange={(e) => onPatch({ comment: e.target.value })} />
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div>
+            <div className="mb-1 text-sm">Primary keys (comma-separated)</div>
+            <Input value={entry.keysRaw} onChange={(e) => onPatch({ keysRaw: e.target.value })} />
+          </div>
+          <div>
+            <div className="mb-1 text-sm">Secondary keys (comma-separated)</div>
+            <Input value={entry.keysecondaryRaw} onChange={(e) => onPatch({ keysecondaryRaw: e.target.value })} />
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div>
+            <div className="mb-1 text-sm">Order (1-100)</div>
+            <Input type="number" value={String(entry.order)} onChange={(e) => onPatch({ order: Number(e.target.value) || 1 })} />
+          </div>
+          <div>
+            <div className="mb-1 text-sm">Position (0-100)</div>
+            <Input type="number" value={String(entry.position)} onChange={(e) => onPatch({ position: Number(e.target.value) || 0 })} />
+          </div>
+        </div>
+        <div>
+          <div className="mb-1 text-sm">Activation setting</div>
+          <Select
+            value={entry.activationSetting}
+            onChange={(e) => {
+              const value = e.target.value as LorebookEntry["activationSetting"];
+              onPatch({
+                activationSetting: value,
+                constant: value === "always_active",
+                selective: value === "selective",
+                disable: value === "disabled",
+                enabled: value !== "disabled",
+              });
+            }}
+          >
+            <option value="any_key">Any Key</option>
+            <option value="selective">Selective</option>
+            <option value="always_active">Always Active</option>
+            <option value="disabled">Disabled</option>
+          </Select>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.enabled} onChange={(e) => onPatch({ enabled: e.target.checked, disable: !e.target.checked })} /> Enabled</label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.caseSensitive} onChange={(e) => onPatch({ caseSensitive: e.target.checked })} /> Case sensitive</label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.matchWholeWords} onChange={(e) => onPatch({ matchWholeWords: e.target.checked })} /> Match whole words</label>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <div>
+            <div className="mb-1 text-sm">Priority</div>
+            <Input type="number" value={String(entry.priority)} onChange={(e) => onPatch({ priority: Number(e.target.value) || 1 })} />
+          </div>
+          <div>
+            <div className="mb-1 text-sm">Category</div>
+            <Select value={entry.category} onChange={(e) => onPatch({ category: e.target.value as LorebookEntry["category"] })}>
+              <option value="world">World</option>
+              <option value="faction">Faction</option>
+              <option value="rule">Rule</option>
+              <option value="special">Special</option>
+              <option value="character">Character</option>
+            </Select>
+          </div>
+          <div>
+            <div className="mb-1 text-sm">Key match mode</div>
+            <Select value={entry.keyMatchMode} onChange={(e) => onPatch({ keyMatchMode: e.target.value as LorebookEntry["keyMatchMode"] })}>
+              <option value="partial">Partial</option>
+              <option value="exact">Exact</option>
+            </Select>
+          </div>
+        </div>
+        <div>
+          <div className="mb-1 text-sm">Content</div>
+          <Textarea value={entry.content} onChange={(e) => onPatch({ content: e.target.value })} rows={contentRows} />
+        </div>
+      </div>
+    );
+  }
+
   const draft = getDraftCharacter();
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
@@ -3243,29 +3397,27 @@ Return only the revised synopsis.`;
                   <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                     <div className="grid gap-3 md:grid-cols-2">
                       <div>
-                        <div className="mb-1 text-sm">Entry name</div>
-                        <Input value={activeLorebook.worldEntry.name} onChange={(e) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, name: e.target.value } })} />
+                        <div className="mb-1 text-sm">Lorebook description</div>
+                        <Input value={activeLorebook.description} onChange={(e) => updateLorebook(activeLorebook.id, { description: e.target.value })} />
                       </div>
                       <div>
-                        <div className="mb-1 text-sm">Comment</div>
-                        <Input value={activeLorebook.worldEntry.comment} onChange={(e) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, comment: e.target.value } })} />
+                        <div className="mb-1 text-sm">Author</div>
+                        <Input value={activeLorebook.author} onChange={(e) => updateLorebook(activeLorebook.id, { author: e.target.value })} />
                       </div>
                     </div>
-                    <div className="grid gap-3 md:grid-cols-3">
-                      <div>
-                        <div className="mb-1 text-sm">Keywords</div>
-                        <Input value={activeLorebook.worldEntry.keysRaw} onChange={(e) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, keysRaw: e.target.value } })} placeholder="keyword1, keyword2" />
-                      </div>
-                      <div>
-                        <div className="mb-1 text-sm">Priority</div>
-                        <Input type="number" value={String(activeLorebook.worldEntry.priority)} onChange={(e) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, priority: Number(e.target.value) || 1 } })} />
-                      </div>
-                      <label className="flex items-center gap-2 pt-7 text-sm"><input type="checkbox" checked={activeLorebook.worldEntry.enabled} onChange={(e) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, enabled: e.target.checked } })} /> Enabled</label>
+                    <div>
+                      <div className="mb-1 text-sm">Lorebook tags (comma-separated)</div>
+                      <Input value={activeLorebook.metaTagsRaw} onChange={(e) => updateLorebook(activeLorebook.id, { metaTagsRaw: e.target.value })} />
                     </div>
-                    <Textarea value={activeLorebook.worldEntry.content} onChange={(e) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, content: e.target.value, tagsRaw: "world" } })} rows={12} placeholder="Describe the world..." />
+                    {renderLoreEntryFields(activeLorebook.worldEntry, (patch) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, ...patch, category: "world" } }), 12)}
                     <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-                      <Input value={lorebookWorldPrompt} onChange={(e) => setLorebookWorldPrompt(e.target.value)} placeholder="Prompt for world generation..." />
-                      <Button variant="secondary" onClick={generateLorebookWorld} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate</Button>
+                      <div>
+                        <div className="mb-1 text-sm">Generation prompt</div>
+                        <Input value={lorebookWorldPrompt} onChange={(e) => setLorebookWorldPrompt(e.target.value)} />
+                      </div>
+                      <div className="flex items-end">
+                        <Button variant="secondary" onClick={generateLorebookWorld} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate</Button>
+                      </div>
                     </div>
                   </div>
                 ) : null}
@@ -3299,23 +3451,41 @@ Return only the revised synopsis.`;
                         <div className="space-y-3">
                           <div className="grid gap-3 md:grid-cols-2">
                             <div><div className="mb-1 text-sm">Faction name</div><Input value={factionNameInput} onChange={(e) => setFactionNameInput(e.target.value)} /></div>
-                            <div><div className="mb-1 text-sm">Tags</div><Input value={factionTagsInput} onChange={(e) => setFactionTagsInput(e.target.value)} placeholder="faction, military" /></div>
+                            <div><div className="mb-1 text-sm">Tags</div><Input value={factionTagsInput} onChange={(e) => setFactionTagsInput(e.target.value)} /></div>
                           </div>
                           <div className="grid gap-3 md:grid-cols-2">
                             <div><div className="mb-1 text-sm">Type</div><Select value={factionTypeInput} onChange={(e) => setFactionTypeInput(e.target.value as any)}><option value="passive">Passive</option><option value="hostile">Hostile</option></Select></div>
                             <div><div className="mb-1 text-sm">Size</div><Select value={factionSizeInput} onChange={(e) => setFactionSizeInput(e.target.value as any)}><option value="micro">&lt;100 (micro)</option><option value="small">101-500 (small)</option><option value="medium">501-1000 (medium)</option><option value="large">1001-5000 (large)</option><option value="massive">5001-10000 (massive)</option><option value="colossal">10001-100000 (colossal)</option><option value="mega-faction">&gt;100000 (mega-faction)</option></Select></div>
                           </div>
-                          <div><div className="mb-1 text-sm">Keywords</div><Input value={factionKeysInput} onChange={(e) => setFactionKeysInput(e.target.value)} placeholder="keyword1, keyword2" /></div>
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div><div className="mb-1 text-sm">Priority</div><Input type="number" value={String(factionPriorityInput)} onChange={(e) => setFactionPriorityInput(Number(e.target.value) || 1)} /></div>
-                            <label className="flex items-center gap-2 pt-7 text-sm"><input type="checkbox" checked={factionEnabledInput} onChange={(e) => setFactionEnabledInput(e.target.checked)} /> Enabled</label>
-                          </div>
-                          <div><div className="mb-1 text-sm">Comment</div><Input value={factionCommentInput} onChange={(e) => setFactionCommentInput(e.target.value)} /></div>
-                          <div><div className="mb-1 text-sm">Details</div><Textarea value={factionDetailsInput} onChange={(e) => setFactionDetailsInput(e.target.value)} rows={10} /></div>
                           <div>
-                            <input ref={factionImageFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePickFactionImage(f); e.currentTarget.value = ""; }} />
-                            <Button variant="secondary" onClick={() => factionImageFileRef.current?.click()}><Upload className="h-4 w-4" /> Upload 1:1 image</Button>
+                            <div className="mb-1 text-sm">Faction details</div>
+                            <Textarea value={factionDetailsInput} onChange={(e) => setFactionDetailsInput(e.target.value)} rows={6} />
                           </div>
+                          <div>
+                            <div className="mb-1 text-sm">Faction image (1:1)</div>
+                            <input ref={factionImageFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePickFactionImage(f); e.currentTarget.value = ""; }} />
+                            <Button variant="secondary" onClick={() => factionImageFileRef.current?.click()}><Upload className="h-4 w-4" /> Upload image</Button>
+                          </div>
+                          {renderLoreEntryFields({
+                            ...factionEntryDraft,
+                            name: factionNameInput || factionEntryDraft.name,
+                            comment: factionCommentInput,
+                            content: factionDetailsInput,
+                            keysRaw: factionKeysInput,
+                            priority: factionPriorityInput,
+                            enabled: factionEnabledInput,
+                            tagsRaw: factionTagsInput || "faction",
+                            category: "faction",
+                          }, (patch) => {
+                            setFactionEntryDraft((prev) => ({ ...prev, ...patch, category: "faction" }));
+                            if (patch.name !== undefined) setFactionNameInput(patch.name);
+                            if (patch.comment !== undefined) setFactionCommentInput(patch.comment);
+                            if (patch.content !== undefined) setFactionDetailsInput(patch.content);
+                            if (patch.keysRaw !== undefined) setFactionKeysInput(patch.keysRaw);
+                            if (patch.priority !== undefined) setFactionPriorityInput(patch.priority);
+                            if (patch.enabled !== undefined) setFactionEnabledInput(patch.enabled);
+                            if (patch.tagsRaw !== undefined) setFactionTagsInput(patch.tagsRaw);
+                          }, 8)}
                           <div className="flex gap-2">
                             <Button variant="primary" onClick={saveFactionEditor}>Done</Button>
                             {editingFactionId ? <Button variant="secondary" onClick={() => { if (!activeLorebook || !editingFactionId) return; updateLorebook(activeLorebook.id, { factions: activeLorebook.factions.filter((f) => f.id !== editingFactionId) }); setFactionEditorOpen(false); }}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
@@ -3337,7 +3507,7 @@ Return only the revised synopsis.`;
                         {(() => {
                           const entry = activeLorebook.rulesEntries.find((x) => x.id === activeRuleEntryId) || activeLorebook.rulesEntries[0];
                           if (!entry) return <div className="text-sm text-[hsl(var(--muted-foreground))]">No rule entries yet.</div>;
-                          return <div className="space-y-3"><Input value={entry.name} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { name: e.target.value })} placeholder="Entry name" /><Input value={entry.comment} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { comment: e.target.value })} placeholder="Comment" /><Input value={entry.keysRaw} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { keysRaw: e.target.value })} placeholder="Keywords" /><div className="grid gap-3 md:grid-cols-2"><Input type="number" value={String(entry.priority)} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { priority: Number(e.target.value) || 1 })} placeholder="Priority" /><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.enabled} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { enabled: e.target.checked })} /> Enabled</label></div><div className="grid gap-3 md:grid-cols-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.constant} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { constant: e.target.checked })} /> Constant</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.caseSensitive} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { caseSensitive: e.target.checked })} /> Case sensitive</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.matchWholeWords} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { matchWholeWords: e.target.checked })} /> Whole words</label></div><Textarea value={entry.content} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { content: e.target.value, tagsRaw: "important" })} rows={10} placeholder="Content" /><div><Button variant="secondary" onClick={() => removeLorebookEntry("rulesEntries", entry.id)}><Trash2 className="h-4 w-4" /> Remove entry</Button></div></div>;
+                          return <div className="space-y-3">{renderLoreEntryFields(entry, (patch) => updateLorebookEntry("rulesEntries", entry.id, { ...patch, category: "rule" }), 10)}<div><Button variant="secondary" onClick={() => removeLorebookEntry("rulesEntries", entry.id)}><Trash2 className="h-4 w-4" /> Remove entry</Button></div></div>;
                         })()}
                       </div>
                     </div>
@@ -3355,7 +3525,7 @@ Return only the revised synopsis.`;
                         {(() => {
                           const entry = activeLorebook.specialsEntries.find((x) => x.id === activeSpecialEntryId) || activeLorebook.specialsEntries[0];
                           if (!entry) return <div className="text-sm text-[hsl(var(--muted-foreground))]">No special entries yet.</div>;
-                          return <div className="space-y-3"><Input value={entry.name} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { name: e.target.value })} placeholder="Entry name" /><Input value={entry.comment} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { comment: e.target.value })} placeholder="Comment" /><Input value={entry.keysRaw} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { keysRaw: e.target.value })} placeholder="Keywords" /><div className="grid gap-3 md:grid-cols-2"><Input type="number" value={String(entry.priority)} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { priority: Number(e.target.value) || 1 })} placeholder="Priority" /><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.enabled} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { enabled: e.target.checked })} /> Enabled</label></div><div className="grid gap-3 md:grid-cols-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.constant} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { constant: e.target.checked })} /> Constant</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.caseSensitive} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { caseSensitive: e.target.checked })} /> Case sensitive</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.keyMatchPriority} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { keyMatchPriority: e.target.checked })} /> Key priority</label></div><Textarea value={entry.content} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { content: e.target.value, tagsRaw: "important" })} rows={10} placeholder="Content" /><div><Button variant="secondary" onClick={() => removeLorebookEntry("specialsEntries", entry.id)}><Trash2 className="h-4 w-4" /> Remove entry</Button></div></div>;
+                          return <div className="space-y-3">{renderLoreEntryFields(entry, (patch) => updateLorebookEntry("specialsEntries", entry.id, { ...patch, category: "special" }), 10)}<div><Button variant="secondary" onClick={() => removeLorebookEntry("specialsEntries", entry.id)}><Trash2 className="h-4 w-4" /> Remove entry</Button></div></div>;
                         })()}
                       </div>
                     </div>
