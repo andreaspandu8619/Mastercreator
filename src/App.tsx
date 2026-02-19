@@ -24,9 +24,10 @@ import {
 
 type ThemeMode = "light" | "dark";
 type Gender = "Male" | "Female" | "";
-type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board";
+type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board" | "lorebooks" | "lorebook_create";
 type CreateTab = "overview" | "definition" | "system" | "intro" | "synopsis";
 type StoryTab = "scenario" | "relationships" | "plot_points";
+type LorebookTab = "world" | "factions" | "rules" | "powers";
 
 type ProxyConfig = {
   chatUrl: string;
@@ -81,6 +82,24 @@ type StoryProject = {
   updatedAt: string;
 };
 
+type LorebookFaction = {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+};
+
+type Lorebook = {
+  id: string;
+  name: string;
+  world: string;
+  rules: string;
+  powers: string;
+  factions: LorebookFaction[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Character = {
   id: string;
   name: string;
@@ -110,6 +129,7 @@ const PROXY_KEY = "mastercreator_proxy";
 const PERSONA_KEY = "mastercreator_persona";
 const CHAT_SESSIONS_KEY = "mastercreator_chat_sessions_v1";
 const STORIES_KEY = "mastercreator_stories_v1";
+const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
 
 const DEFAULT_PROXY: ProxyConfig = {
   chatUrl: "https://llm.chutes.ai/v1/chat/completions",
@@ -676,6 +696,12 @@ export default function CharacterCreatorApp() {
   const [previewId, setPreviewId] = useState<string | null>(null);
 
   const [stories, setStories] = useState<StoryProject[]>([]);
+  const [lorebooks, setLorebooks] = useState<Lorebook[]>([]);
+  const [activeLorebookId, setActiveLorebookId] = useState<string | null>(null);
+  const [lorebookTab, setLorebookTab] = useState<LorebookTab>("world");
+  const [lorebookWorldPrompt, setLorebookWorldPrompt] = useState("");
+  const [lorebookFactionName, setLorebookFactionName] = useState("");
+  const [lorebookFactionDescription, setLorebookFactionDescription] = useState("");
   const [storyDraftCharacterIds, setStoryDraftCharacterIds] = useState<string[]>([]);
   const [storySidebarHidden, setStorySidebarHidden] = useState(false);
   const [activeStoryId, setActiveStoryId] = useState<string | null>(null);
@@ -925,6 +951,44 @@ export default function CharacterCreatorApp() {
       setStories(normalizedStories);
     }
 
+    const savedLorebooks = safeParseJSON(localStorage.getItem(LOREBOOKS_KEY) || "");
+    if (Array.isArray(savedLorebooks)) {
+      const normalizedLorebooks = savedLorebooks
+        .map((book) => {
+          if (!book || typeof book !== "object") return null;
+          const id = typeof (book as any).id === "string" ? (book as any).id : uid();
+          const now = new Date().toISOString();
+          const factions = Array.isArray((book as any).factions)
+            ? (book as any).factions
+                .map((f: any) => {
+                  if (!f || typeof f !== "object") return null;
+                  const name = collapseWhitespace(f.name ?? "");
+                  if (!name) return null;
+                  return {
+                    id: typeof f.id === "string" ? f.id : uid(),
+                    name,
+                    description: typeof f.description === "string" ? f.description : "",
+                    createdAt: typeof f.createdAt === "string" ? f.createdAt : now,
+                  } as LorebookFaction;
+                })
+                .filter((f: LorebookFaction | null): f is LorebookFaction => !!f)
+            : [];
+          return {
+            id,
+            name: collapseWhitespace((book as any).name || "Untitled lorebook"),
+            world: typeof (book as any).world === "string" ? (book as any).world : "",
+            rules: typeof (book as any).rules === "string" ? (book as any).rules : "",
+            powers: typeof (book as any).powers === "string" ? (book as any).powers : "",
+            factions,
+            createdAt: typeof (book as any).createdAt === "string" ? (book as any).createdAt : now,
+            updatedAt: typeof (book as any).updatedAt === "string" ? (book as any).updatedAt : now,
+          } as Lorebook;
+        })
+        .filter((book: Lorebook | null): book is Lorebook => !!book)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      setLorebooks(normalizedLorebooks);
+    }
+
     (async () => {
       try {
         const fromIdb = await idbGetAllCharacters();
@@ -1023,6 +1087,10 @@ export default function CharacterCreatorApp() {
   useEffect(() => {
     localStorage.setItem(STORIES_KEY, JSON.stringify(stories));
   }, [stories]);
+
+  useEffect(() => {
+    localStorage.setItem(LOREBOOKS_KEY, JSON.stringify(lorebooks));
+  }, [lorebooks]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -1489,6 +1557,11 @@ export default function CharacterCreatorApp() {
     [stories]
   );
 
+  const activeLorebook = useMemo(
+    () => lorebooks.find((book) => book.id === activeLorebookId) || null,
+    [lorebooks, activeLorebookId]
+  );
+
   const canGoBack = historyStack.length > 0;
 
   function updateStory(id: string, patch: Partial<StoryProject>) {
@@ -1505,6 +1578,80 @@ export default function CharacterCreatorApp() {
     );
     setSaveToastOpen(true);
     window.setTimeout(() => setSaveToastOpen(false), 1400);
+  }
+
+  function createLorebook() {
+    const now = new Date().toISOString();
+    const book: Lorebook = {
+      id: uid(),
+      name: `Lorebook ${lorebooks.length + 1}`,
+      world: "",
+      rules: "",
+      powers: "",
+      factions: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    setLorebooks((prev) => [book, ...prev]);
+    setActiveLorebookId(book.id);
+    setLorebookTab("world");
+    navigateTo("lorebook_create");
+  }
+
+  function updateLorebook(id: string, patch: Partial<Lorebook>) {
+    setLorebooks((prev) =>
+      prev.map((book) =>
+        book.id === id
+          ? {
+              ...book,
+              ...patch,
+              updatedAt: new Date().toISOString(),
+            }
+          : book
+      )
+    );
+  }
+
+  function addLorebookFaction() {
+    if (!activeLorebook) return;
+    const cleanName = collapseWhitespace(lorebookFactionName);
+    if (!cleanName) return;
+    const faction: LorebookFaction = {
+      id: uid(),
+      name: cleanName,
+      description: lorebookFactionDescription.trim(),
+      createdAt: new Date().toISOString(),
+    };
+    updateLorebook(activeLorebook.id, { factions: [faction, ...activeLorebook.factions] });
+    setLorebookFactionName("");
+    setLorebookFactionDescription("");
+  }
+
+  async function generateLorebookWorld() {
+    if (!activeLorebook) return;
+    setGenError(null);
+    const prompt = collapseWhitespace(lorebookWorldPrompt);
+    if (!prompt) {
+      setGenError("Write a world prompt first.");
+      return;
+    }
+    setGenLoading(true);
+    try {
+      const text = await callProxyChatCompletion({
+        system: "You are a worldbuilding assistant. Generate concise, vivid lorebook world background text suitable for roleplay settings.",
+        user: `Lorebook name: ${activeLorebook.name}
+Prompt: ${prompt}
+
+Return world background text only.`,
+        maxTokens: Math.min(500, Math.max(150, proxyMaxTokens * 2)),
+        temperature: 0.85,
+      });
+      updateLorebook(activeLorebook.id, { world: text });
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "World generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
   }
 
   function proceedStoryDraft() {
@@ -2482,6 +2629,9 @@ Return only the revised synopsis.`;
             <Button variant="secondary" onClick={() => navigateTo("my_stories")}>
               <Library className="h-4 w-4" /> My Stories
             </Button>
+            <Button variant="secondary" onClick={() => navigateTo("lorebooks")}>
+              <BookOpen className="h-4 w-4" /> Lorebooks
+            </Button>
             <Button
               variant="secondary"
               onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
@@ -2755,6 +2905,139 @@ Return only the revised synopsis.`;
               ))}
               {stories.length === 0 ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No stories yet.</div> : null}
             </div>
+          </div>
+        ) : page === "lorebooks" ? (
+          <div className="mt-6 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-xl font-semibold">Lorebooks</div>
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">Create and manage world lorebooks.</div>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="primary" onClick={createLorebook}>
+                  <Plus className="h-4 w-4" /> Create
+                </Button>
+                <Button variant="secondary" onClick={() => navigateTo("library")}>
+                  <ArrowLeft className="h-4 w-4" /> Dashboard
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {lorebooks.map((book) => (
+                <div key={book.id} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="font-medium">{book.name}</div>
+                      <div className="text-xs text-[hsl(var(--muted-foreground))]">{new Date(book.updatedAt).toLocaleString()}</div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="secondary" onClick={() => { setActiveLorebookId(book.id); navigateTo("lorebook_create"); }}>
+                        Open
+                      </Button>
+                      <Button variant="secondary" onClick={() => setLorebooks((prev) => prev.filter((x) => x.id !== book.id))}>
+                        <Trash2 className="h-4 w-4" /> Delete
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {lorebooks.length === 0 ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No lorebooks yet.</div> : null}
+            </div>
+          </div>
+        ) : page === "lorebook_create" ? (
+          <div className="mt-6 space-y-4">
+            {!activeLorebook ? (
+              <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-sm text-[hsl(var(--muted-foreground))]">Pick a lorebook from the lorebooks menu first.</div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Input value={activeLorebook.name} onChange={(e) => updateLorebook(activeLorebook.id, { name: e.target.value })} className="max-w-md" />
+                  <Button variant="secondary" onClick={() => navigateTo("lorebooks")}>
+                    <ArrowLeft className="h-4 w-4" /> Lorebooks Menu
+                  </Button>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    ["world", "World"],
+                    ["factions", "Factions"],
+                    ["rules", "Rules"],
+                    ["powers", "Powers"],
+                  ] as Array<[LorebookTab, string]>).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setLorebookTab(id)}
+                      className={cn(
+                        "clickable rounded-xl border px-3 py-2 text-sm",
+                        lorebookTab === id
+                          ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))] text-[hsl(var(--hover-accent-foreground))]"
+                          : "border-[hsl(var(--border))] bg-[hsl(var(--card))]"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {lorebookTab === "world" ? (
+                  <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                    <div className="text-sm font-semibold">World Background</div>
+                    <Textarea
+                      value={activeLorebook.world}
+                      onChange={(e) => updateLorebook(activeLorebook.id, { world: e.target.value })}
+                      rows={12}
+                      placeholder="Describe the world, history, geography, politics, and tone..."
+                    />
+                    <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+                      <Input
+                        value={lorebookWorldPrompt}
+                        onChange={(e) => setLorebookWorldPrompt(e.target.value)}
+                        placeholder="Prompt for world generation..."
+                      />
+                      <Button variant="secondary" onClick={generateLorebookWorld} disabled={genLoading}>
+                        <Sparkles className="h-4 w-4" /> Generate
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {lorebookTab === "factions" ? (
+                  <div className="space-y-3">
+                    <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <Input value={lorebookFactionName} onChange={(e) => setLorebookFactionName(e.target.value)} placeholder="Faction name" />
+                        <Button variant="primary" onClick={addLorebookFaction}><Plus className="h-4 w-4" /> Add faction</Button>
+                      </div>
+                      <Textarea value={lorebookFactionDescription} onChange={(e) => setLorebookFactionDescription(e.target.value)} rows={3} className="mt-2" placeholder="Faction description" />
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {activeLorebook.factions.map((f) => (
+                        <div key={f.id} className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                          <div className="text-sm font-semibold">{f.name}</div>
+                          <div className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">{f.description || "No description yet."}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {!activeLorebook.factions.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No factions yet.</div> : null}
+                  </div>
+                ) : null}
+
+                {lorebookTab === "rules" ? (
+                  <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                    <div className="text-sm font-semibold">Rules</div>
+                    <Textarea value={activeLorebook.rules} onChange={(e) => updateLorebook(activeLorebook.id, { rules: e.target.value })} rows={10} className="mt-2" placeholder="World rules, social laws, magical limitations..." />
+                  </div>
+                ) : null}
+
+                {lorebookTab === "powers" ? (
+                  <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                    <div className="text-sm font-semibold">Powers</div>
+                    <Textarea value={activeLorebook.powers} onChange={(e) => updateLorebook(activeLorebook.id, { powers: e.target.value })} rows={10} className="mt-2" placeholder="Power systems, techniques, weaknesses, and costs..." />
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         ) : page === "story_editor" ? (
           <div className="mt-6 space-y-4">
@@ -3265,7 +3548,7 @@ Return only the revised synopsis.`;
           )
         ) : page === "library" ? (
           <div className="mt-6 space-y-6">
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-3">
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                 <Button variant="primary" className="w-full justify-center py-3" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}>
                   <Plus className="h-4 w-4" /> Create a new character
@@ -3277,6 +3560,12 @@ Return only the revised synopsis.`;
                   <Plus className="h-4 w-4" /> Create a new story
                 </Button>
                 <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("my_stories")}>View stories</Button>
+              </div>
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <Button variant="primary" className="w-full justify-center py-3" onClick={() => navigateTo("lorebooks")}>
+                  <Plus className="h-4 w-4" /> Lorebook creation
+                </Button>
+                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("lorebooks")}>View lorebooks</Button>
               </div>
             </div>
 
