@@ -27,7 +27,7 @@ type Gender = "Male" | "Female" | "";
 type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board" | "lorebooks" | "lorebook_create";
 type CreateTab = "overview" | "definition" | "system" | "intro" | "synopsis";
 type StoryTab = "scenario" | "relationships" | "plot_points";
-type LorebookTab = "world" | "factions" | "rules" | "powers";
+type LorebookTab = "world" | "factions" | "rules" | "specials";
 
 type ProxyConfig = {
   chatUrl: string;
@@ -82,19 +82,44 @@ type StoryProject = {
   updatedAt: string;
 };
 
+type LorebookEntry = {
+  id: string;
+  name: string;
+  comment: string;
+  content: string;
+  keysRaw: string;
+  keysecondaryRaw: string;
+  enabled: boolean;
+  constant: boolean;
+  caseSensitive: boolean;
+  matchWholeWords: boolean;
+  keyMatchPriority: boolean;
+  priority: number;
+  probability: number;
+  minMessages: number;
+  groupWeight: number;
+  insertionOrder: number;
+  activationMode: "standard";
+  tagsRaw: string;
+};
+
 type LorebookFaction = {
   id: string;
   name: string;
-  description: string;
+  imageDataUrl: string;
+  factionType: "passive" | "hostile";
+  factionSize: "micro" | "small" | "medium" | "large" | "massive" | "colossal" | "mega-faction";
+  details: string;
+  entry: LorebookEntry;
   createdAt: string;
 };
 
 type Lorebook = {
   id: string;
   name: string;
-  world: string;
-  rules: string;
-  powers: string;
+  worldEntry: LorebookEntry;
+  rulesEntries: LorebookEntry[];
+  specialsEntries: LorebookEntry[];
   factions: LorebookFaction[];
   createdAt: string;
   updatedAt: string;
@@ -243,6 +268,36 @@ function normalizeGender(v: any): Gender {
   if (s === "male") return "Male";
   if (s === "female") return "Female";
   return "";
+}
+
+function splitCsv(input: string): string[] {
+  return String(input || "")
+    .split(",")
+    .map((v) => collapseWhitespace(v))
+    .filter(Boolean);
+}
+
+function createDefaultLoreEntry(name = "", tag = "important", order = 100): LorebookEntry {
+  return {
+    id: uid(),
+    name,
+    comment: "",
+    content: "",
+    keysRaw: "",
+    keysecondaryRaw: "",
+    enabled: true,
+    constant: false,
+    caseSensitive: false,
+    matchWholeWords: true,
+    keyMatchPriority: false,
+    priority: 1,
+    probability: 100,
+    minMessages: 0,
+    groupWeight: 100,
+    insertionOrder: order,
+    activationMode: "standard",
+    tagsRaw: tag,
+  };
 }
 
 function themeVars(mode: ThemeMode): React.CSSProperties {
@@ -700,8 +755,20 @@ export default function CharacterCreatorApp() {
   const [activeLorebookId, setActiveLorebookId] = useState<string | null>(null);
   const [lorebookTab, setLorebookTab] = useState<LorebookTab>("world");
   const [lorebookWorldPrompt, setLorebookWorldPrompt] = useState("");
-  const [lorebookFactionName, setLorebookFactionName] = useState("");
-  const [lorebookFactionDescription, setLorebookFactionDescription] = useState("");
+  const [factionEditorOpen, setFactionEditorOpen] = useState(false);
+  const [editingFactionId, setEditingFactionId] = useState<string | null>(null);
+  const [factionNameInput, setFactionNameInput] = useState("");
+  const [factionTypeInput, setFactionTypeInput] = useState<"passive" | "hostile">("passive");
+  const [factionSizeInput, setFactionSizeInput] = useState<LorebookFaction["factionSize"]>("small");
+  const [factionDetailsInput, setFactionDetailsInput] = useState("");
+  const [factionImageDataUrl, setFactionImageDataUrl] = useState("");
+  const [factionCommentInput, setFactionCommentInput] = useState("");
+  const [factionKeysInput, setFactionKeysInput] = useState("");
+  const [factionTagsInput, setFactionTagsInput] = useState("faction");
+  const [factionPriorityInput, setFactionPriorityInput] = useState(1);
+  const [factionEnabledInput, setFactionEnabledInput] = useState(true);
+  const [activeRuleEntryId, setActiveRuleEntryId] = useState<string | null>(null);
+  const [activeSpecialEntryId, setActiveSpecialEntryId] = useState<string | null>(null);
   const [storyDraftCharacterIds, setStoryDraftCharacterIds] = useState<string[]>([]);
   const [storySidebarHidden, setStorySidebarHidden] = useState(false);
   const [activeStoryId, setActiveStoryId] = useState<string | null>(null);
@@ -861,6 +928,7 @@ export default function CharacterCreatorApp() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
   const storyImageFileRef = useRef<HTMLInputElement | null>(null);
+  const factionImageFileRef = useRef<HTMLInputElement | null>(null);
   const [historyStack, setHistoryStack] = useState<Page[]>([]);
 
   useEffect(() => {
@@ -958,27 +1026,79 @@ export default function CharacterCreatorApp() {
           if (!book || typeof book !== "object") return null;
           const id = typeof (book as any).id === "string" ? (book as any).id : uid();
           const now = new Date().toISOString();
+
+          const normalizeEntry = (raw: any, defaultName: string, tag: string, order: number) => {
+            const base = createDefaultLoreEntry(defaultName, tag, order);
+            if (!raw || typeof raw !== "object") return base;
+            return {
+              ...base,
+              id: typeof raw.id === "string" ? raw.id : base.id,
+              name: collapseWhitespace(raw.name ?? base.name),
+              comment: typeof raw.comment === "string" ? raw.comment : base.comment,
+              content: typeof raw.content === "string" ? raw.content : base.content,
+              keysRaw: typeof raw.keysRaw === "string" ? raw.keysRaw : base.keysRaw,
+              keysecondaryRaw: typeof raw.keysecondaryRaw === "string" ? raw.keysecondaryRaw : base.keysecondaryRaw,
+              enabled: raw.enabled !== false,
+              constant: !!raw.constant,
+              caseSensitive: !!raw.caseSensitive,
+              matchWholeWords: raw.matchWholeWords !== false,
+              keyMatchPriority: !!raw.keyMatchPriority,
+              priority: Number.isFinite(Number(raw.priority)) ? Number(raw.priority) : base.priority,
+              probability: Number.isFinite(Number(raw.probability)) ? Number(raw.probability) : base.probability,
+              minMessages: Number.isFinite(Number(raw.minMessages)) ? Number(raw.minMessages) : base.minMessages,
+              groupWeight: Number.isFinite(Number(raw.groupWeight)) ? Number(raw.groupWeight) : base.groupWeight,
+              insertionOrder: Number.isFinite(Number(raw.insertionOrder)) ? Number(raw.insertionOrder) : base.insertionOrder,
+              tagsRaw: typeof raw.tagsRaw === "string" ? raw.tagsRaw : base.tagsRaw,
+            } as LorebookEntry;
+          };
+
           const factions = Array.isArray((book as any).factions)
             ? (book as any).factions
-                .map((f: any) => {
+                .map((f: any, idx: number) => {
                   if (!f || typeof f !== "object") return null;
-                  const name = collapseWhitespace(f.name ?? "");
+                  const name = collapseWhitespace(f.name ?? f.entry?.name ?? "");
                   if (!name) return null;
+                  const entry = normalizeEntry(f.entry, name, "faction", (idx + 1) * 100);
+                  if (typeof f.description === "string" && !entry.content) entry.content = f.description;
                   return {
                     id: typeof f.id === "string" ? f.id : uid(),
                     name,
-                    description: typeof f.description === "string" ? f.description : "",
+                    imageDataUrl: typeof f.imageDataUrl === "string" ? f.imageDataUrl : "",
+                    factionType: f.factionType === "hostile" ? "hostile" : "passive",
+                    factionSize: ["micro", "small", "medium", "large", "massive", "colossal", "mega-faction"].includes(f.factionSize) ? f.factionSize : "small",
+                    details: typeof f.details === "string" ? f.details : entry.content,
+                    entry,
                     createdAt: typeof f.createdAt === "string" ? f.createdAt : now,
                   } as LorebookFaction;
                 })
                 .filter((f: LorebookFaction | null): f is LorebookFaction => !!f)
             : [];
+
+          const worldEntry = (book as any).worldEntry
+            ? normalizeEntry((book as any).worldEntry, "World Overview", "world", 100)
+            : normalizeEntry({
+                name: "World Overview",
+                content: typeof (book as any).world === "string" ? (book as any).world : "",
+                tagsRaw: "world",
+                keysRaw: "world",
+              }, "World Overview", "world", 100);
+
+          const rulesEntries = Array.isArray((book as any).rulesEntries)
+            ? (book as any).rulesEntries.map((entry: any, idx: number) => normalizeEntry(entry, `Rule ${idx + 1}`, "important", (idx + 1) * 100))
+            : [];
+
+          const specialsEntries = Array.isArray((book as any).specialsEntries)
+            ? (book as any).specialsEntries.map((entry: any, idx: number) => normalizeEntry(entry, `Special ${idx + 1}`, "important", (idx + 1) * 100))
+            : Array.isArray((book as any).powers)
+              ? (book as any).powers.map((entry: any, idx: number) => normalizeEntry(entry, `Special ${idx + 1}`, "important", (idx + 1) * 100))
+              : [];
+
           return {
             id,
             name: collapseWhitespace((book as any).name || "Untitled lorebook"),
-            world: typeof (book as any).world === "string" ? (book as any).world : "",
-            rules: typeof (book as any).rules === "string" ? (book as any).rules : "",
-            powers: typeof (book as any).powers === "string" ? (book as any).powers : "",
+            worldEntry,
+            rulesEntries,
+            specialsEntries,
             factions,
             createdAt: typeof (book as any).createdAt === "string" ? (book as any).createdAt : now,
             updatedAt: typeof (book as any).updatedAt === "string" ? (book as any).updatedAt : now,
@@ -1562,6 +1682,16 @@ export default function CharacterCreatorApp() {
     [lorebooks, activeLorebookId]
   );
 
+  useEffect(() => {
+    if (!activeLorebook) return;
+    if (!activeRuleEntryId && activeLorebook.rulesEntries.length) {
+      setActiveRuleEntryId(activeLorebook.rulesEntries[0].id);
+    }
+    if (!activeSpecialEntryId && activeLorebook.specialsEntries.length) {
+      setActiveSpecialEntryId(activeLorebook.specialsEntries[0].id);
+    }
+  }, [activeLorebook?.id, activeLorebook?.rulesEntries.length, activeLorebook?.specialsEntries.length]);
+
   const canGoBack = historyStack.length > 0;
 
   function updateStory(id: string, patch: Partial<StoryProject>) {
@@ -1585,9 +1715,9 @@ export default function CharacterCreatorApp() {
     const book: Lorebook = {
       id: uid(),
       name: `Lorebook ${lorebooks.length + 1}`,
-      world: "",
-      rules: "",
-      powers: "",
+      worldEntry: createDefaultLoreEntry("World Overview", "world", 100),
+      rulesEntries: [],
+      specialsEntries: [],
       factions: [],
       createdAt: now,
       updatedAt: now,
@@ -1612,19 +1742,140 @@ export default function CharacterCreatorApp() {
     );
   }
 
-  function addLorebookFaction() {
+  function updateLorebookEntry(listKey: "rulesEntries" | "specialsEntries", entryId: string, patch: Partial<LorebookEntry>) {
     if (!activeLorebook) return;
-    const cleanName = collapseWhitespace(lorebookFactionName);
+    const next = activeLorebook[listKey].map((entry) => (entry.id === entryId ? { ...entry, ...patch } : entry));
+    updateLorebook(activeLorebook.id, { [listKey]: next } as Partial<Lorebook>);
+  }
+
+  function addLorebookEntry(listKey: "rulesEntries" | "specialsEntries", baseName: string) {
+    if (!activeLorebook) return;
+    const current = activeLorebook[listKey];
+    const entry = createDefaultLoreEntry(`${baseName} ${current.length + 1}`, "important", (current.length + 1) * 100);
+    updateLorebook(activeLorebook.id, { [listKey]: [entry, ...current] } as Partial<Lorebook>);
+    if (listKey === "rulesEntries") setActiveRuleEntryId(entry.id);
+    if (listKey === "specialsEntries") setActiveSpecialEntryId(entry.id);
+  }
+
+  function removeLorebookEntry(listKey: "rulesEntries" | "specialsEntries", entryId: string) {
+    if (!activeLorebook) return;
+    updateLorebook(activeLorebook.id, { [listKey]: activeLorebook[listKey].filter((entry) => entry.id !== entryId) } as Partial<Lorebook>);
+    if (listKey === "rulesEntries" && activeRuleEntryId === entryId) setActiveRuleEntryId(null);
+    if (listKey === "specialsEntries" && activeSpecialEntryId === entryId) setActiveSpecialEntryId(null);
+  }
+
+  async function handlePickFactionImage(file: File) {
+    const maxBytes = 10 * 1024 * 1024;
+    if (file.size > maxBytes || !file.type.startsWith("image/")) return;
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setFactionImageDataUrl(dataUrl);
+    } catch {
+      // ignore
+    }
+  }
+
+  function openFactionEditor(faction?: LorebookFaction) {
+    if (!faction) {
+      setEditingFactionId(null);
+      setFactionNameInput("");
+      setFactionTypeInput("passive");
+      setFactionSizeInput("small");
+      setFactionDetailsInput("");
+      setFactionImageDataUrl("");
+      setFactionCommentInput("");
+      setFactionKeysInput("");
+      setFactionTagsInput("faction");
+      setFactionPriorityInput(1);
+      setFactionEnabledInput(true);
+      setFactionEditorOpen(true);
+      return;
+    }
+    setEditingFactionId(faction.id);
+    setFactionNameInput(faction.name);
+    setFactionTypeInput(faction.factionType);
+    setFactionSizeInput(faction.factionSize);
+    setFactionDetailsInput(faction.details);
+    setFactionImageDataUrl(faction.imageDataUrl || "");
+    setFactionCommentInput(faction.entry.comment || "");
+    setFactionKeysInput(faction.entry.keysRaw || "");
+    setFactionTagsInput(faction.entry.tagsRaw || "faction");
+    setFactionPriorityInput(faction.entry.priority || 1);
+    setFactionEnabledInput(faction.entry.enabled !== false);
+    setFactionEditorOpen(true);
+  }
+
+  function saveFactionEditor() {
+    if (!activeLorebook) return;
+    const cleanName = collapseWhitespace(factionNameInput);
     if (!cleanName) return;
-    const faction: LorebookFaction = {
-      id: uid(),
+    const now = new Date().toISOString();
+    const entryBase = createDefaultLoreEntry(cleanName, factionTagsInput || "faction", 100);
+    const payload: LorebookFaction = {
+      id: editingFactionId || uid(),
       name: cleanName,
-      description: lorebookFactionDescription.trim(),
-      createdAt: new Date().toISOString(),
+      imageDataUrl: factionImageDataUrl,
+      factionType: factionTypeInput,
+      factionSize: factionSizeInput,
+      details: factionDetailsInput,
+      entry: {
+        ...entryBase,
+        id: editingFactionId || uid(),
+        name: cleanName,
+        comment: factionCommentInput,
+        content: factionDetailsInput,
+        keysRaw: factionKeysInput,
+        priority: Math.max(1, Number(factionPriorityInput) || 1),
+        enabled: factionEnabledInput,
+        tagsRaw: factionTagsInput || "faction",
+      },
+      createdAt: now,
     };
-    updateLorebook(activeLorebook.id, { factions: [faction, ...activeLorebook.factions] });
-    setLorebookFactionName("");
-    setLorebookFactionDescription("");
+    const nextFactions = editingFactionId
+      ? activeLorebook.factions.map((f) => (f.id === editingFactionId ? { ...payload, createdAt: f.createdAt } : f))
+      : [payload, ...activeLorebook.factions];
+    updateLorebook(activeLorebook.id, { factions: nextFactions });
+    setFactionEditorOpen(false);
+  }
+
+  function exportLorebookAsEntries(book: Lorebook) {
+    const toEntry = (entry: LorebookEntry, category: string, tagOverride: string) => ({
+      activationMode: "standard",
+      activationScript: "",
+      case_sensitive: entry.caseSensitive,
+      category,
+      comment: entry.comment,
+      constant: entry.constant,
+      content: entry.content,
+      enabled: entry.enabled,
+      extensions: {},
+      groupWeight: entry.groupWeight,
+      id: entry.id,
+      inclusionGroupRaw: "",
+      insertion_order: entry.insertionOrder,
+      key: splitCsv(entry.keysRaw),
+      keyMatchPriority: entry.keyMatchPriority,
+      keysecondary: splitCsv(entry.keysecondaryRaw),
+      keysecondaryRaw: entry.keysecondaryRaw,
+      keysRaw: entry.keysRaw,
+      matchWholeWords: entry.matchWholeWords,
+      minMessages: entry.minMessages,
+      name: entry.name,
+      prioritizeInclusion: false,
+      priority: entry.priority,
+      probability: entry.probability,
+      selectiveLogic: 0,
+      tags: [tagOverride],
+    });
+
+    const entries = [
+      toEntry({ ...book.worldEntry, tagsRaw: "world" }, "general", "world"),
+      ...book.factions.map((f) => toEntry({ ...f.entry, name: f.name, content: f.details || f.entry.content }, "general", "faction")),
+      ...book.rulesEntries.map((entry) => toEntry(entry, "other", "important")),
+      ...book.specialsEntries.map((entry) => toEntry(entry, "other", "important")),
+    ];
+
+    downloadJSON((filenameSafe(book.name) || "lorebook") + "_entries.json", entries);
   }
 
   async function generateLorebookWorld() {
@@ -1643,10 +1894,10 @@ export default function CharacterCreatorApp() {
 Prompt: ${prompt}
 
 Return world background text only.`,
-        maxTokens: Math.min(500, Math.max(150, proxyMaxTokens * 2)),
+        maxTokens: Math.min(700, Math.max(180, proxyMaxTokens * 2)),
         temperature: 0.85,
       });
-      updateLorebook(activeLorebook.id, { world: text });
+      updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, content: text, tagsRaw: "world" } });
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "World generation failed.");
     } finally {
@@ -2934,6 +3185,9 @@ Return only the revised synopsis.`;
                       <Button variant="secondary" onClick={() => { setActiveLorebookId(book.id); navigateTo("lorebook_create"); }}>
                         Open
                       </Button>
+                      <Button variant="secondary" onClick={() => exportLorebookAsEntries(book)}>
+                        <Download className="h-4 w-4" /> Export
+                      </Button>
                       <Button variant="secondary" onClick={() => setLorebooks((prev) => prev.filter((x) => x.id !== book.id))}>
                         <Trash2 className="h-4 w-4" /> Delete
                       </Button>
@@ -2952,9 +3206,14 @@ Return only the revised synopsis.`;
               <>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Input value={activeLorebook.name} onChange={(e) => updateLorebook(activeLorebook.id, { name: e.target.value })} className="max-w-md" />
-                  <Button variant="secondary" onClick={() => navigateTo("lorebooks")}>
-                    <ArrowLeft className="h-4 w-4" /> Lorebooks Menu
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" onClick={() => exportLorebookAsEntries(activeLorebook)}>
+                      <Download className="h-4 w-4" /> Export JSON
+                    </Button>
+                    <Button variant="secondary" onClick={() => navigateTo("lorebooks")}>
+                      <ArrowLeft className="h-4 w-4" /> Lorebooks Menu
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="flex flex-wrap gap-2">
@@ -2962,7 +3221,7 @@ Return only the revised synopsis.`;
                     ["world", "World"],
                     ["factions", "Factions"],
                     ["rules", "Rules"],
-                    ["powers", "Powers"],
+                    ["specials", "Specials"],
                   ] as Array<[LorebookTab, string]>).map(([id, label]) => (
                     <button
                       key={id}
@@ -2982,58 +3241,124 @@ Return only the revised synopsis.`;
 
                 {lorebookTab === "world" ? (
                   <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                    <div className="text-sm font-semibold">World Background</div>
-                    <Textarea
-                      value={activeLorebook.world}
-                      onChange={(e) => updateLorebook(activeLorebook.id, { world: e.target.value })}
-                      rows={12}
-                      placeholder="Describe the world, history, geography, politics, and tone..."
-                    />
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <div className="mb-1 text-sm">Entry name</div>
+                        <Input value={activeLorebook.worldEntry.name} onChange={(e) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, name: e.target.value } })} />
+                      </div>
+                      <div>
+                        <div className="mb-1 text-sm">Comment</div>
+                        <Input value={activeLorebook.worldEntry.comment} onChange={(e) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, comment: e.target.value } })} />
+                      </div>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div>
+                        <div className="mb-1 text-sm">Keywords</div>
+                        <Input value={activeLorebook.worldEntry.keysRaw} onChange={(e) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, keysRaw: e.target.value } })} placeholder="keyword1, keyword2" />
+                      </div>
+                      <div>
+                        <div className="mb-1 text-sm">Priority</div>
+                        <Input type="number" value={String(activeLorebook.worldEntry.priority)} onChange={(e) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, priority: Number(e.target.value) || 1 } })} />
+                      </div>
+                      <label className="flex items-center gap-2 pt-7 text-sm"><input type="checkbox" checked={activeLorebook.worldEntry.enabled} onChange={(e) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, enabled: e.target.checked } })} /> Enabled</label>
+                    </div>
+                    <Textarea value={activeLorebook.worldEntry.content} onChange={(e) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, content: e.target.value, tagsRaw: "world" } })} rows={12} placeholder="Describe the world..." />
                     <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-                      <Input
-                        value={lorebookWorldPrompt}
-                        onChange={(e) => setLorebookWorldPrompt(e.target.value)}
-                        placeholder="Prompt for world generation..."
-                      />
-                      <Button variant="secondary" onClick={generateLorebookWorld} disabled={genLoading}>
-                        <Sparkles className="h-4 w-4" /> Generate
-                      </Button>
+                      <Input value={lorebookWorldPrompt} onChange={(e) => setLorebookWorldPrompt(e.target.value)} placeholder="Prompt for world generation..." />
+                      <Button variant="secondary" onClick={generateLorebookWorld} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate</Button>
                     </div>
                   </div>
                 ) : null}
 
                 {lorebookTab === "factions" ? (
-                  <div className="space-y-3">
-                    <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                      <div className="grid gap-2 md:grid-cols-2">
-                        <Input value={lorebookFactionName} onChange={(e) => setLorebookFactionName(e.target.value)} placeholder="Faction name" />
-                        <Button variant="primary" onClick={addLorebookFaction}><Plus className="h-4 w-4" /> Add faction</Button>
-                      </div>
-                      <Textarea value={lorebookFactionDescription} onChange={(e) => setLorebookFactionDescription(e.target.value)} rows={3} className="mt-2" placeholder="Faction description" />
-                    </div>
+                  <div className="space-y-4">
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      <button type="button" onClick={() => openFactionEditor()} className="clickable flex aspect-square flex-col items-center justify-center rounded-2xl border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--card))]">
+                        <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-full border border-[hsl(var(--border))]"><Plus className="h-6 w-6" /></div>
+                        <div className="text-sm font-medium">Create new faction</div>
+                      </button>
                       {activeLorebook.factions.map((f) => (
-                        <div key={f.id} className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                          <div className="text-sm font-semibold">{f.name}</div>
-                          <div className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">{f.description || "No description yet."}</div>
-                        </div>
+                        <button key={f.id} type="button" onClick={() => openFactionEditor(f)} className="overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left">
+                          <div className="relative aspect-square border-b border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                            {f.imageDataUrl ? <img src={f.imageDataUrl} alt={f.name} className="h-full w-full object-cover" /> : null}
+                          </div>
+                          <div className="p-3">
+                            <div className="font-semibold">{f.name}</div>
+                            <div className="text-xs text-[hsl(var(--muted-foreground))] capitalize">{f.factionType} • {f.factionSize}</div>
+                          </div>
+                        </button>
                       ))}
                     </div>
-                    {!activeLorebook.factions.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No factions yet.</div> : null}
+
+                    {factionEditorOpen ? (
+                      <div className="fixed right-0 top-0 z-50 h-screen w-full max-w-[34vw] min-w-[320px] overflow-y-auto border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 shadow-2xl">
+                        <div className="mb-3 flex items-center justify-between">
+                          <div className="text-lg font-semibold">{editingFactionId ? "Edit faction" : "Create faction"}</div>
+                          <Button variant="secondary" onClick={() => setFactionEditorOpen(false)}><X className="h-4 w-4" /></Button>
+                        </div>
+                        <div className="space-y-3">
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div><div className="mb-1 text-sm">Faction name</div><Input value={factionNameInput} onChange={(e) => setFactionNameInput(e.target.value)} /></div>
+                            <div><div className="mb-1 text-sm">Tags</div><Input value={factionTagsInput} onChange={(e) => setFactionTagsInput(e.target.value)} placeholder="faction, military" /></div>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div><div className="mb-1 text-sm">Type</div><Select value={factionTypeInput} onChange={(e) => setFactionTypeInput(e.target.value as any)}><option value="passive">Passive</option><option value="hostile">Hostile</option></Select></div>
+                            <div><div className="mb-1 text-sm">Size</div><Select value={factionSizeInput} onChange={(e) => setFactionSizeInput(e.target.value as any)}><option value="micro">&lt;100 (micro)</option><option value="small">101-500 (small)</option><option value="medium">501-1000 (medium)</option><option value="large">1001-5000 (large)</option><option value="massive">5001-10000 (massive)</option><option value="colossal">10001-100000 (colossal)</option><option value="mega-faction">&gt;100000 (mega-faction)</option></Select></div>
+                          </div>
+                          <div><div className="mb-1 text-sm">Keywords</div><Input value={factionKeysInput} onChange={(e) => setFactionKeysInput(e.target.value)} placeholder="keyword1, keyword2" /></div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div><div className="mb-1 text-sm">Priority</div><Input type="number" value={String(factionPriorityInput)} onChange={(e) => setFactionPriorityInput(Number(e.target.value) || 1)} /></div>
+                            <label className="flex items-center gap-2 pt-7 text-sm"><input type="checkbox" checked={factionEnabledInput} onChange={(e) => setFactionEnabledInput(e.target.checked)} /> Enabled</label>
+                          </div>
+                          <div><div className="mb-1 text-sm">Comment</div><Input value={factionCommentInput} onChange={(e) => setFactionCommentInput(e.target.value)} /></div>
+                          <div><div className="mb-1 text-sm">Details</div><Textarea value={factionDetailsInput} onChange={(e) => setFactionDetailsInput(e.target.value)} rows={10} /></div>
+                          <div>
+                            <input ref={factionImageFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePickFactionImage(f); e.currentTarget.value = ""; }} />
+                            <Button variant="secondary" onClick={() => factionImageFileRef.current?.click()}><Upload className="h-4 w-4" /> Upload 1:1 image</Button>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button variant="primary" onClick={saveFactionEditor}>Done</Button>
+                            {editingFactionId ? <Button variant="secondary" onClick={() => { if (!activeLorebook || !editingFactionId) return; updateLorebook(activeLorebook.id, { factions: activeLorebook.factions.filter((f) => f.id !== editingFactionId) }); setFactionEditorOpen(false); }}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 
                 {lorebookTab === "rules" ? (
-                  <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                    <div className="text-sm font-semibold">Rules</div>
-                    <Textarea value={activeLorebook.rules} onChange={(e) => updateLorebook(activeLorebook.id, { rules: e.target.value })} rows={10} className="mt-2" placeholder="World rules, social laws, magical limitations..." />
+                  <div className="space-y-3">
+                    <div className="flex justify-end"><Button variant="primary" onClick={() => addLorebookEntry("rulesEntries", "Rule")}><Plus className="h-4 w-4" /> Add rule entry</Button></div>
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <div className="space-y-2 lg:col-span-1">
+                        {activeLorebook.rulesEntries.map((entry) => <button key={entry.id} type="button" onClick={() => setActiveRuleEntryId(entry.id)} className={cn("w-full rounded-xl border p-3 text-left", activeRuleEntryId === entry.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))] bg-[hsl(var(--card))]")}>{entry.name || "Untitled"}</button>)}
+                      </div>
+                      <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 lg:col-span-2">
+                        {(() => {
+                          const entry = activeLorebook.rulesEntries.find((x) => x.id === activeRuleEntryId) || activeLorebook.rulesEntries[0];
+                          if (!entry) return <div className="text-sm text-[hsl(var(--muted-foreground))]">No rule entries yet.</div>;
+                          return <div className="space-y-3"><Input value={entry.name} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { name: e.target.value })} placeholder="Entry name" /><Input value={entry.comment} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { comment: e.target.value })} placeholder="Comment" /><Input value={entry.keysRaw} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { keysRaw: e.target.value })} placeholder="Keywords" /><div className="grid gap-3 md:grid-cols-2"><Input type="number" value={String(entry.priority)} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { priority: Number(e.target.value) || 1 })} placeholder="Priority" /><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.enabled} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { enabled: e.target.checked })} /> Enabled</label></div><div className="grid gap-3 md:grid-cols-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.constant} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { constant: e.target.checked })} /> Constant</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.caseSensitive} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { caseSensitive: e.target.checked })} /> Case sensitive</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.matchWholeWords} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { matchWholeWords: e.target.checked })} /> Whole words</label></div><Textarea value={entry.content} onChange={(e) => updateLorebookEntry("rulesEntries", entry.id, { content: e.target.value, tagsRaw: "important" })} rows={10} placeholder="Content" /><div><Button variant="secondary" onClick={() => removeLorebookEntry("rulesEntries", entry.id)}><Trash2 className="h-4 w-4" /> Remove entry</Button></div></div>;
+                        })()}
+                      </div>
+                    </div>
                   </div>
                 ) : null}
 
-                {lorebookTab === "powers" ? (
-                  <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                    <div className="text-sm font-semibold">Powers</div>
-                    <Textarea value={activeLorebook.powers} onChange={(e) => updateLorebook(activeLorebook.id, { powers: e.target.value })} rows={10} className="mt-2" placeholder="Power systems, techniques, weaknesses, and costs..." />
+                {lorebookTab === "specials" ? (
+                  <div className="space-y-3">
+                    <div className="flex justify-end"><Button variant="primary" onClick={() => addLorebookEntry("specialsEntries", "Special")}><Plus className="h-4 w-4" /> Add special entry</Button></div>
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <div className="space-y-2 lg:col-span-1">
+                        {activeLorebook.specialsEntries.map((entry) => <button key={entry.id} type="button" onClick={() => setActiveSpecialEntryId(entry.id)} className={cn("w-full rounded-xl border p-3 text-left", activeSpecialEntryId === entry.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))] bg-[hsl(var(--card))]")}>{entry.name || "Untitled"}</button>)}
+                      </div>
+                      <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 lg:col-span-2">
+                        {(() => {
+                          const entry = activeLorebook.specialsEntries.find((x) => x.id === activeSpecialEntryId) || activeLorebook.specialsEntries[0];
+                          if (!entry) return <div className="text-sm text-[hsl(var(--muted-foreground))]">No special entries yet.</div>;
+                          return <div className="space-y-3"><Input value={entry.name} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { name: e.target.value })} placeholder="Entry name" /><Input value={entry.comment} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { comment: e.target.value })} placeholder="Comment" /><Input value={entry.keysRaw} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { keysRaw: e.target.value })} placeholder="Keywords" /><div className="grid gap-3 md:grid-cols-2"><Input type="number" value={String(entry.priority)} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { priority: Number(e.target.value) || 1 })} placeholder="Priority" /><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.enabled} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { enabled: e.target.checked })} /> Enabled</label></div><div className="grid gap-3 md:grid-cols-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.constant} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { constant: e.target.checked })} /> Constant</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.caseSensitive} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { caseSensitive: e.target.checked })} /> Case sensitive</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={entry.keyMatchPriority} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { keyMatchPriority: e.target.checked })} /> Key priority</label></div><Textarea value={entry.content} onChange={(e) => updateLorebookEntry("specialsEntries", entry.id, { content: e.target.value, tagsRaw: "important" })} rows={10} placeholder="Content" /><div><Button variant="secondary" onClick={() => removeLorebookEntry("specialsEntries", entry.id)}><Trash2 className="h-4 w-4" /> Remove entry</Button></div></div>;
+                        })()}
+                      </div>
+                    </div>
                   </div>
                 ) : null}
               </>
