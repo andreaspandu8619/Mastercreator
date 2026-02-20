@@ -259,6 +259,8 @@ const REL_TYPES = [
   "Other",
 ];
 
+const USER_NODE_ID = "{{user}}";
+
 function cn(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
@@ -2376,18 +2378,21 @@ Return only the revised world entry content.`,
   function getBoardNodeCenter(characterId: string, side: "from" | "to") {
     if (!activeStory) return null;
     const node = activeStory.boardNodes.find((n) => n.characterId === characterId);
-    if (!node) return null;
-    const baseX = node.x;
-    const baseY = node.y;
+    if (!node && characterId !== USER_NODE_ID) return null;
+    const refNode = node || { characterId: USER_NODE_ID, x: 40, y: 120 };
+    const baseX = refNode.x;
+    const baseY = refNode.y;
     return {
       x: side === "from" ? baseX + 14 : baseX + 242,
       y: baseY + 10,
     };
   }
 
-  function getOrthogonalPathPoints(from: { x: number; y: number }, to: { x: number; y: number }, lane = 0) {
-    const midX = from.x + (to.x - from.x) / 2 + lane * 18;
-    return `${from.x},${from.y} ${midX},${from.y} ${midX},${to.y} ${to.x},${to.y}`;
+  function getFlowPath(from: { x: number; y: number }, to: { x: number; y: number }, lane = 0) {
+    const midX = from.x + (to.x - from.x) / 2;
+    const over = from.y <= to.y;
+    const archY = over ? Math.min(from.y, to.y) - (110 + lane * 10) : Math.max(from.y, to.y) + (110 + lane * 10);
+    return `M ${from.x} ${from.y} C ${midX} ${archY}, ${midX} ${archY}, ${to.x} ${to.y}`;
   }
 
   function selectExistingRelationship(rel: StoryRelationship) {
@@ -4239,8 +4244,8 @@ Return only the revised synopsis.`;
                     <div className="mb-2 text-xs font-semibold text-[hsl(var(--muted-foreground))]">Formed relationships</div>
                     <div className="space-y-2">
                       {activeStory.relationships.map((r) => {
-                        const fromName = characters.find((c) => c.id === r.fromCharacterId)?.name || "?";
-                        const toName = characters.find((c) => c.id === r.toCharacterId)?.name || "?";
+                        const fromName = r.fromCharacterId === USER_NODE_ID ? "USER" : (characters.find((c) => c.id === r.fromCharacterId)?.name || "?");
+                        const toName = r.toCharacterId === USER_NODE_ID ? "USER" : (characters.find((c) => c.id === r.toCharacterId)?.name || "?");
                         return (
                           <button
                             key={r.id}
@@ -4267,14 +4272,13 @@ Return only the revised synopsis.`;
                       if (!from || !to) return null;
                       const selected = selectedRelationshipId === r.id;
                       return (
-                        <polyline
+                        <path
                           key={r.id}
-                          points={getOrthogonalPathPoints(from, to, idx % 6)}
+                          d={getFlowPath(from, to, idx % 6)}
                           stroke={selected ? "hsl(var(--hover-accent))" : "hsl(var(--muted-foreground))"}
                           strokeWidth={selected ? 4 : 2}
                           fill="none"
                           strokeLinecap="round"
-                          strokeLinejoin="round"
                           style={{ pointerEvents: "stroke", cursor: "pointer" }}
                           onMouseEnter={() => setSelectedRelationshipId(r.id)}
                           onClick={() => selectExistingRelationship(r)}
@@ -4286,8 +4290,8 @@ Return only the revised synopsis.`;
                       const to = getBoardNodeCenter(pendingRelationshipEdge.toCharacterId, "from");
                       if (!from || !to) return null;
                       return (
-                        <polyline
-                          points={getOrthogonalPathPoints(from, to, 0)}
+                        <path
+                          d={getFlowPath(from, to, 0)}
                           stroke="hsl(var(--hover-accent))"
                           strokeWidth={3}
                           fill="none"
@@ -4299,8 +4303,8 @@ Return only the revised synopsis.`;
                       const from = getBoardNodeCenter(connectingFromId, "to");
                       if (!from) return null;
                       return (
-                        <polyline
-                          points={getOrthogonalPathPoints(from, connectingPointer, 0)}
+                        <path
+                          d={getFlowPath(from, connectingPointer, 0)}
                           stroke="hsl(var(--hover-accent))"
                           strokeWidth={2}
                           fill="none"
@@ -4309,8 +4313,8 @@ Return only the revised synopsis.`;
                       );
                     })() : null}
                   </svg>
-                  {activeStory.boardNodes.map((n) => {
-                    const c = characters.find((x) => x.id === n.characterId);
+                  {[...activeStory.boardNodes, ...(activeStory.boardNodes.some((bn) => bn.characterId === USER_NODE_ID) ? [] : [{ characterId: USER_NODE_ID, x: 40, y: 120 }])].map((n) => {
+                    const c = n.characterId === USER_NODE_ID ? ({ id: USER_NODE_ID, name: "USER", imageDataUrl: "" } as any) : characters.find((x) => x.id === n.characterId);
                     if (!c) return null;
                     return (
                       <div
@@ -4406,10 +4410,10 @@ Return only the revised synopsis.`;
                 <div className="absolute inset-x-6 bottom-3 z-20">
                   <div className="overflow-x-auto pb-2">
                     <div className="flex items-end gap-2 pt-6">
-                    {activeStory.characterIds
+                    {[USER_NODE_ID, ...activeStory.characterIds]
                       .filter((id) => !activeStory.boardNodes.some((n) => n.characterId === id))
                       .map((id) => {
-                        const c = characters.find((x) => x.id === id);
+                        const c = id === USER_NODE_ID ? ({ id: USER_NODE_ID, name: "USER", imageDataUrl: "" } as any) : characters.find((x) => x.id === id);
                         if (!c) return null;
                         return (
                           <div
@@ -4443,7 +4447,8 @@ Return only the revised synopsis.`;
                         <div className="text-xs">From</div>
                         <Select value={storyRelFromId} onChange={(e) => setStoryRelFromId(e.target.value)}>
                           <option value="">Select character…</option>
-                          {activeStory.characterIds.map((id) => {
+                          {[USER_NODE_ID, ...activeStory.characterIds].map((id) => {
+                            if (id === USER_NODE_ID) return <option key={id} value={id}>USER</option>;
                             const c = characters.find((x) => x.id === id);
                             return c ? <option key={id} value={id}>{c.name}</option> : null;
                           })}
@@ -4453,7 +4458,8 @@ Return only the revised synopsis.`;
                         <div className="text-xs">To</div>
                         <Select value={storyRelToId} onChange={(e) => setStoryRelToId(e.target.value)}>
                           <option value="">Select character…</option>
-                          {activeStory.characterIds.map((id) => {
+                          {[USER_NODE_ID, ...activeStory.characterIds].map((id) => {
+                            if (id === USER_NODE_ID) return <option key={id} value={id}>USER</option>;
                             const c = characters.find((x) => x.id === id);
                             return c ? <option key={id} value={id}>{c.name}</option> : null;
                           })}
@@ -4513,7 +4519,7 @@ Return only the revised synopsis.`;
               <button
                 type="button"
                 onClick={() => latestCharacter && setPreviewId(latestCharacter.id)}
-                className="group grid h-64 w-full grid-cols-[180px,1fr] overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left"
+                className="group relative grid h-64 w-full grid-cols-[180px,1fr] overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left"
               >
                 <div className="relative border-r border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
                   {latestCharacter?.imageDataUrl ? <img src={latestCharacter.imageDataUrl} alt={latestCharacter.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : null}
@@ -4525,7 +4531,7 @@ Return only the revised synopsis.`;
                 <div className="absolute inset-y-0 right-0 w-24 translate-x-full bg-white transition-transform duration-300 group-hover:translate-x-0">
                   <div className="flex h-full items-center justify-center">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-white/90">
-                      <ArrowLeft className="h-4 w-4 rotate-180 text-black opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-hover:animate-[spin_0.8s_ease-out_1] group-hover:[animation-direction:reverse]" />
+                      <ArrowLeft className="h-4 w-4 rotate-180 text-black opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-hover:animate-[spin_0.2s_linear_1]" />
                     </div>
                   </div>
                 </div>
@@ -4541,7 +4547,7 @@ Return only the revised synopsis.`;
                   setActiveStoryId(latestStory.id);
                   navigateTo("story_editor");
                 }}
-                className="group grid h-64 w-full grid-cols-[180px,1fr] overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left"
+                className="group relative grid h-64 w-full grid-cols-[180px,1fr] overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left"
               >
                 <div className="relative border-r border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
                   {latestStory?.imageDataUrl ? <img src={latestStory.imageDataUrl} alt={latestStory.title} className="absolute inset-0 h-full w-full object-cover object-top" /> : null}
@@ -4553,7 +4559,7 @@ Return only the revised synopsis.`;
                 <div className="absolute inset-y-0 right-0 w-24 translate-x-full bg-white transition-transform duration-300 group-hover:translate-x-0">
                   <div className="flex h-full items-center justify-center">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-white/90">
-                      <ArrowLeft className="h-4 w-4 rotate-180 text-black opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-hover:animate-[spin_0.8s_ease-out_1] group-hover:[animation-direction:reverse]" />
+                      <ArrowLeft className="h-4 w-4 rotate-180 text-black opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-hover:animate-[spin_0.2s_linear_1]" />
                     </div>
                   </div>
                 </div>
