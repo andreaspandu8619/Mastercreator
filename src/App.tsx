@@ -139,6 +139,14 @@ type Lorebook = {
   updatedAt: string;
 };
 
+type LoreMemoryTurn = {
+  lorebookId: string;
+  entryId: string;
+  prompt: string;
+  output: string;
+  createdAt: string;
+};
+
 type Character = {
   id: string;
   name: string;
@@ -784,6 +792,7 @@ export default function CharacterCreatorApp() {
   const [lorebookTab, setLorebookTab] = useState<LorebookTab>("overview");
   const [lorebookWorldPrompt, setLorebookWorldPrompt] = useState("");
   const [loreEntryPrompts, setLoreEntryPrompts] = useState<Record<string, string>>({});
+  const [loreMemoryTurns, setLoreMemoryTurns] = useState<LoreMemoryTurn[]>([]);
   const [characterAssignedLorebookIds, setCharacterAssignedLorebookIds] = useState<string[]>([]);
   const [characterLorebookPickerOpen, setCharacterLorebookPickerOpen] = useState(false);
   const [storyLorebookPickerOpen, setStoryLorebookPickerOpen] = useState(false);
@@ -2062,6 +2071,30 @@ export default function CharacterCreatorApp() {
     ].filter(Boolean).join("\n\n");
   }
 
+  function trimTextToContextWindow(text: string, contextTokens: number) {
+    const maxChars = Math.max(2000, Math.floor(contextTokens * 4));
+    const raw = String(text || "");
+    return raw.length > maxChars ? raw.slice(raw.length - maxChars) : raw;
+  }
+
+  function getLoreMemoryContext(lorebookId: string, entryId?: string) {
+    const turns = loreMemoryTurns.filter((t) => t.lorebookId === lorebookId && (!entryId || t.entryId === entryId));
+    if (!turns.length) return "";
+    const joined = turns
+      .map((t, i) => `Iteration ${i + 1}\nPrompt: ${t.prompt}\nResult:\n${t.output}`)
+      .join("\n\n");
+    return trimTextToContextWindow(joined, proxyContextSize);
+  }
+
+  function rememberLoreIteration(lorebookId: string, entryId: string, prompt: string, output: string) {
+    const turn: LoreMemoryTurn = { lorebookId, entryId, prompt, output, createdAt: new Date().toISOString() };
+    setLoreMemoryTurns((prev) => {
+      const merged = [...prev, turn];
+      const hardCap = Math.max(20, Math.floor(proxyContextSize / 128));
+      return merged.slice(-hardCap);
+    });
+  }
+
   async function applyLoreEntryPrompt(
     entry: LorebookEntry,
     promptInput: string,
@@ -2078,10 +2111,14 @@ export default function CharacterCreatorApp() {
     setGenLoading(true);
     try {
       const context = buildLorebookContextForEditing(activeLorebook);
+      const memoryContext = getLoreMemoryContext(activeLorebook.id, entry.id);
       const text = await callProxyChatCompletion({
         system: `You are a lorebook writing assistant. Improve and extend an existing ${contentLabel.toLowerCase()} using the user prompt and lorebook context. Keep continuity with what is already written. Do not restart from scratch, refine the existing text. Return only the revised ${contentLabel.toLowerCase()}.`,
         user: `Lorebook context:
 ${context}
+
+Iteration memory (keep all of this consistent):
+${memoryContext || "(none yet)"}
 
 Entry name: ${entry.name || "Untitled"}
 Current ${contentLabel.toLowerCase()}:
@@ -2093,6 +2130,7 @@ ${prompt}`,
         temperature: 0.8,
       });
       onPatch({ content: text });
+      rememberLoreIteration(activeLorebook.id, entry.id, prompt, text);
       setLoreEntryPrompts((prev) => ({ ...prev, [entry.id]: "" }));
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Lorebook generation failed.");
@@ -2112,10 +2150,14 @@ ${prompt}`,
     setGenLoading(true);
     try {
       const context = buildLorebookContextForEditing(activeLorebook);
+      const memoryContext = getLoreMemoryContext(activeLorebook.id, activeLorebook.worldEntry.id);
       const text = await callProxyChatCompletion({
         system: "You are a worldbuilding assistant. Improve and extend the current world entry using the lorebook context and latest prompt. Keep existing details and add depth instead of replacing everything.",
         user: `Lorebook context:
 ${context}
+
+Iteration memory (keep all of this consistent):
+${memoryContext || "(none yet)"}
 
 Current world entry:
 ${activeLorebook.worldEntry.content || "(empty)"}
@@ -2128,6 +2170,7 @@ Return only the revised world entry content.`,
         temperature: 0.85,
       });
       updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, content: text, tagsRaw: "world", category: "world" } });
+      rememberLoreIteration(activeLorebook.id, activeLorebook.worldEntry.id, prompt, text);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "World generation failed.");
     } finally {
@@ -2335,6 +2378,22 @@ Return only the revised world entry content.`,
       x: side === "from" ? baseX + 14 : baseX + 242,
       y: baseY + 10,
     };
+  }
+
+  function getOrthogonalPathPoints(from: { x: number; y: number }, to: { x: number; y: number }, lane = 0) {
+    const midX = from.x + (to.x - from.x) / 2 + lane * 18;
+    return `${from.x},${from.y} ${midX},${from.y} ${midX},${to.y} ${to.x},${to.y}`;
+  }
+
+  function selectExistingRelationship(rel: StoryRelationship) {
+    setSelectedRelationshipId(rel.id);
+    setStoryRelFromId(rel.fromCharacterId);
+    setStoryRelToId(rel.toCharacterId);
+    setStoryRelAlignment(rel.alignment);
+    setStoryRelType(rel.relationType);
+    setStoryRelDetails(rel.details);
+    setPendingRelationshipEdge(null);
+    setStoryRelationshipEditorOpen(true);
   }
 
   function findConnectionSnapTarget(x: number, y: number) {
@@ -4169,22 +4228,49 @@ Return only the revised synopsis.`;
                     boardPanStartRef.current = null;
                   }}
                 >
+                  <div className="absolute left-3 top-3 z-30 w-72 max-h-[70vh] overflow-auto rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 p-2 backdrop-blur">
+                    <div className="mb-2 text-xs font-semibold text-[hsl(var(--muted-foreground))]">Formed relationships</div>
+                    <div className="space-y-2">
+                      {activeStory.relationships.map((r) => {
+                        const fromName = characters.find((c) => c.id === r.fromCharacterId)?.name || "?";
+                        const toName = characters.find((c) => c.id === r.toCharacterId)?.name || "?";
+                        return (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onClick={() => selectExistingRelationship(r)}
+                            className={cn(
+                              "w-full rounded-lg border px-2 py-2 text-left text-xs",
+                              selectedRelationshipId === r.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))] bg-[hsl(var(--background))]"
+                            )}
+                          >
+                            <div className="font-medium">{fromName} → {toName}</div>
+                            <div className="text-[hsl(var(--muted-foreground))]">{r.relationType} · {r.alignment}</div>
+                          </button>
+                        );
+                      })}
+                      {!activeStory.relationships.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No relationships yet.</div> : null}
+                    </div>
+                  </div>
                   <div className="absolute inset-0" style={{ transform: `translate(${boardPan.x}px, ${boardPan.y}px)` }}>
-                  <svg className="pointer-events-none absolute inset-0 h-full w-full">
-                    {activeStory.relationships.map((r) => {
+                  <svg className="absolute inset-0 h-full w-full">
+                    {activeStory.relationships.map((r, idx) => {
                       const from = getBoardNodeCenter(r.fromCharacterId, "to");
                       const to = getBoardNodeCenter(r.toCharacterId, "from");
                       if (!from || !to) return null;
-                      const c1x = from.x + 80;
-                      const c2x = to.x - 80;
                       const selected = selectedRelationshipId === r.id;
                       return (
-                        <path
+                        <polyline
                           key={r.id}
-                          d={`M ${from.x} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${to.x} ${to.y}`}
+                          points={getOrthogonalPathPoints(from, to, idx % 6)}
                           stroke={selected ? "hsl(var(--hover-accent))" : "hsl(var(--muted-foreground))"}
-                          strokeWidth={selected ? 3 : 2}
+                          strokeWidth={selected ? 4 : 2}
                           fill="none"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          style={{ pointerEvents: "stroke", cursor: "pointer" }}
+                          onMouseEnter={() => setSelectedRelationshipId(r.id)}
+                          onClick={() => selectExistingRelationship(r)}
                         />
                       );
                     })}
@@ -4192,11 +4278,9 @@ Return only the revised synopsis.`;
                       const from = getBoardNodeCenter(pendingRelationshipEdge.fromCharacterId, "to");
                       const to = getBoardNodeCenter(pendingRelationshipEdge.toCharacterId, "from");
                       if (!from || !to) return null;
-                      const c1x = from.x + 120;
-                      const c2x = to.x - 120;
                       return (
-                        <path
-                          d={`M ${from.x} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${to.x} ${to.y}`}
+                        <polyline
+                          points={getOrthogonalPathPoints(from, to, 0)}
                           stroke="hsl(var(--hover-accent))"
                           strokeWidth={3}
                           fill="none"
@@ -4208,8 +4292,8 @@ Return only the revised synopsis.`;
                       const from = getBoardNodeCenter(connectingFromId, "to");
                       if (!from) return null;
                       return (
-                        <path
-                          d={`M ${from.x} ${from.y} C ${from.x + 80} ${from.y}, ${connectingPointer.x - 80} ${connectingPointer.y}, ${connectingPointer.x} ${connectingPointer.y}`}
+                        <polyline
+                          points={getOrthogonalPathPoints(from, connectingPointer, 0)}
                           stroke="hsl(var(--hover-accent))"
                           strokeWidth={2}
                           fill="none"
@@ -4422,12 +4506,11 @@ Return only the revised synopsis.`;
               <button
                 type="button"
                 onClick={() => latestCharacter && setPreviewId(latestCharacter.id)}
-                className="group relative h-64 w-full overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left"
+                className="group grid h-64 w-full grid-cols-[180px,1fr] overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left"
               >
-                {latestCharacter?.imageDataUrl ? (
-                  <img src={latestCharacter.imageDataUrl} alt={latestCharacter.name} className="absolute inset-y-0 left-0 h-full w-[58%] object-cover object-top opacity-45 transition-all duration-300 group-hover:scale-110 group-hover:opacity-100" />
-                ) : null}
-                <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,hsl(var(--background)/0.18)_58%,hsl(var(--card)/0.86)_66%,hsl(var(--card))_100%)]" />
+                <div className="relative border-r border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                  {latestCharacter?.imageDataUrl ? <img src={latestCharacter.imageDataUrl} alt={latestCharacter.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : null}
+                </div>
                 <div className="relative z-10 p-5">
                   <div className="text-xl font-semibold">{latestCharacter?.name || "No character yet"}</div>
                   <div className="text-sm text-[hsl(var(--foreground))/0.8]">Continue your last character</div>
@@ -4451,12 +4534,11 @@ Return only the revised synopsis.`;
                   setActiveStoryId(latestStory.id);
                   navigateTo("story_editor");
                 }}
-                className="group relative h-64 w-full overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left"
+                className="group grid h-64 w-full grid-cols-[180px,1fr] overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left"
               >
-                {latestStory?.imageDataUrl ? (
-                  <img src={latestStory.imageDataUrl} alt={latestStory.title} className="absolute inset-y-0 left-0 h-full w-[58%] object-cover object-top opacity-45 transition-all duration-300 group-hover:scale-110 group-hover:opacity-100" />
-                ) : null}
-                <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,hsl(var(--background)/0.18)_58%,hsl(var(--card)/0.86)_66%,hsl(var(--card))_100%)]" />
+                <div className="relative border-r border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                  {latestStory?.imageDataUrl ? <img src={latestStory.imageDataUrl} alt={latestStory.title} className="absolute inset-0 h-full w-full object-cover object-top" /> : null}
+                </div>
                 <div className="relative z-10 p-5">
                   <div className="text-xl font-semibold">{latestStory?.title || "No story yet"}</div>
                   <div className="text-sm text-[hsl(var(--foreground))/0.8]">Continue your last story</div>
@@ -5205,6 +5287,25 @@ Return only the revised synopsis.`;
                           No image
                         </div>
                       )}
+                      <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                        <div className="text-sm font-medium">Assigned lorebooks</div>
+                        <button
+                          type="button"
+                          onClick={() => setCharacterLorebookPickerOpen(true)}
+                          className="clickable flex aspect-[3/4] w-full flex-col items-center justify-center rounded-2xl border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted))/0.6]"
+                        >
+                          <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))]"><Plus className="h-5 w-5" /></div>
+                          <div className="text-xs font-medium">Assign lorebook</div>
+                        </button>
+                        {characterAssignedLorebookIds.length ? (
+                          <div className="flex flex-wrap gap-2">
+                            {characterAssignedLorebookIds.map((id) => {
+                              const book = lorebooks.find((x) => x.id === id);
+                              return book ? <Badge key={id}>{book.name}</Badge> : null;
+                            })}
+                          </div>
+                        ) : <div className="text-xs text-[hsl(var(--muted-foreground))]">No lorebooks assigned.</div>}
+                      </div>
                       <div className="text-xs text-[hsl(var(--muted-foreground))]">Saved locally in your browser.</div>
                       <div className="flex flex-wrap gap-2">
                         {(personalities || []).slice(0, 6).map((p) => (
@@ -5548,37 +5649,6 @@ Return only the revised synopsis.`;
                 </div>
               </div>
 
-
-              <div className="space-y-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                <div className="text-sm font-medium">Assigned lorebooks</div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <button
-                    type="button"
-                    onClick={() => setCharacterLorebookPickerOpen(true)}
-                    className="clickable flex aspect-[3/4] w-full flex-col items-center justify-center rounded-2xl border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted))/0.6]"
-                  >
-                    <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))]"><Plus className="h-5 w-5" /></div>
-                    <div className="text-xs font-medium">Assign lorebook</div>
-                  </button>
-                  {(previewChar.assignedLorebookIds || []).map((id) => {
-                    const book = lorebooks.find((x) => x.id === id);
-                    if (!book) return null;
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => togglePreviewCharacterLorebookAssignment(previewChar.id, id)}
-                        className="overflow-hidden rounded-2xl border border-[hsl(var(--border))] text-left"
-                      >
-                        <div className="relative aspect-[4/3] bg-[hsl(var(--muted))]">
-                          {book.coverImageDataUrl ? <img src={book.coverImageDataUrl} alt={book.name} className="absolute inset-0 h-full w-full object-cover" /> : null}
-                        </div>
-                        <div className="p-2 text-xs font-medium">{book.name}</div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
 
               <div className="flex items-center justify-between gap-3">
                 <div className="text-xs text-[hsl(var(--muted-foreground))]">
