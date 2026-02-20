@@ -36,6 +36,7 @@ type ProxyConfig = {
   maxTokens: number;
   temperature: number;
   contextSize: number;
+  customPrompt: string;
 };
 
 type ChatMessage = {
@@ -186,6 +187,7 @@ const DEFAULT_PROXY: ProxyConfig = {
   maxTokens: 350,
   temperature: 0.9,
   contextSize: 32000,
+  customPrompt: "",
 };
 
 const PERSONALITIES: string[] = [
@@ -770,6 +772,7 @@ export default function CharacterCreatorApp() {
   const [proxyTemperature, setProxyTemperature] = useState(DEFAULT_PROXY.temperature);
   const [proxyTemperatureInput, setProxyTemperatureInput] = useState(String(DEFAULT_PROXY.temperature));
   const [proxyContextSize, setProxyContextSize] = useState(DEFAULT_PROXY.contextSize);
+  const [proxyCustomPrompt, setProxyCustomPrompt] = useState(DEFAULT_PROXY.customPrompt);
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaText, setPersonaText] = useState("");
 
@@ -998,6 +1001,7 @@ export default function CharacterCreatorApp() {
       }
       const ctx = Number((savedProxy as any).contextSize);
       if (Number.isFinite(ctx) && ctx > 1) setProxyContextSize(Math.floor(ctx));
+      if (typeof (savedProxy as any).customPrompt === "string") setProxyCustomPrompt((savedProxy as any).customPrompt);
     }
 
     const savedPersona = localStorage.getItem(PERSONA_KEY);
@@ -1256,9 +1260,10 @@ export default function CharacterCreatorApp() {
         maxTokens: proxyMaxTokens,
         temperature: proxyTemperature,
         contextSize: proxyContextSize,
+        customPrompt: proxyCustomPrompt,
       })
     );
-  }, [proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize]);
+  }, [proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt]);
 
   useEffect(() => {
     setProxyTemperatureInput(String(proxyTemperature));
@@ -2687,12 +2692,14 @@ Write the character's next reply to the latest user message.`;
     if (!model) throw new Error("Please set a model name in Proxy.");
 
     const lorebookContext = getAssignedLorebookContext(args.lorebookIds || []);
-    const effectiveSystem = lorebookContext
-      ? `${args.system}
-
-Always-active assigned lorebooks context:
-${lorebookContext}`
-      : args.system;
+    const customPrompt = collapseWhitespace(proxyCustomPrompt);
+    const effectiveSystem = [
+      customPrompt ? `Global behavior instructions:
+${customPrompt}` : "",
+      args.system,
+      lorebookContext ? `Always-active assigned lorebooks context:
+${lorebookContext}` : "",
+    ].filter(Boolean).join("\n\n");
 
     const res = await fetch(chatUrl, {
       method: "POST",
@@ -5560,6 +5567,15 @@ Return only the revised synopsis.`;
                 }}
                 placeholder="e.g., 0.9"
                 inputMode="decimal"
+              />
+            </div>
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Custom behavior prompt</div>
+              <Textarea
+                value={proxyCustomPrompt}
+                onChange={(e) => setProxyCustomPrompt(e.target.value)}
+                rows={4}
+                placeholder="Optional global instructions for the model (e.g., writing style, tone, pacing, formatting rules)."
               />
             </div>
             <div className="space-y-2">
