@@ -3,8 +3,6 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
-  ChevronUp,
   Download,
   Moon,
   Pencil,
@@ -25,8 +23,8 @@ import {
 type ThemeMode = "light" | "dark";
 type Gender = "Male" | "Female" | "";
 type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board" | "lorebooks" | "lorebook_create";
-type CreateTab = "overview" | "definition" | "system" | "intro" | "synopsis";
-type StoryTab = "scenario" | "relationships" | "plot_points";
+type CreateTab = "overview" | "personality" | "behavior" | "definition" | "system" | "intro" | "synopsis";
+type StoryTab = "scenario" | "first_message" | "system_rules" | "relationships" | "plot_points";
 type LorebookTab = "overview" | "world" | "locations" | "factions" | "rules" | "items" | "specials";
 
 type ProxyConfig = {
@@ -76,6 +74,9 @@ type StoryProject = {
   characterIds: string[];
   imageDataUrl: string;
   scenario: string;
+  firstMessage: string;
+  firstMessageStyle: "realistic" | "dramatic" | "melancholic";
+  systemRules: string;
   plotPoints: string[];
   relationships: StoryRelationship[];
   boardNodes: StoryBoardNode[];
@@ -160,6 +161,9 @@ type Character = {
   race: string;
   personalities: string[];
   uniqueTraits: string[];
+  physicalAppearance: string[];
+  respondToProblems: string[];
+  sexualBehavior: string[];
   backstory: string[];
   systemRules: string;
   synopsis: string;
@@ -217,6 +221,7 @@ const PERSONALITIES: string[] = [
   "Open-book",
   "Optimistic",
   "Pessimistic",
+  "Protective Leader", "Chaotic", "Lawful", "Honorable", "Sarcastic", "Flirtatious", "Jealous", "Idealistic", "Cynical", "Obsessive", "Merciful", "Vengeful", "Resourceful", "Disciplined", "Nurturing", "Intimidating", "Shy", "Extroverted", "Playful", "Serious", "Arrogant", "Humble", "Greedy", "Generous", "Reckless", "Calculated", "Devout", "Skeptical", "Detached", "Melancholic", "Stubborn", "Adaptable", "Dominant", "Submissive"
 ];
 
 const RACES: string[] = [
@@ -260,6 +265,8 @@ const REL_TYPES = [
 ];
 
 const USER_NODE_ID = "{{user}}";
+
+const RESPONSE_TO_PROBLEMS_PRESETS = ["Logical", "Empathetic", "Aggressive", "Avoidant", "Strategic", "Impulsive", "Diplomatic", "Humorous", "Self-sacrificing", "Manipulative", "Defensive", "Calm under pressure"] as const;
 
 function cn(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -545,6 +552,9 @@ function normalizeCharacter(x: any): Character | null {
     race,
     personalities: normalizeStringArray(x.personalities ?? x.personality),
     uniqueTraits: normalizeStringArray(x.uniqueTraits),
+    physicalAppearance: normalizeStringArray(x.physicalAppearance),
+    respondToProblems: normalizeStringArray(x.respondToProblems),
+    sexualBehavior: normalizeStringArray(x.sexualBehavior),
     backstory: normalizeStringArray(x.backstory),
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
     synopsis: typeof x.synopsis === "string" ? x.synopsis : "",
@@ -742,6 +752,9 @@ function runTests() {
     race: "",
     personalities: ["Brave"],
     uniqueTraits: ["Scar"],
+    physicalAppearance: ["Tall"],
+    respondToProblems: ["Logical"],
+    sexualBehavior: ["Reserved"],
     backstory: ["Born in the rain"],
     systemRules: "No OOC",
     synopsis: "A hunter.",
@@ -786,7 +799,6 @@ export default function CharacterCreatorApp() {
   const [chatStreamEnabled, setChatStreamEnabled] = useState(true);
   const [introStreamEnabled, setIntroStreamEnabled] = useState(false);
   const [synopsisStreamEnabled, setSynopsisStreamEnabled] = useState(false);
-  const [backstoryStreamEnabled, setBackstoryStreamEnabled] = useState(false);
 
   const [query, setQuery] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -883,18 +895,27 @@ export default function CharacterCreatorApp() {
   const [customRace, setCustomRace] = useState("");
 
   const [personalitySearch, setPersonalitySearch] = useState("");
-  const [personalityPick, setPersonalityPick] = useState("");
-  const [personalityCustom, setPersonalityCustom] = useState("");
   const [personalities, setPersonalities] = useState<string[]>([]);
 
   const [traitInput, setTraitInput] = useState("");
   const [traits, setTraits] = useState<string[]>([]);
+  const [appearanceInput, setAppearanceInput] = useState("");
+  const [physicalAppearance, setPhysicalAppearance] = useState<string[]>([]);
+  const [problemBehavior, setProblemBehavior] = useState<string[]>([]);
+  const [sexualBehaviorInput, setSexualBehaviorInput] = useState("");
+  const [sexualBehavior, setSexualBehavior] = useState<string[]>([]);
 
-  const [backstoryInput, setBackstoryInput] = useState("");
+  const [backstoryText, setBackstoryText] = useState("");
+  const [backstoryPrompt, setBackstoryPrompt] = useState("");
   const [backstory, setBackstory] = useState<string[]>([]);
 
   const [systemRules, setSystemRules] = useState("");
   const [synopsis, setSynopsis] = useState("");
+
+  const [storyFirstMessageInput, setStoryFirstMessageInput] = useState("");
+  const [storyFirstMessageStyle, setStoryFirstMessageStyle] = useState<"realistic" | "dramatic" | "melancholic">("realistic");
+  const [storyFirstMessagePrompt, setStoryFirstMessagePrompt] = useState("");
+  const [storySystemRulesInput, setStorySystemRulesInput] = useState("");
 
   const [introMessages, setIntroMessages] = useState<string[]>([""]);
   const [introIndex, setIntroIndex] = useState(0);
@@ -966,7 +987,6 @@ export default function CharacterCreatorApp() {
     };
   }, [storywritingDragPreview]);
 
-  const [backstoryRevisionFeedback, setBackstoryRevisionFeedback] = useState("");
   const [introRevisionFeedback, setIntroRevisionFeedback] = useState("");
   const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
 
@@ -979,6 +999,7 @@ export default function CharacterCreatorApp() {
   const storyImageFileRef = useRef<HTMLInputElement | null>(null);
   const lorebookCoverFileRef = useRef<HTMLInputElement | null>(null);
   const factionImageFileRef = useRef<HTMLInputElement | null>(null);
+  const sexualBehaviorImportRef = useRef<HTMLInputElement | null>(null);
   const [historyStack, setHistoryStack] = useState<Page[]>([]);
 
   useEffect(() => {
@@ -1058,6 +1079,9 @@ export default function CharacterCreatorApp() {
             characterIds: normalizeStringArray((s as any).characterIds),
             imageDataUrl: typeof (s as any).imageDataUrl === "string" ? (s as any).imageDataUrl : "",
             scenario: typeof (s as any).scenario === "string" ? (s as any).scenario : "",
+            firstMessage: typeof (s as any).firstMessage === "string" ? (s as any).firstMessage : "",
+            firstMessageStyle: (s as any).firstMessageStyle === "dramatic" || (s as any).firstMessageStyle === "melancholic" ? (s as any).firstMessageStyle : "realistic",
+            systemRules: typeof (s as any).systemRules === "string" ? (s as any).systemRules : "",
             plotPoints: normalizeStringArray((s as any).plotPoints),
             relationships: Array.isArray((s as any).relationships) ? (s as any).relationships : [],
             boardNodes: Array.isArray((s as any).boardNodes) ? (s as any).boardNodes : [],
@@ -1331,11 +1355,8 @@ export default function CharacterCreatorApp() {
     });
   }, [characters, query]);
 
-  const filteredPersonalities = useMemo(() => {
-    const q = collapseWhitespace(personalitySearch).toLowerCase();
-    if (!q) return PERSONALITIES;
-    return PERSONALITIES.filter((p) => p.toLowerCase().includes(q));
-  }, [personalitySearch]);
+
+
 
   function genderColorClass(g: Gender) {
     if (g === "Male") return "text-[hsl(var(--male))]";
@@ -1360,14 +1381,18 @@ export default function CharacterCreatorApp() {
     setCustomRace("");
 
     setPersonalitySearch("");
-    setPersonalityPick("");
-    setPersonalityCustom("");
     setPersonalities([]);
 
     setTraitInput("");
     setTraits([]);
+    setAppearanceInput("");
+    setPhysicalAppearance([]);
+    setProblemBehavior([]);
+    setSexualBehaviorInput("");
+    setSexualBehavior([]);
 
-    setBackstoryInput("");
+    setBackstoryText("");
+    setBackstoryPrompt("");
     setBackstory([]);
 
     setSystemRules("");
@@ -1377,7 +1402,6 @@ export default function CharacterCreatorApp() {
     setIntroIndex(0);
     setIntroPrompt("");
 
-    setBackstoryRevisionFeedback("");
     setIntroRevisionFeedback("");
     setSynopsisRevisionFeedback("");
 
@@ -1423,38 +1447,8 @@ export default function CharacterCreatorApp() {
     fn();
   }
 
-  function addPersonalityPick() {
-    addToList(personalityPick, personalities, setPersonalities, () =>
-      setPersonalityPick("")
-    );
-  }
 
-  function addPersonalityCustom() {
-    addToList(personalityCustom, personalities, setPersonalities, () =>
-      setPersonalityCustom("")
-    );
-  }
 
-  function addBackstoryEntry() {
-    const b = collapseWhitespace(backstoryInput);
-    if (!b) return;
-    setBackstory((prev) => [...prev, b]);
-    setBackstoryInput("");
-  }
-
-  function removeBackstoryEntry(idx: number) {
-    setBackstory((prev) => prev.filter((_, i) => i !== idx));
-  }
-
-  function moveBackstoryEntry(from: number, to: number) {
-    setBackstory((prev) => {
-      if (to < 0 || to >= prev.length || from === to) return prev;
-      const next = [...prev];
-      const [item] = next.splice(from, 1);
-      next.splice(to, 0, item);
-      return next;
-    });
-  }
 
   function getFinalRace() {
     return racePreset && racePreset !== "Other"
@@ -1492,7 +1486,10 @@ export default function CharacterCreatorApp() {
       race: finalRace,
       personalities: Array.isArray(personalities) ? personalities : [],
       uniqueTraits: Array.isArray(traits) ? traits : [],
-      backstory: Array.isArray(backstory) ? backstory : [],
+      physicalAppearance: Array.isArray(physicalAppearance) ? physicalAppearance : [],
+      respondToProblems: Array.isArray(problemBehavior) ? problemBehavior : [],
+      sexualBehavior: Array.isArray(sexualBehavior) ? sexualBehavior : [],
+      backstory: collapseWhitespace(backstoryText) ? [backstoryText] : [],
       systemRules,
       synopsis,
       introMessages: baseIntro,
@@ -1671,7 +1668,6 @@ export default function CharacterCreatorApp() {
     setIntroPrompt("");
     setCharacterAssignedLorebookIds(Array.isArray(c.assignedLorebookIds) ? c.assignedLorebookIds : []);
 
-    setBackstoryRevisionFeedback("");
     setIntroRevisionFeedback("");
     setSynopsisRevisionFeedback("");
 
@@ -1778,7 +1774,10 @@ export default function CharacterCreatorApp() {
 
   useEffect(() => {
     setStoryImageDataUrl(activeStory?.imageDataUrl || "");
-  }, [activeStory?.id, activeStory?.imageDataUrl]);
+    setStoryFirstMessageInput(activeStory?.firstMessage || "");
+    setStoryFirstMessageStyle(activeStory?.firstMessageStyle || "realistic");
+    setStorySystemRulesInput(activeStory?.systemRules || "");
+  }, [activeStory?.id, activeStory?.imageDataUrl, activeStory?.firstMessage, activeStory?.firstMessageStyle, activeStory?.systemRules]);
 
   const latestCharacter = useMemo(
     () => (characters.length ? [...characters].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] : null),
@@ -2198,6 +2197,9 @@ Return only the revised world entry content.`,
       characterIds: Array.from(new Set(storyDraftCharacterIds)),
       imageDataUrl: storyImageDataUrl,
       scenario: "",
+      firstMessage: "",
+      firstMessageStyle: "realistic",
+      systemRules: "",
       plotPoints: [],
       relationships: [],
       boardNodes: [],
@@ -2636,6 +2638,99 @@ Write the character's next reply to the latest user message.`;
     ].join("\n");
   }
 
+  async function reviseBackstoryTextWithPrompt() {
+    const prompt = collapseWhitespace(backstoryPrompt);
+    if (!prompt) {
+      setGenError("Write a backstory prompt first.");
+      return;
+    }
+    setGenError(null);
+    setGenLoading(true);
+    try {
+      const text = await callProxyChatCompletion({
+        system: "Revise and improve the character backstory based on user instruction while preserving continuity. Return only the revised backstory text.",
+        user: `Character summary:
+${getCharacterSummaryForLLM()}
+
+Current backstory:
+${backstoryText || "(empty)"}
+
+Instruction:
+${prompt}`,
+        maxTokens: Math.max(1000, proxyMaxTokens),
+        lorebookIds: characterAssignedLorebookIds,
+      });
+      setBackstoryText(text);
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Backstory revision failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  function exportSexualBehaviorJSON() {
+    downloadJSON((filenameSafe(name) || "character") + "_sexual_behavior.json", { sexualBehavior });
+  }
+
+  async function importSexualBehaviorJSON(file: File) {
+    try {
+      const raw = await file.text();
+      const parsed = safeParseJSON(raw);
+      const arr = Array.isArray((parsed as any)?.sexualBehavior) ? normalizeStringArray((parsed as any).sexualBehavior) : [];
+      if (arr.length) setSexualBehavior(arr);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function generateStoryFirstMessage() {
+    if (!activeStory) return;
+    const styleInstruction =
+      storyFirstMessageStyle === "dramatic"
+        ? "Write in dramatic, vivid, somewhat verbose prose."
+        : storyFirstMessageStyle === "melancholic"
+          ? "Write in sophisticated, melancholic, reflective prose."
+          : "Write in realistic, natural language grounded in context.";
+    const prompt = collapseWhitespace(storyFirstMessagePrompt) || "Generate an opening first message.";
+    const cast = activeStory.characterIds
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c)
+      .map((c) => `${c.name}: ${c.synopsis || ""}`)
+      .join("\n");
+    setGenError(null);
+    setGenLoading(true);
+    try {
+      const out = await callProxyChatCompletion({
+        system: `You create first messages for roleplay story sessions. ${styleInstruction} Return only the message text.`,
+        user: `Scenario:
+${activeStory.scenario}
+
+System rules:
+${storySystemRulesInput || activeStory.systemRules || ""}
+
+Characters:
+${cast}
+
+Relationships:
+${activeStory.relationships.map((r) => `${r.fromCharacterId}->${r.toCharacterId} ${r.relationType} ${r.alignment}`).join("\n")}
+
+Plot points:
+${activeStory.plotPoints.join("\n")}
+
+Prompt:
+${prompt}`,
+        lorebookIds: activeStory.assignedLorebookIds,
+        maxTokens: Math.max(400, proxyMaxTokens),
+      });
+      setStoryFirstMessageInput(out);
+      updateStory(activeStory.id, { firstMessage: out, firstMessageStyle: storyFirstMessageStyle, systemRules: storySystemRulesInput });
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "First message generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
 
   function parseGeneratedBackstoryEntries(text: string) {
     const clean = String(text || "").trim();
@@ -2857,89 +2952,7 @@ ${more}`.trim();
     }
   }
 
-  async function generateBackstoryFromEntries() {
-    setGenError(null);
 
-    if (!backstory.length) {
-      setGenError("Add at least one backstory entry first.");
-      return;
-    }
-
-    const system =
-      "You are a roleplay writing editor. Expand rough backstory notes into a rich, coherent backstory timeline. Fill in missing connective details, resolve contradictions, and infer sensible transitions while preserving the character's established facts and tone. You may add NEW timeline entries that were not in the original notes whenever needed for context, causality, and detail. Return valid JSON only in this format: [\"entry 1\", \"entry 2\", ...]. Each entry should be detailed (2-5 sentences), specific, and ordered chronologically.";
-
-    const user = `Character info:\n${getCharacterSummaryForLLM()}\n\nRaw backstory notes:\n${backstory
-      .map((entry, i) => `${i + 1}. ${entry}`)
-      .join("\n")}\n\nRewrite these into a comprehensive, polished backstory list and add NEW detailed entries wherever missing context, causality, or timeline transitions are needed. It is good to return more entries than the input if that improves clarity and depth.`;
-
-    setGenLoading(true);
-    try {
-      const text = await callProxyChatCompletion({
-        system,
-        user,
-        maxTokens: Math.min(1000, Math.max(300, proxyMaxTokens * 3)),
-        temperature: 0.8,
-        stream: backstoryStreamEnabled,
-        lorebookIds: characterAssignedLorebookIds,
-      });
-      const generated = parseGeneratedBackstoryEntries(text);
-      if (!generated.length) {
-        throw new Error("The model did not return usable backstory entries.");
-      }
-      setBackstory(generated);
-    } catch (e: any) {
-      setGenError(e?.message ? String(e.message) : "Generation failed.");
-    } finally {
-      setGenLoading(false);
-    }
-  }
-
-  async function reviseBackstoryFromFeedback() {
-    setGenError(null);
-    const feedback = collapseWhitespace(backstoryRevisionFeedback);
-    if (!backstory.length) {
-      setGenError("Generate or add backstory entries before revising.");
-      return;
-    }
-    if (!feedback) {
-      setGenError("Write feedback for how to revise the backstory.");
-      return;
-    }
-
-    const system =
-      "You revise a roleplay backstory timeline based on user feedback. Keep chronology coherent, preserve established facts unless feedback asks to change them, and improve detail/clarity. You may add NEW entries when needed to satisfy feedback and continuity. Return valid JSON array only: [\"entry 1\", \"entry 2\", ...].";
-
-    const user = `Overview and system context:
-${getOverviewAndSystemContextForRevision()}
-
-Current backstory entries:
-${backstory
-      .map((entry, i) => `${i + 1}. ${entry}`)
-      .join("\n")}
-
-User revision feedback:
-${feedback}
-
-Revise the backstory entries now.`;
-
-    setGenLoading(true);
-    try {
-      const text = await callProxyChatCompletion({
-        system,
-        user,
-        maxTokens: Math.min(1200, Math.max(300, proxyMaxTokens * 3)),
-        temperature: 0.8,
-        lorebookIds: characterAssignedLorebookIds,
-      });
-      const revised = parseGeneratedBackstoryEntries(text);
-      if (!revised.length) throw new Error("The model did not return usable revised backstory entries.");
-      setBackstory(revised);
-    } catch (e: any) {
-      setGenError(e?.message ? String(e.message) : "Revision failed.");
-    } finally {
-      setGenLoading(false);
-    }
-  }
 
   async function reviseSelectedIntro() {
     setGenError(null);
@@ -3290,10 +3303,9 @@ Return only the revised synopsis.`;
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
     { id: "overview", label: "Overview" },
-    { id: "definition", label: "Definition" },
-    { id: "system", label: "System Rules" },
-    { id: "intro", label: "Intro Message" },
-    { id: "synopsis", label: "Synopsis" },
+    { id: "personality", label: "Personality & Traits" },
+    { id: "behavior", label: "Behavior" },
+    { id: "definition", label: "Backstory" },
   ];
 
   return (
@@ -3961,6 +3973,8 @@ Return only the revised synopsis.`;
             <div className="flex flex-wrap gap-2">
               {[
                 ["scenario", "Scenario"],
+                ["first_message", "First Message"],
+                ["system_rules", "System Rules"],
                 ["relationships", "Relationships"],
                 ["plot_points", "Plot Points"],
               ].map(([id, label]) => (
@@ -4036,6 +4050,30 @@ Return only the revised synopsis.`;
                   <Textarea value={storyScenarioRevision} onChange={(e) => setStoryScenarioRevision(e.target.value)} rows={3} placeholder="Revision feedback..." />
                   <Button variant="secondary" onClick={reviseStoryScenario} disabled={genLoading}><Sparkles className="h-4 w-4" /> Revise</Button>
                 </div>
+              </div>
+            ) : storyTab === "first_message" ? (
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <div className="mb-1 text-sm font-medium">Style preset</div>
+                    <Select value={storyFirstMessageStyle} onChange={(e) => setStoryFirstMessageStyle(e.target.value as any)}>
+                      <option value="realistic">Realistic</option>
+                      <option value="dramatic">Dramatic</option>
+                      <option value="melancholic">Melancholic</option>
+                    </Select>
+                  </div>
+                  <div>
+                    <div className="mb-1 text-sm font-medium">Prompt</div>
+                    <Input value={storyFirstMessagePrompt} onChange={(e) => setStoryFirstMessagePrompt(e.target.value)} placeholder="Guide first message" />
+                  </div>
+                </div>
+                <Button variant="secondary" onClick={generateStoryFirstMessage} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate first message</Button>
+                <Textarea value={storyFirstMessageInput} onChange={(e) => { setStoryFirstMessageInput(e.target.value); if (activeStory) updateStory(activeStory.id, { firstMessage: e.target.value, firstMessageStyle: storyFirstMessageStyle }); }} rows={10} />
+              </div>
+            ) : storyTab === "system_rules" ? (
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-2">
+                <div className="text-sm font-medium">System rules</div>
+                <Textarea value={storySystemRulesInput} onChange={(e) => { setStorySystemRulesInput(e.target.value); if (activeStory) updateStory(activeStory.id, { systemRules: e.target.value }); }} rows={10} />
               </div>
             ) : storyTab === "relationships" ? (
               <div className="space-y-3">
@@ -4710,369 +4748,92 @@ Return only the revised synopsis.`;
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-sm lg:col-span-3">
                 <div className="space-y-6 p-5 md:p-6">
                   {tab === "overview" ? (
-                    <div className="space-y-6">
-                      <div className="space-y-2">
-                        <div className="text-lg font-semibold">Overview</div>
-                        <div className="text-sm text-[hsl(var(--muted-foreground))]">
-                          Upload an image (max 10MB) and fill the essentials.
-                        </div>
-                      </div>
-
-                      <div className="space-y-4 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-medium">Character image</div>
-                            <div className="text-xs text-[hsl(var(--muted-foreground))]">
-                              Stored locally.
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <Button
-                              variant="secondary"
-                              type="button"
-                              onClick={() => imageFileRef.current?.click()}
-                            >
-                              Upload
-                            </Button>
-                            <Button
-                              variant="secondary"
-                              type="button"
-                              onClick={() => {
-                                setImageDataUrl("");
-                                setImageError(null);
-                              }}
-                              disabled={!imageDataUrl}
-                            >
-                              Remove
-                            </Button>
-                          </div>
-                        </div>
-                        <input
-                          ref={imageFileRef}
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) handlePickImage(f);
-                            e.currentTarget.value = "";
-                          }}
-                        />
-                        {imageError ? (
-                          <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--muted))] p-3 text-sm">
-                            {imageError}
-                          </div>
-                        ) : null}
-                        {imageDataUrl ? (
-                          <div className="relative w-full overflow-hidden rounded-2xl border border-[hsl(var(--border))] aspect-[3/4]">
-                            <img
-                              src={imageDataUrl}
-                              alt="Character"
-                              className="absolute inset-0 h-full w-full object-cover object-top"
-                            />
-                          </div>
-                        ) : (
-                          <div className="flex aspect-[3/4] w-full items-center justify-center rounded-2xl border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted))] text-sm text-[hsl(var(--muted-foreground))]">
-                            No image yet
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2">
-                          <div className="text-sm font-medium">Name</div>
-                          <Input
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            placeholder="Character name"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <div className="text-sm font-medium">Gender</div>
-                          <Select
-                            value={gender}
-                            onChange={(e) => setGender(e.target.value as Gender)}
-                          >
-                            <option value="">—</option>
-                            <option value="Male">Male</option>
-                            <option value="Female">Female</option>
-                          </Select>
-                        </div>
-                        <div className="space-y-2">
-                          <div className="text-sm font-medium">Age</div>
-                          <Input
-                            value={age}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              if (v === "") return setAge("");
-                              const n = Number(v);
-                              if (Number.isFinite(n)) setAge(n);
-                            }}
-                            placeholder="e.g., 23"
-                            inputMode="numeric"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <div className="text-sm font-medium">Height</div>
-                          <Input
-                            value={height}
-                            onChange={(e) => setHeight(e.target.value)}
-                            placeholder="e.g., 175 cm"
-                          />
-                        </div>
-                        <div className="space-y-2 md:col-span-2">
-                          <div className="text-sm font-medium">Origins (place of birth)</div>
-                          <Input
-                            value={origins}
-                            onChange={(e) => setOrigins(e.target.value)}
-                            placeholder="Where are they from?"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <div className="text-sm font-medium">Race</div>
-                          <Select
-                            value={racePreset}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setRacePreset(v);
-                              if (v !== "Other") setCustomRace("");
-                            }}
-                          >
-                            <option value="">—</option>
-                            {RACES.map((r) => (
-                              <option key={r} value={r}>
-                                {r}
-                              </option>
-                            ))}
-                          </Select>
-                        </div>
-                        <div className="space-y-2">
-                          <div className="text-sm font-medium">Custom race</div>
-                          <Input
-                            value={customRace}
-                            onChange={(e) => setCustomRace(e.target.value)}
-                            placeholder={racePreset === "Other" ? "Type your race" : "(choose Other)"}
-                            disabled={racePreset !== "Other"}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="h-px w-full bg-[hsl(var(--border))]" />
-
-                      <div className="space-y-3">
-                        <div className="text-sm font-medium">Personalities</div>
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <Input
-                              value={personalitySearch}
-                              onChange={(e) => setPersonalitySearch(e.target.value)}
-                              placeholder="Search personalities…"
-                            />
-                            <Select
-                              value={personalityPick}
-                              onChange={(e) => setPersonalityPick(e.target.value)}
-                              onKeyDown={(e) => onEnterAdd(e, addPersonalityPick)}
-                            >
-                              <option value="">Pick one…</option>
-                              {filteredPersonalities.map((p) => (
-                                <option key={p} value={p}>
-                                  {p}
-                                </option>
-                              ))}
-                            </Select>
-                            <Button
-                              variant="secondary"
-                              type="button"
-                              onClick={addPersonalityPick}
-                              disabled={!collapseWhitespace(personalityPick)}
-                            >
-                              Add
-                            </Button>
-                          </div>
-                          <div className="space-y-2">
-                            <Input
-                              value={personalityCustom}
-                              onChange={(e) => setPersonalityCustom(e.target.value)}
-                              onKeyDown={(e) => onEnterAdd(e, addPersonalityCustom)}
-                              placeholder="Custom personality…"
-                            />
-                            <Button
-                              variant="secondary"
-                              type="button"
-                              onClick={addPersonalityCustom}
-                              disabled={!collapseWhitespace(personalityCustom)}
-                            >
-                              Add
-                            </Button>
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {personalities.length ? (
-                            personalities.map((p) => (
-                              <button
-                                key={p}
-                                className="clickable rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs font-medium"
-                                onClick={() => removeFromList(p, setPersonalities)}
-                                type="button"
-                              >
-                                {p} <span className="opacity-70">×</span>
-                              </button>
-                            ))
-                          ) : (
-                            <div className="text-sm text-[hsl(var(--muted-foreground))]">No personalities yet.</div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="space-y-3">
-                        <div className="text-sm font-medium">Unique traits</div>
-                        <div className="flex gap-2">
-                          <Input
-                            value={traitInput}
-                            onChange={(e) => setTraitInput(e.target.value)}
-                            onKeyDown={(e) => onEnterAdd(e, addTrait)}
-                            placeholder="Type a trait…"
-                          />
-                          <Button
-                            variant="secondary"
-                            type="button"
-                            onClick={addTrait}
-                            disabled={!collapseWhitespace(traitInput)}
-                          >
-                            Add
-                          </Button>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {traits.length ? (
-                            traits.map((t) => (
-                              <button
-                                key={t}
-                                className="clickable rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs font-medium"
-                                onClick={() => removeFromList(t, setTraits)}
-                                type="button"
-                              >
-                                {t} <span className="opacity-70">×</span>
-                              </button>
-                            ))
-                          ) : (
-                            <div className="text-sm text-[hsl(var(--muted-foreground))]">No traits yet.</div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {tab === "definition" ? (
                     <div className="space-y-4">
-                      <div className="text-lg font-semibold">Definition</div>
-                      <div className="text-sm text-[hsl(var(--muted-foreground))]">
-                        Backstory entries stay as a list. You can reorder them and generate an expanded,
-                        comprehensive version from your notes.
-                      </div>
-                      <div className="flex gap-2">
-                        <Input
-                          value={backstoryInput}
-                          onChange={(e) => setBackstoryInput(e.target.value)}
-                          onKeyDown={(e) => onEnterAdd(e, addBackstoryEntry)}
-                          placeholder="Add a backstory entry…"
-                        />
-                        <Button
-                          variant="secondary"
-                          type="button"
-                          onClick={addBackstoryEntry}
-                          disabled={!collapseWhitespace(backstoryInput)}
-                        >
-                          Add
-                        </Button>
-                      </div>
-                      <div className="flex flex-wrap justify-end gap-2">
-                        <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
-                          <input
-                            type="checkbox"
-                            checked={backstoryStreamEnabled}
-                            onChange={(e) => setBackstoryStreamEnabled(e.target.checked)}
-                          />
-                          Stream text
-                        </label>
-                        <Button
-                          variant="secondary"
-                          type="button"
-                          onClick={generateBackstoryFromEntries}
-                          disabled={!backstory.length || genLoading}
-                        >
-                          <Sparkles className="h-4 w-4" /> Generate detailed backstory
-                        </Button>
-                      </div>
-                      <div className="space-y-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
-                        <div className="text-sm font-medium">Revise generated backstory</div>
-                        <Textarea
-                          value={backstoryRevisionFeedback}
-                          onChange={(e) => setBackstoryRevisionFeedback(e.target.value)}
-                          rows={3}
-                          placeholder="Give feedback for revision (e.g., make it longer, add richer dialogue and scene details)…"
-                        />
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            variant="secondary"
-                            type="button"
-                            onClick={reviseBackstoryFromFeedback}
-                            disabled={!backstory.length || !collapseWhitespace(backstoryRevisionFeedback) || genLoading}
-                          >
-                            <Sparkles className="h-4 w-4" /> Revise backstory
-                          </Button>
-                          <div className="text-xs text-[hsl(var(--muted-foreground))]">
-                            Revises only this output using overview + system context.
+                      <div className="text-lg font-semibold">Overview</div>
+                      <div className="grid gap-4 md:grid-cols-[160px,1fr]">
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium">Character image</div>
+                          <div className="flex gap-2">
+                            <Button variant="secondary" type="button" onClick={() => imageFileRef.current?.click()}>Upload</Button>
+                            <Button variant="secondary" type="button" onClick={() => { setImageDataUrl(""); setImageError(null); }} disabled={!imageDataUrl}>Remove</Button>
                           </div>
+                          <input ref={imageFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePickImage(f); e.currentTarget.value = ""; }} />
+                          {imageDataUrl ? <div className="relative w-full overflow-hidden rounded-xl border border-[hsl(var(--border))] aspect-[3/4]"><img src={imageDataUrl} alt="Character" className="absolute inset-0 h-full w-full object-cover object-top" /></div> : <div className="flex aspect-[3/4] w-full items-center justify-center rounded-xl border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--muted))] text-xs text-[hsl(var(--muted-foreground))]">No image</div>}
+                          {imageError ? <div className="text-xs text-[hsl(0_75%_55%)]">{imageError}</div> : null}
                         </div>
-                      </div>
-                      <div className="space-y-2">
-                        {backstory.length ? (
-                          backstory.map((b, i) => (
-                            <div
-                              key={b + i}
-                              className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                              <div className="whitespace-pre-wrap text-sm"><RichText text={b} /></div>
-                                <div className="flex gap-2">
-                                  <button
-                                    className="clickable rounded-xl border border-[hsl(var(--border))] p-2 disabled:opacity-40"
-                                    onClick={() => moveBackstoryEntry(i, i - 1)}
-                                    type="button"
-                                    aria-label="Move up"
-                                    disabled={i === 0}
-                                  >
-                                    <ChevronUp className="h-4 w-4" />
-                                  </button>
-                                  <button
-                                    className="clickable rounded-xl border border-[hsl(var(--border))] p-2 disabled:opacity-40"
-                                    onClick={() => moveBackstoryEntry(i, i + 1)}
-                                    type="button"
-                                    aria-label="Move down"
-                                    disabled={i === backstory.length - 1}
-                                  >
-                                    <ChevronDown className="h-4 w-4" />
-                                  </button>
-                                  <button
-                                    className="clickable rounded-xl border border-[hsl(var(--border))] p-2"
-                                    onClick={() => removeBackstoryEntry(i)}
-                                    type="button"
-                                    aria-label="Remove"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="text-sm text-[hsl(var(--muted-foreground))]">No backstory entries yet.</div>
-                        )}
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div><div className="mb-1 text-sm font-medium">Name</div><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
+                          <div><div className="mb-1 text-sm font-medium">Gender</div><Select value={gender} onChange={(e) => setGender(e.target.value as Gender)}><option value="">—</option><option value="Male">Male</option><option value="Female">Female</option></Select></div>
+                          <div><div className="mb-1 text-sm font-medium">Age</div><Input value={age} onChange={(e) => { const v = e.target.value; if (v === "") return setAge(""); const n = Number(v); if (Number.isFinite(n)) setAge(n); }} inputMode="numeric" /></div>
+                          <div><div className="mb-1 text-sm font-medium">Height</div><Input value={height} onChange={(e) => setHeight(e.target.value)} /></div>
+                          <div className="md:col-span-2"><div className="mb-1 text-sm font-medium">Character description</div><Textarea value={synopsis} onChange={(e) => setSynopsis(e.target.value)} rows={8} /></div>
+                        </div>
                       </div>
                     </div>
                   ) : null}
 
-                  {tab === "system" ? (
+                  {tab === "personality" ? (
+                    <div className="space-y-4">
+                      <div className="text-lg font-semibold">Personality & Unique Traits</div>
+                      <div className="space-y-2">
+                        <div className="text-sm font-medium">Personality (premade tags)</div>
+                        <Input value={personalitySearch} onChange={(e) => setPersonalitySearch(e.target.value)} placeholder="Search tags" />
+                        <div className="max-h-64 overflow-auto rounded-xl border border-[hsl(var(--border))] p-2 grid gap-2 sm:grid-cols-2">
+                          {PERSONALITIES.filter((x) => x.toLowerCase().includes(personalitySearch.toLowerCase())).map((x) => {
+                            const active = personalities.includes(x);
+                            return <button key={x} type="button" className={cn("rounded-lg border px-2 py-1 text-left text-xs", active ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))]")} onClick={() => setPersonalities((prev) => active ? prev.filter((p) => p !== x) : [...prev, x])}>{x}</button>;
+                          })}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="text-sm font-medium">Unique traits (free entry)</div>
+                        <div className="flex gap-2"><Input value={traitInput} onChange={(e) => setTraitInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, addTrait)} /><Button variant="secondary" type="button" onClick={addTrait}>Add</Button></div>
+                        <div className="flex flex-wrap gap-2">{traits.map((t) => <button key={t} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={() => removeFromList(t, setTraits)}>{t} ×</button>)}</div>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="text-sm font-medium">Physical appearance (free tags)</div>
+                        <div className="flex gap-2"><Input value={appearanceInput} onChange={(e) => setAppearanceInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, () => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput("")))} /><Button variant="secondary" type="button" onClick={() => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput(""))}>Add</Button></div>
+                        <div className="flex flex-wrap gap-2">{physicalAppearance.map((t) => <button key={t} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={() => removeFromList(t, setPhysicalAppearance)}>{t} ×</button>)}</div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {tab === "behavior" ? (
+                    <div className="space-y-4">
+                      <div className="text-lg font-semibold">Behavior</div>
+                      <div className="space-y-2">
+                        <div className="text-sm font-medium">Respond to problems (12 presets)</div>
+                        <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+                          {RESPONSE_TO_PROBLEMS_PRESETS.map((x) => {
+                            const active = problemBehavior.includes(x);
+                            return <button key={x} type="button" className={cn("rounded-lg border px-2 py-1 text-left text-xs", active ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))]")} onClick={() => setProblemBehavior((prev) => active ? prev.filter((p) => p !== x) : [...prev, x])}>{x}</button>;
+                          })}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="text-sm font-medium">Sexual behavior (entry list)</div>
+                        <div className="flex gap-2"><Input value={sexualBehaviorInput} onChange={(e) => setSexualBehaviorInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, () => addToList(sexualBehaviorInput, sexualBehavior, setSexualBehavior, () => setSexualBehaviorInput("")))} /><Button variant="secondary" type="button" onClick={() => addToList(sexualBehaviorInput, sexualBehavior, setSexualBehavior, () => setSexualBehaviorInput(""))}>Add</Button></div>
+                        <div className="flex flex-wrap gap-2">{sexualBehavior.map((t) => <button key={t} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={() => removeFromList(t, setSexualBehavior)}>{t} ×</button>)}</div>
+                        <input ref={sexualBehaviorImportRef} type="file" accept="application/json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) importSexualBehaviorJSON(f); e.currentTarget.value = ""; }} />
+                        <div className="flex gap-2"><Button variant="secondary" type="button" onClick={exportSexualBehaviorJSON}>Export JSON</Button><Button variant="secondary" type="button" onClick={() => sexualBehaviorImportRef.current?.click()}>Import JSON</Button></div>
+                      </div>
+                    </div>
+                  ) : null}
+
+{tab === "definition" ? (
+                    <div className="space-y-4">
+                      <div className="text-lg font-semibold">Backstory</div>
+                      <Textarea value={backstoryText} onChange={(e) => setBackstoryText(e.target.value)} rows={14} placeholder="Write backstory here..." />
+                      <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4 space-y-2">
+                        <div className="text-sm font-medium">Prompt to revise/add/change backstory</div>
+                        <Textarea value={backstoryPrompt} onChange={(e) => setBackstoryPrompt(e.target.value)} rows={3} placeholder="e.g. Make this darker and add childhood trauma details" />
+                        <Button variant="secondary" type="button" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading}><Sparkles className="h-4 w-4" /> Apply prompt</Button>
+                        {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+{tab === "system" ? (
                     <div className="space-y-4">
                       <div className="text-lg font-semibold">System Rules</div>
                       <div className="text-sm text-[hsl(var(--muted-foreground))]">
