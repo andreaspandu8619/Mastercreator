@@ -1018,6 +1018,7 @@ export default function CharacterCreatorApp() {
   }, [storywritingDragPreview]);
 
   const [introRevisionPrompt, setIntroRevisionPrompt] = useState("");
+  const [relationshipDetailsPrompt, setRelationshipDetailsPrompt] = useState("");
   const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
   const [generatedTextStates, setGeneratedTextStates] = useState<Record<string, GeneratedTextState>>({});
 
@@ -1077,28 +1078,38 @@ export default function CharacterCreatorApp() {
     const effectiveValue = activePage ? activePage.text : args.value;
     const isStreaming = !!activePage && !activePage.isFinal;
 
+    const canBack = pages.length > 0 && activeIndex > 0;
+    const canForward = pages.length > 0 && activeIndex < pages.length - 1;
+
     return (
       <div className="space-y-2">
         {pages.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
-            {pages.map((p, i) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => {
-                  setGeneratedTextActivePage(args.fieldKey, i);
-                  args.onChange(p.text);
-                }}
-                className={cn(
-                  "rounded-full border px-2 py-1 text-xs",
-                  i === activeIndex
-                    ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]"
-                    : "border-[hsl(var(--border))]"
-                )}
-              >
-                {`Page ${i + 1}`}
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-2">
+            <Button
+              variant="secondary"
+              type="button"
+              disabled={!canBack}
+              onClick={() => {
+                const next = Math.max(0, activeIndex - 1);
+                setGeneratedTextActivePage(args.fieldKey, next);
+                args.onChange(pages[next]?.text || "");
+              }}
+            >
+              <ChevronLeft className="h-4 w-4" /> Roll back
+            </Button>
+            <div className="text-xs text-[hsl(var(--muted-foreground))]">Iteration {activeIndex + 1} / {pages.length}</div>
+            <Button
+              variant="secondary"
+              type="button"
+              disabled={!canForward}
+              onClick={() => {
+                const next = Math.min(pages.length - 1, activeIndex + 1);
+                setGeneratedTextActivePage(args.fieldKey, next);
+                args.onChange(pages[next]?.text || "");
+              }}
+            >
+              Roll forward <ChevronRight className="h-4 w-4" />
+            </Button>
           </div>
         ) : null}
         <Textarea
@@ -2388,6 +2399,13 @@ Return only the revised world entry content.`,
       const b = chars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
       return `- ${a} -> ${b} | ${r.alignment} | ${r.relationType}${r.details ? ` | ${r.details}` : ""}`;
     });
+    const selectedRuleTexts = STORY_SYSTEM_RULE_CARDS
+      .filter((r) => (story.selectedSystemRuleIds || []).includes(r.id))
+      .map((r) => r.text);
+    const firstMessages = story.firstMessageVersions?.length
+      ? story.firstMessageVersions
+      : [story.firstMessage || ""];
+
     const text = [
       `# ${story.title}`,
       "",
@@ -2397,6 +2415,18 @@ Return only the revised world entry content.`,
       "## Storywriting",
       "### Scenario",
       story.scenario || "",
+      "",
+      "### Intro Messages (Storywriting)",
+      ...firstMessages.map((m, i) => `${i === (story.selectedFirstMessageIndex || 0) ? "*" : "-"} Intro ${i + 1}:\n${m || ""}`),
+      "",
+      "### First Message Style",
+      story.firstMessageStyle || "realistic",
+      "",
+      "### System Rules",
+      story.systemRules || "",
+      "",
+      "### Selected Rule Cards",
+      ...(selectedRuleTexts.length ? selectedRuleTexts.map((x) => `- ${x}`) : ["- None"]),
       "",
       "### Relationships",
       ...(relLines.length ? relLines : ["- None"]),
@@ -2541,7 +2571,7 @@ Return only the revised world entry content.`,
     setPendingRelationshipEdge(null);
   }
 
-  function getBoardNodeCenter(characterId: string, side: "from" | "to") {
+  function getBoardNodeCenter(characterId: string) {
     if (!activeStory) return null;
     const node = activeStory.boardNodes.find((n) => n.characterId === characterId);
     if (!node && characterId !== USER_NODE_ID) return null;
@@ -2549,8 +2579,8 @@ Return only the revised world entry content.`,
     const baseX = refNode.x;
     const baseY = refNode.y;
     return {
-      x: side === "from" ? baseX + 14 : baseX + 242,
-      y: baseY + 10,
+      x: baseX + 128,
+      y: baseY - 6,
     };
   }
 
@@ -2580,7 +2610,7 @@ Return only the revised world entry content.`,
     const SNAP_RADIUS_SQ = SNAP_RADIUS * SNAP_RADIUS;
     for (const node of activeStory.boardNodes) {
       if (node.characterId === currentFromId) continue;
-      const center = getBoardNodeCenter(node.characterId, "from");
+      const center = getBoardNodeCenter(node.characterId);
       if (!center) continue;
       const dx = center.x - x;
       const dy = center.y - y;
@@ -2596,7 +2626,7 @@ Return only the revised world entry content.`,
     e.stopPropagation();
     connectingFromIdRef.current = characterId;
     setConnectingFromId(characterId);
-    const startPoint = getBoardNodeCenter(characterId, "to");
+    const startPoint = getBoardNodeCenter(characterId);
     setConnectingPointer(startPoint);
     connectionSnapTargetIdRef.current = null;
     setConnectionSnapTargetId(null);
@@ -2708,17 +2738,25 @@ Return only the revised world entry content.`,
 
   function saveRelationshipEdge() {
     if (!activeStory || !storyRelFromId || !storyRelToId) return;
+    const [aId, bId] = [storyRelFromId, storyRelToId].sort();
     const relId = selectedRelationshipId || uid();
     const rel: StoryRelationship = {
       id: relId,
-      fromCharacterId: storyRelFromId,
-      toCharacterId: storyRelToId,
+      fromCharacterId: aId,
+      toCharacterId: bId,
       alignment: storyRelAlignment,
       relationType: storyRelType,
       details: storyRelDetails,
       createdAt: new Date().toISOString(),
     };
-    const others = activeStory.relationships.filter((r) => r.id !== relId);
+    const others = activeStory.relationships.filter(
+      (r) =>
+        r.id !== relId &&
+        !(
+          (r.fromCharacterId === aId && r.toCharacterId === bId) ||
+          (r.fromCharacterId === bId && r.toCharacterId === aId)
+        )
+    );
     updateStory(activeStory.id, {
       relationships: [rel, ...others],
     });
@@ -2735,6 +2773,63 @@ Return only the revised world entry content.`,
     setSelectedRelationshipId(null);
     setPendingRelationshipEdge(null);
     setStoryRelationshipEditorOpen(false);
+  }
+
+  async function improveSelectedRelationshipDetails(mode: "generate" | "revise") {
+    if (!activeStory || !selectedRelationshipId) return;
+    const rel = activeStory.relationships.find((r) => r.id === selectedRelationshipId);
+    if (!rel) return;
+    const prompt = collapseWhitespace(relationshipDetailsPrompt);
+    if (!prompt) {
+      setGenError("Write a relationship details prompt first.");
+      return;
+    }
+    const fromName = rel.fromCharacterId === USER_NODE_ID ? "USER" : (characters.find((c) => c.id === rel.fromCharacterId)?.name || rel.fromCharacterId);
+    const toName = rel.toCharacterId === USER_NODE_ID ? "USER" : (characters.find((c) => c.id === rel.toCharacterId)?.name || rel.toCharacterId);
+    const fieldKey = `story-relationship-details:${activeStory.id}:${rel.id}`;
+    setGenError(null);
+    setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
+    try {
+      const out = await callProxyChatCompletion({
+        system: mode === "generate"
+          ? "Generate rich relationship details for the given pair. Return only details text."
+          : "Revise and improve the current relationship details based on prompt. Return only details text.",
+        user: `Relationship: ${fromName} ↔ ${toName}
+Type: ${rel.relationType}
+Alignment: ${rel.alignment}
+Current details:
+${rel.details || "(empty)"}
+
+Prompt:
+${prompt}`,
+        maxTokens: Math.max(300, proxyMaxTokens),
+        lorebookIds: activeStory.assignedLorebookIds,
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => {
+          commitGeneratedText(fieldKey, partial, (next) => {
+            setStoryRelDetails(next);
+            updateStory(activeStory.id, {
+              relationships: activeStory.relationships.map((r) =>
+                r.id === rel.id ? { ...r, details: next } : r
+              ),
+            });
+          });
+        },
+      });
+      commitGeneratedText(fieldKey, out, (next) => {
+        setStoryRelDetails(next);
+        updateStory(activeStory.id, {
+          relationships: activeStory.relationships.map((r) =>
+            r.id === rel.id ? { ...r, details: next } : r
+          ),
+        });
+      }, true);
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Relationship details generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
   }
 
   async function sendChatMessage() {
@@ -4904,7 +4999,7 @@ ${feedback}`,
                               selectedRelationshipId === r.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--background))]" : "border-[hsl(var(--border))] bg-[hsl(var(--background))]"
                             )}
                           >
-                            <div className="font-medium">{a} → {b}</div>
+                            <div className="font-medium">{a} ↔ {b}</div>
                             <div className="text-[hsl(var(--muted-foreground))]">{r.alignment}</div>
                           </button>
                         );
@@ -4953,6 +5048,14 @@ ${feedback}`,
                     <div>
                       <div className="text-xs">Details</div>
                       <Textarea value={storyRelDetails} onChange={(e) => setStoryRelDetails(e.target.value)} rows={4} />
+                    </div>
+                    <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                      <div className="text-xs font-medium">Details prompt</div>
+                      <Textarea value={relationshipDetailsPrompt} onChange={(e) => setRelationshipDetailsPrompt(e.target.value)} rows={3} placeholder="Generate or revise relationship details..." />
+                      <div className="flex gap-2">
+                        <Button variant="secondary" onClick={() => improveSelectedRelationshipDetails("generate")} disabled={genLoading || !selectedRelationshipId}><Sparkles className="h-4 w-4" /> Generate</Button>
+                        <Button variant="secondary" onClick={() => improveSelectedRelationshipDetails("revise")} disabled={genLoading || !selectedRelationshipId}><Sparkles className="h-4 w-4" /> Revise</Button>
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <Button variant="primary" onClick={saveRelationshipEdge}>Save relation</Button>
@@ -5015,7 +5118,7 @@ ${feedback}`,
           ) : (
             <div className="fixed inset-0 z-30 bg-[hsl(var(--background))] p-3 md:p-6">
               <div className="mb-2 flex items-center justify-between">
-                <div className="text-sm text-[hsl(var(--muted-foreground))]">Drag picture cards and connect To → From dots</div>
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">Drag picture cards and connect top dots to create two-way links</div>
                 <Button variant="secondary" onClick={closeRelationshipBoard}>Close full board</Button>
               </div>
               <div className="relative h-[calc(100vh-86px)] w-full overflow-hidden rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-0">
@@ -5048,7 +5151,7 @@ ${feedback}`,
                     connectionSnapTargetIdRef.current = snapTargetId;
                     setConnectionSnapTargetId(snapTargetId);
                     if (snapTargetId) {
-                      const snapPoint = getBoardNodeCenter(snapTargetId, "from");
+                      const snapPoint = getBoardNodeCenter(snapTargetId);
                       if (snapPoint) {
                         setConnectingPointer(snapPoint);
                         return;
@@ -5092,7 +5195,7 @@ ${feedback}`,
                             )}
                           >
                             <button type="button" onClick={() => selectExistingRelationship(r)} className="flex-1 text-left">
-                              <div className="font-medium">{fromName} → {toName}</div>
+                              <div className="font-medium">{fromName} ↔ {toName}</div>
                               <div className="text-[hsl(var(--muted-foreground))]">{r.relationType} · {r.alignment}</div>
                             </button>
                             <button
@@ -5119,8 +5222,8 @@ ${feedback}`,
                   <div className="absolute inset-0" style={{ transform: `translate(${boardPan.x}px, ${boardPan.y}px)` }}>
                   <svg className="absolute inset-0 h-full w-full">
                     {activeStory.relationships.map((r, idx) => {
-                      const from = getBoardNodeCenter(r.fromCharacterId, "to");
-                      const to = getBoardNodeCenter(r.toCharacterId, "from");
+                      const from = getBoardNodeCenter(r.fromCharacterId);
+                      const to = getBoardNodeCenter(r.toCharacterId);
                       if (!from || !to) return null;
                       const selected = selectedRelationshipId === r.id;
                       return (
@@ -5138,8 +5241,8 @@ ${feedback}`,
                       );
                     })}
                     {pendingRelationshipEdge ? (() => {
-                      const from = getBoardNodeCenter(pendingRelationshipEdge.fromCharacterId, "to");
-                      const to = getBoardNodeCenter(pendingRelationshipEdge.toCharacterId, "from");
+                      const from = getBoardNodeCenter(pendingRelationshipEdge.fromCharacterId);
+                      const to = getBoardNodeCenter(pendingRelationshipEdge.toCharacterId);
                       if (!from || !to) return null;
                       return (
                         <path
@@ -5152,7 +5255,7 @@ ${feedback}`,
                       );
                     })() : null}
                     {connectingFromId && connectingPointer ? (() => {
-                      const from = getBoardNodeCenter(connectingFromId, "to");
+                      const from = getBoardNodeCenter(connectingFromId);
                       if (!from) return null;
                       return (
                         <path
@@ -5194,20 +5297,6 @@ ${feedback}`,
                               "absolute left-1 top-1 h-3 w-3 rounded-full bg-[hsl(var(--ring))] transition-all",
                               connectionSnapTargetId === n.characterId && "ring-2 ring-[hsl(var(--hover-accent))]"
                             )}
-                            onMouseDown={() => {
-                              dotPointerDownRef.current = true;
-                            }}
-                            onMouseUp={(e) => {
-                              dotPointerDownRef.current = false;
-                              if (connectingFromIdRef.current && connectingFromIdRef.current !== n.characterId) {
-                                finishConnectionDrag(n.characterId, e);
-                              }
-                            }}
-                            aria-label="from-dot"
-                          />
-                          <button
-                            type="button"
-                            className="absolute right-1 top-1 h-3 w-3 rounded-full bg-[hsl(var(--hover-accent))]"
                             onMouseDown={(e) => {
                               dotPointerDownRef.current = true;
                               beginConnectionDrag(n.characterId, e);
@@ -5218,7 +5307,7 @@ ${feedback}`,
                                 finishConnectionDrag(n.characterId, e);
                               }
                             }}
-                            aria-label="to-dot"
+                            aria-label="from-dot"
                           />
                           <div className="absolute inset-x-0 top-4 bg-black/45 px-1 py-0.5 text-center text-[11px] font-semibold text-white">{c.name}</div>
                         </div>
@@ -5332,6 +5421,14 @@ ${feedback}`,
                       <div>
                         <div className="text-xs">Details</div>
                         <Textarea value={storyRelDetails} onChange={(e) => setStoryRelDetails(e.target.value)} rows={4} />
+                      </div>
+                      <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                        <div className="text-xs font-medium">Details prompt</div>
+                        <Textarea value={relationshipDetailsPrompt} onChange={(e) => setRelationshipDetailsPrompt(e.target.value)} rows={3} placeholder="Generate or revise relationship details..." />
+                        <div className="flex gap-2">
+                          <Button variant="secondary" onClick={() => improveSelectedRelationshipDetails("generate")} disabled={genLoading || !selectedRelationshipId}><Sparkles className="h-4 w-4" /> Generate</Button>
+                          <Button variant="secondary" onClick={() => improveSelectedRelationshipDetails("revise")} disabled={genLoading || !selectedRelationshipId}><Sparkles className="h-4 w-4" /> Revise</Button>
+                        </div>
                       </div>
                       <div className="flex gap-2">
                         <Button variant="primary" onClick={saveRelationshipEdge}>Save relation</Button>
