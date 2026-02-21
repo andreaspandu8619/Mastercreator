@@ -53,6 +53,17 @@ type ChatSession = {
   updatedAt: string;
 };
 
+type GeneratedTextPage = {
+  id: string;
+  text: string;
+  isFinal: boolean;
+};
+
+type GeneratedTextState = {
+  pages: GeneratedTextPage[];
+  activeIndex: number;
+};
+
 type StoryRelationship = {
   id: string;
   fromCharacterId: string;
@@ -989,10 +1000,98 @@ export default function CharacterCreatorApp() {
 
   const [introRevisionFeedback, setIntroRevisionFeedback] = useState("");
   const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
+  const [generatedTextStates, setGeneratedTextStates] = useState<Record<string, GeneratedTextState>>({});
 
   const [genLoading, setGenLoading] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [proxyProgress, setProxyProgress] = useState(0);
+
+  function startGeneratedTextPage(fieldKey: string) {
+    const pageId = uid();
+    setGeneratedTextStates((prev) => {
+      const state = prev[fieldKey] || { pages: [], activeIndex: 0 };
+      const nextPages = [...state.pages, { id: pageId, text: "", isFinal: false }];
+      return { ...prev, [fieldKey]: { pages: nextPages, activeIndex: nextPages.length - 1 } };
+    });
+  }
+
+  function updateGeneratedTextPage(fieldKey: string, text: string, isFinal?: boolean) {
+    setGeneratedTextStates((prev) => {
+      const state = prev[fieldKey];
+      if (!state || !state.pages.length) return prev;
+      const idx = Math.max(0, Math.min(state.activeIndex, state.pages.length - 1));
+      const nextPages = [...state.pages];
+      nextPages[idx] = {
+        ...nextPages[idx],
+        text,
+        isFinal: typeof isFinal === "boolean" ? isFinal : nextPages[idx].isFinal,
+      };
+      return { ...prev, [fieldKey]: { ...state, pages: nextPages } };
+    });
+  }
+
+  function setGeneratedTextActivePage(fieldKey: string, activeIndex: number) {
+    setGeneratedTextStates((prev) => {
+      const state = prev[fieldKey];
+      if (!state || !state.pages.length) return prev;
+      const next = Math.max(0, Math.min(activeIndex, state.pages.length - 1));
+      return { ...prev, [fieldKey]: { ...state, activeIndex: next } };
+    });
+  }
+
+  function commitGeneratedText(fieldKey: string, text: string, onCommit: (next: string) => void, isFinal?: boolean) {
+    updateGeneratedTextPage(fieldKey, text, isFinal);
+    onCommit(text);
+  }
+
+  function renderGeneratedTextarea(args: {
+    fieldKey: string;
+    value: string;
+    onChange: (next: string) => void;
+    rows: number;
+    placeholder?: string;
+  }) {
+    const state = generatedTextStates[args.fieldKey];
+    const pages = state?.pages || [];
+    const activeIndex = state ? Math.max(0, Math.min(state.activeIndex, Math.max(0, pages.length - 1))) : 0;
+    const activePage = pages[activeIndex];
+    const effectiveValue = activePage ? activePage.text : args.value;
+    const isStreaming = !!activePage && !activePage.isFinal;
+
+    return (
+      <div className="space-y-2">
+        {pages.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {pages.map((p, i) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => {
+                  setGeneratedTextActivePage(args.fieldKey, i);
+                  args.onChange(p.text);
+                }}
+                className={cn(
+                  "rounded-full border px-2 py-1 text-xs",
+                  i === activeIndex
+                    ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]"
+                    : "border-[hsl(var(--border))]"
+                )}
+              >
+                {`Page ${i + 1}`}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <Textarea
+          value={effectiveValue}
+          onChange={(e) => commitGeneratedText(args.fieldKey, e.target.value, args.onChange, true)}
+          rows={args.rows}
+          placeholder={args.placeholder}
+          className={cn(isStreaming && "opacity-60")}
+        />
+      </div>
+    );
+  }
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
@@ -2115,8 +2214,10 @@ export default function CharacterCreatorApp() {
       setGenError("Write a prompt first.");
       return;
     }
+    const fieldKey = `lore-entry:${activeLorebook.id}:${entry.id}`;
     setGenError(null);
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const context = buildLorebookContextForEditing(activeLorebook);
       const memoryContext = getLoreMemoryContext(activeLorebook.id, entry.id);
@@ -2137,9 +2238,9 @@ ${prompt}`,
         maxTokens: Math.max(2000, proxyMaxTokens),
         temperature: 0.8,
         stream: proxyStreamingEnabled,
-        onStreamUpdate: (partial) => onPatch({ content: partial }),
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => onPatch({ content: next })),
       });
-      onPatch({ content: text });
+      commitGeneratedText(fieldKey, text, (next) => onPatch({ content: next }), true);
       rememberLoreIteration(activeLorebook.id, entry.id, prompt, text);
       setLoreEntryPrompts((prev) => ({ ...prev, [entry.id]: "" }));
     } catch (e: any) {
@@ -2157,7 +2258,9 @@ ${prompt}`,
       setGenError("Write a world prompt first.");
       return;
     }
+    const fieldKey = `lore-world:${activeLorebook.id}`;
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const context = buildLorebookContextForEditing(activeLorebook);
       const memoryContext = getLoreMemoryContext(activeLorebook.id, activeLorebook.worldEntry.id);
@@ -2180,11 +2283,21 @@ Return only the revised world entry content.`,
         temperature: 0.85,
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) =>
-          updateLorebook(activeLorebook.id, {
-            worldEntry: { ...activeLorebook.worldEntry, content: partial, tagsRaw: "world", category: "world" },
-          }),
+          commitGeneratedText(
+            fieldKey,
+            partial,
+            (next) =>
+              updateLorebook(activeLorebook.id, {
+                worldEntry: { ...activeLorebook.worldEntry, content: next, tagsRaw: "world", category: "world" },
+              })
+          ),
       });
-      updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, content: text, tagsRaw: "world", category: "world" } });
+      commitGeneratedText(
+        fieldKey,
+        text,
+        (next) => updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, content: next, tagsRaw: "world", category: "world" } }),
+        true
+      );
       rememberLoreIteration(activeLorebook.id, activeLorebook.worldEntry.id, prompt, text);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "World generation failed.");
@@ -2591,6 +2704,8 @@ ${transcript}
 Write the character's next reply to the latest user message.`;
 
     setGenLoading(true);
+    const fieldKey = `chat:${activeChatSessionId}`;
+    startGeneratedTextPage(fieldKey);
     try {
       const reply = await callProxyChatCompletion({
         system,
@@ -2598,9 +2713,11 @@ Write the character's next reply to the latest user message.`;
         stream: proxyStreamingEnabled,
         lorebookIds: chatCharacter.assignedLorebookIds,
         onStreamUpdate: (partial) => {
+          updateGeneratedTextPage(fieldKey, partial);
           setChatMessages([...newHistory, { role: "assistant" as const, content: partial }]);
         },
       });
+      updateGeneratedTextPage(fieldKey, reply, true);
       const finalMessages = [...newHistory, { role: "assistant" as const, content: reply }];
       setChatMessages(finalMessages);
       const now = new Date().toISOString();
@@ -2656,8 +2773,10 @@ Write the character's next reply to the latest user message.`;
       setGenError("Write a backstory prompt first.");
       return;
     }
+    const fieldKey = "character:backstory";
     setGenError(null);
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const text = await callProxyChatCompletion({
         system: "Revise and improve the character backstory based on user instruction while preserving continuity. Return only the revised backstory text.",
@@ -2672,9 +2791,9 @@ ${prompt}`,
         maxTokens: Math.max(1000, proxyMaxTokens),
         lorebookIds: characterAssignedLorebookIds,
         stream: proxyStreamingEnabled,
-        onStreamUpdate: setBackstoryText,
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setBackstoryText),
       });
-      setBackstoryText(text);
+      commitGeneratedText(fieldKey, text, setBackstoryText, true);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Backstory revision failed.");
     } finally {
@@ -2711,8 +2830,10 @@ ${prompt}`,
       .filter((c): c is Character => !!c)
       .map((c) => `${c.name}: ${c.synopsis || ""}`)
       .join("\n");
+    const fieldKey = `story-first-message:${activeStory.id}`;
     setGenError(null);
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
         system: `You create first messages for roleplay story sessions. ${styleInstruction} Return only the message text.`,
@@ -2736,9 +2857,9 @@ ${prompt}`,
         lorebookIds: activeStory.assignedLorebookIds,
         maxTokens: Math.max(400, proxyMaxTokens),
         stream: proxyStreamingEnabled,
-        onStreamUpdate: setStoryFirstMessageInput,
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setStoryFirstMessageInput),
       });
-      setStoryFirstMessageInput(out);
+      commitGeneratedText(fieldKey, out, setStoryFirstMessageInput, true);
       updateStory(activeStory.id, { firstMessage: out, firstMessageStyle: storyFirstMessageStyle, systemRules: storySystemRulesInput });
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "First message generation failed.");
@@ -2964,7 +3085,16 @@ ${more}`.trim();
 
     const user = `Character info:\n${getCharacterSummaryForLLM()}\n\nUser prompt:\n${userPrompt}\n\nReturn ONLY the intro message text.`;
 
+    let targetIndex = 0;
+    setIntroMessages((prev) => {
+      const base = prev.length ? [...prev] : [""];
+      targetIndex = base.length;
+      return [...base, ""];
+    });
+    setIntroIndex(targetIndex);
+    const fieldKey = `character:intro:${targetIndex}`;
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const text = await callProxyChatCompletion({
         system,
@@ -2972,21 +3102,21 @@ ${more}`.trim();
         temperature: 0.95,
         stream: proxyStreamingEnabled,
         lorebookIds: characterAssignedLorebookIds,
-        onStreamUpdate: (partial) => {
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => {
           setIntroMessages((prev) => {
             const base = prev.length ? [...prev] : [""];
-            const i = clampIndex(introIndex, base.length);
-            base[i] = partial;
+            const i = clampIndex(targetIndex, base.length);
+            base[i] = next;
             return base;
           });
-        },
+        }),
       });
-      setIntroMessages((prev) => {
+      commitGeneratedText(fieldKey, text, (next) => setIntroMessages((prev) => {
         const base = prev.length ? [...prev] : [""];
-        const i = clampIndex(introIndex, base.length);
-        base[i] = text;
+        const i = clampIndex(targetIndex, base.length);
+        base[i] = next;
         return base;
-      });
+      }), true);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Generation failed.");
     } finally {
@@ -2996,6 +3126,7 @@ ${more}`.trim();
 
   async function generateSynopsis() {
     setGenError(null);
+    const fieldKey = "character:synopsis";
 
     const system =
       "You are a creative editor generating a SYNOPSIS for a roleplay character sheet. The synopsis must be hooky, cinematic, and invite roleplay. Write 3–6 sentences. Include (subtly) a core desire, a flaw, and a tension/stake. Avoid lists, avoid headings, avoid quotes. Do not mention that you are an AI. Return ONLY the synopsis.";
@@ -3003,6 +3134,7 @@ ${more}`.trim();
     const user = `Character info:\n${getCharacterSummaryForLLM()}\n\nWrite the synopsis now.`;
 
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const text = await callProxyChatCompletion({
         system,
@@ -3011,9 +3143,9 @@ ${more}`.trim();
         temperature: 0.9,
         stream: proxyStreamingEnabled,
         lorebookIds: characterAssignedLorebookIds,
-        onStreamUpdate: (partial) => setSynopsis(partial),
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setSynopsis),
       });
-      setSynopsis(text);
+      commitGeneratedText(fieldKey, text, setSynopsis, true);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Generation failed.");
     } finally {
@@ -3052,7 +3184,16 @@ ${feedback}
 
 Return only the revised intro message.`;
 
+    let targetIndex = 0;
+    setIntroMessages((prev) => {
+      const base = prev.length ? [...prev] : [""];
+      targetIndex = base.length;
+      return [...base, ""];
+    });
+    setIntroIndex(targetIndex);
+    const fieldKey = `character:intro:${targetIndex}`;
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const text = await callProxyChatCompletion({
         system,
@@ -3060,21 +3201,21 @@ Return only the revised intro message.`;
         temperature: 0.9,
         lorebookIds: characterAssignedLorebookIds,
         stream: proxyStreamingEnabled,
-        onStreamUpdate: (partial) => {
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => {
           setIntroMessages((prev) => {
             const base = prev.length ? [...prev] : [""];
-            const i = clampIndex(introIndex, base.length);
-            base[i] = partial;
+            const i = clampIndex(targetIndex, base.length);
+            base[i] = next;
             return base;
           });
-        },
+        }),
       });
-      setIntroMessages((prev) => {
+      commitGeneratedText(fieldKey, text, (next) => setIntroMessages((prev) => {
         const base = prev.length ? [...prev] : [""];
-        const i = clampIndex(introIndex, base.length);
-        base[i] = text;
+        const i = clampIndex(targetIndex, base.length);
+        base[i] = next;
         return base;
-      });
+      }), true);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Revision failed.");
     } finally {
@@ -3084,6 +3225,7 @@ Return only the revised intro message.`;
 
   async function reviseSynopsis() {
     setGenError(null);
+    const fieldKey = "character:synopsis";
     const feedback = collapseWhitespace(synopsisRevisionFeedback);
     if (!collapseWhitespace(synopsis)) {
       setGenError("Generate or write a synopsis before revising it.");
@@ -3109,6 +3251,7 @@ ${feedback}
 Return only the revised synopsis.`;
 
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const text = await callProxyChatCompletion({
         system,
@@ -3117,9 +3260,9 @@ Return only the revised synopsis.`;
         temperature: 0.9,
         lorebookIds: characterAssignedLorebookIds,
         stream: proxyStreamingEnabled,
-        onStreamUpdate: (partial) => setSynopsis(partial),
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setSynopsis),
       });
-      setSynopsis(text);
+      commitGeneratedText(fieldKey, text, setSynopsis, true);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Revision failed.");
     } finally {
@@ -3150,8 +3293,10 @@ Return only the revised synopsis.`;
     const charBlob = activeStory.characterIds
       .map((id) => characters.find((c) => c.id === id)?.name || id)
       .join(", ");
+    const fieldKey = `story-scenario:${activeStory.id}`;
     setGenError(null);
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
         system:
@@ -3160,9 +3305,9 @@ Return only the revised synopsis.`;
         maxTokens: Math.min(400, Math.max(120, proxyMaxTokens)),
         lorebookIds: activeStory.assignedLorebookIds,
         stream: proxyStreamingEnabled,
-        onStreamUpdate: (partial) => updateStory(activeStory.id, { scenario: partial }),
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => updateStory(activeStory.id, { scenario: next })),
       });
-      updateStory(activeStory.id, { scenario: out });
+      commitGeneratedText(fieldKey, out, (next) => updateStory(activeStory.id, { scenario: next }), true);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Scenario generation failed.");
     } finally {
@@ -3177,8 +3322,10 @@ Return only the revised synopsis.`;
       setGenError("Write scenario revision feedback first.");
       return;
     }
+    const fieldKey = `story-scenario:${activeStory.id}`;
     setGenError(null);
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
         system: "Revise scenario text based on feedback. Return only revised scenario.",
@@ -3186,9 +3333,9 @@ Return only the revised synopsis.`;
         maxTokens: Math.min(450, Math.max(140, proxyMaxTokens)),
         lorebookIds: activeStory.assignedLorebookIds,
         stream: proxyStreamingEnabled,
-        onStreamUpdate: (partial) => updateStory(activeStory.id, { scenario: partial }),
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => updateStory(activeStory.id, { scenario: next })),
       });
-      updateStory(activeStory.id, { scenario: out });
+      commitGeneratedText(fieldKey, out, (next) => updateStory(activeStory.id, { scenario: next }), true);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Scenario revision failed.");
     } finally {
@@ -3270,6 +3417,7 @@ Return only the revised synopsis.`;
     const contentLabel = options?.contentLabel || "Content";
     const contentRows = options?.contentRows ?? 10;
     const forceCategory = options?.forceCategory;
+    const fieldKey = activeLorebook ? `lore-entry:${activeLorebook.id}:${entry.id}` : `lore-entry:${entry.id}`;
     return (
       <div className="space-y-3">
         <div>
@@ -3282,7 +3430,12 @@ Return only the revised synopsis.`;
         </div>
         <div>
           <div className="mb-1 text-sm">{contentLabel}</div>
-          <Textarea value={entry.content} onChange={(e) => onPatch({ content: e.target.value })} rows={contentRows} />
+          {renderGeneratedTextarea({
+            fieldKey,
+            value: entry.content,
+            onChange: (next) => onPatch({ content: next }),
+            rows: contentRows,
+          })}
         </div>
         <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
           <div className="text-sm font-medium">Prompt</div>
@@ -4092,12 +4245,13 @@ Return only the revised synopsis.`;
                     </div>
                     <input ref={storyImageFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePickStoryImage(f); e.currentTarget.value = ""; }} />
                   </div>
-                  <Textarea
-                    value={activeStory.scenario}
-                    onChange={(e) => updateStory(activeStory.id, { scenario: e.target.value })}
-                    rows={10}
-                    placeholder="Scenario..."
-                  />
+                  {renderGeneratedTextarea({
+                    fieldKey: `story-scenario:${activeStory.id}`,
+                    value: activeStory.scenario,
+                    onChange: (next) => updateStory(activeStory.id, { scenario: next }),
+                    rows: 10,
+                    placeholder: "Scenario...",
+                  })}
                   <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
                     <div className="text-xs font-semibold text-[hsl(var(--muted-foreground))]">Assigned Lorebooks</div>
                     <button
@@ -4146,7 +4300,15 @@ Return only the revised synopsis.`;
                   </div>
                 </div>
                 <Button variant="secondary" onClick={generateStoryFirstMessage} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate first message</Button>
-                <Textarea value={storyFirstMessageInput} onChange={(e) => { setStoryFirstMessageInput(e.target.value); if (activeStory) updateStory(activeStory.id, { firstMessage: e.target.value, firstMessageStyle: storyFirstMessageStyle }); }} rows={10} />
+                {renderGeneratedTextarea({
+                  fieldKey: `story-first-message:${activeStory.id}`,
+                  value: storyFirstMessageInput,
+                  onChange: (next) => {
+                    setStoryFirstMessageInput(next);
+                    if (activeStory) updateStory(activeStory.id, { firstMessage: next, firstMessageStyle: storyFirstMessageStyle });
+                  },
+                  rows: 10,
+                })}
               </div>
             ) : storyTab === "system_rules" ? (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-2">
@@ -4901,7 +5063,13 @@ Return only the revised synopsis.`;
 {tab === "definition" ? (
                     <div className="space-y-4">
                       <div className="text-lg font-semibold">Backstory</div>
-                      <Textarea value={backstoryText} onChange={(e) => setBackstoryText(e.target.value)} rows={14} placeholder="Write backstory here..." />
+                      {renderGeneratedTextarea({
+                        fieldKey: "character:backstory",
+                        value: backstoryText,
+                        onChange: setBackstoryText,
+                        rows: 14,
+                        placeholder: "Write backstory here...",
+                      })}
                       <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4 space-y-2">
                         <div className="text-sm font-medium">Prompt to revise/add/change backstory</div>
                         <Textarea value={backstoryPrompt} onChange={(e) => setBackstoryPrompt(e.target.value)} rows={3} placeholder="e.g. Make this darker and add childhood trauma details" />
@@ -4985,6 +5153,11 @@ Return only the revised synopsis.`;
                         }}
                         rows={9}
                         placeholder="Write the opening message…"
+                        className={cn(
+                          generatedTextStates[`character:intro:${clampIndex(introIndex, Math.max(1, introMessages.length))}`]?.pages[
+                            generatedTextStates[`character:intro:${clampIndex(introIndex, Math.max(1, introMessages.length))}`]?.activeIndex || 0
+                          ]?.isFinal === false && "opacity-60"
+                        )}
                       />
 
                       <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
@@ -5050,12 +5223,13 @@ Return only the revised synopsis.`;
                           <Sparkles className="h-4 w-4" /> {genLoading ? "Generating…" : "Generate"}
                         </Button>
                       </div>
-                      <Textarea
-                        value={synopsis}
-                        onChange={(e) => setSynopsis(e.target.value)}
-                        rows={10}
-                        placeholder="Synopsis…"
-                      />
+                      {renderGeneratedTextarea({
+                        fieldKey: "character:synopsis",
+                        value: synopsis,
+                        onChange: setSynopsis,
+                        rows: 10,
+                        placeholder: "Synopsis…",
+                      })}
                       <div className="space-y-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
                         <div className="text-sm font-medium">Revise synopsis with feedback</div>
                         <Textarea
