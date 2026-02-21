@@ -1010,7 +1010,7 @@ export default function CharacterCreatorApp() {
     };
   }, [storywritingDragPreview]);
 
-  const [introRevisionFeedback, setIntroRevisionFeedback] = useState("");
+  const [introRevisionPrompt, setIntroRevisionPrompt] = useState("");
   const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
   const [generatedTextStates, setGeneratedTextStates] = useState<Record<string, GeneratedTextState>>({});
 
@@ -1516,7 +1516,7 @@ export default function CharacterCreatorApp() {
     setIntroIndex(0);
     setIntroPrompt("");
 
-    setIntroRevisionFeedback("");
+    setIntroRevisionPrompt("");
     setSynopsisRevisionFeedback("");
 
     setGenError(null);
@@ -1782,7 +1782,7 @@ export default function CharacterCreatorApp() {
     setIntroPrompt("");
     setCharacterAssignedLorebookIds(Array.isArray(c.assignedLorebookIds) ? c.assignedLorebookIds : []);
 
-    setIntroRevisionFeedback("");
+    setIntroRevisionPrompt("");
     setSynopsisRevisionFeedback("");
 
     setGenError(null);
@@ -3115,9 +3115,7 @@ ${more}`.trim();
       return [...base, ""];
     });
     setIntroIndex(targetIndex);
-    const fieldKey = `character:intro:${targetIndex}`;
     setGenLoading(true);
-    startGeneratedTextPage(fieldKey);
     try {
       const text = await callProxyChatCompletion({
         system,
@@ -3125,21 +3123,21 @@ ${more}`.trim();
         temperature: 0.95,
         stream: proxyStreamingEnabled,
         lorebookIds: characterAssignedLorebookIds,
-        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => {
+        onStreamUpdate: (partial) => {
           setIntroMessages((prev) => {
             const base = prev.length ? [...prev] : [""];
             const i = clampIndex(targetIndex, base.length);
-            base[i] = next;
+            base[i] = partial;
             return base;
           });
-        }),
+        },
       });
-      commitGeneratedText(fieldKey, text, (next) => setIntroMessages((prev) => {
+      setIntroMessages((prev) => {
         const base = prev.length ? [...prev] : [""];
         const i = clampIndex(targetIndex, base.length);
-        base[i] = next;
+        base[i] = text;
         return base;
-      }), true);
+      });
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Generation failed.");
     } finally {
@@ -3180,7 +3178,7 @@ ${more}`.trim();
 
   async function reviseSelectedIntro() {
     setGenError(null);
-    const feedback = collapseWhitespace(introRevisionFeedback);
+    const feedback = collapseWhitespace(introRevisionPrompt);
     const currentIntro =
       introMessages[clampIndex(introIndex, Math.max(1, introMessages.length))] || "";
 
@@ -3214,9 +3212,7 @@ Return only the revised intro message.`;
       return [...base, ""];
     });
     setIntroIndex(targetIndex);
-    const fieldKey = `character:intro:${targetIndex}`;
     setGenLoading(true);
-    startGeneratedTextPage(fieldKey);
     try {
       const text = await callProxyChatCompletion({
         system,
@@ -3224,21 +3220,21 @@ Return only the revised intro message.`;
         temperature: 0.9,
         lorebookIds: characterAssignedLorebookIds,
         stream: proxyStreamingEnabled,
-        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => {
+        onStreamUpdate: (partial) => {
           setIntroMessages((prev) => {
             const base = prev.length ? [...prev] : [""];
             const i = clampIndex(targetIndex, base.length);
-            base[i] = next;
+            base[i] = partial;
             return base;
           });
-        }),
+        },
       });
-      commitGeneratedText(fieldKey, text, (next) => setIntroMessages((prev) => {
+      setIntroMessages((prev) => {
         const base = prev.length ? [...prev] : [""];
         const i = clampIndex(targetIndex, base.length);
-        base[i] = next;
+        base[i] = text;
         return base;
-      }), true);
+      });
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Revision failed.");
     } finally {
@@ -3302,9 +3298,22 @@ Return only the revised synopsis.`;
     setIntroIndex((prev) => prev + 1);
   }
 
+  function buildIntroRevisionTemplate(introText: string) {
+    return `Current intro context:
+${introText || "(empty)"}
+
+Revision instructions:
+`;
+  }
+
   useEffect(() => {
     setIntroIndex((i) => clampIndex(i, Math.max(1, introMessages.length)));
   }, [introMessages.length]);
+
+  useEffect(() => {
+    const current = introMessages[clampIndex(introIndex, Math.max(1, introMessages.length))] || "";
+    setIntroRevisionPrompt(buildIntroRevisionTemplate(current));
+  }, [introIndex, introMessages.length]);
 
   function getStoryCharacterContext(story: StoryProject) {
     const cast = story.characterIds
@@ -5274,7 +5283,7 @@ ${feedback}`,
                             )
                           }
                         >
-                          <ChevronLeft className="h-4 w-4" />
+                          <ChevronLeft className="h-4 w-4" /> Roll back
                         </Button>
                         <div className="text-sm">
                           Intro <span className="font-semibold">{introIndex + 1}</span> / {Math.max(1, introMessages.length)}
@@ -5288,7 +5297,7 @@ ${feedback}`,
                             )
                           }
                         >
-                          <ChevronRight className="h-4 w-4" />
+                          Roll forward <ChevronRight className="h-4 w-4" />
                         </Button>
                       </div>
 
@@ -5309,11 +5318,6 @@ ${feedback}`,
                         }}
                         rows={9}
                         placeholder="Write the opening message…"
-                        className={cn(
-                          generatedTextStates[`character:intro:${clampIndex(introIndex, Math.max(1, introMessages.length))}`]?.pages[
-                            generatedTextStates[`character:intro:${clampIndex(introIndex, Math.max(1, introMessages.length))}`]?.activeIndex || 0
-                          ]?.isFinal === false && "opacity-60"
-                        )}
                       />
 
                       <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
@@ -5338,18 +5342,18 @@ ${feedback}`,
                           </div>
                         </div>
                         <div className="space-y-2">
-                          <div className="text-sm font-medium">Revise selected intro with feedback</div>
+                          <div className="text-sm font-medium">Revise selected intro</div>
                           <Textarea
-                            value={introRevisionFeedback}
-                            onChange={(e) => setIntroRevisionFeedback(e.target.value)}
-                            rows={3}
-                            placeholder="Feedback for this intro only (e.g., make it longer and add more descriptive dialogue)…"
+                            value={introRevisionPrompt}
+                            onChange={(e) => setIntroRevisionPrompt(e.target.value)}
+                            rows={6}
+                            placeholder="Revision prompt for this intro..."
                           />
                           <Button
                             variant="secondary"
                             type="button"
                             onClick={reviseSelectedIntro}
-                            disabled={!collapseWhitespace(introRevisionFeedback) || genLoading}
+                            disabled={!collapseWhitespace(introRevisionPrompt) || genLoading}
                           >
                             <Sparkles className="h-4 w-4" /> Revise this intro
                           </Button>
