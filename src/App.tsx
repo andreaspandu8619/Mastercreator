@@ -659,7 +659,7 @@ function Button({
   variant?: "primary" | "secondary" | "danger";
 }) {
   const base =
-    "clickable inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:opacity-50 disabled:cursor-not-allowed";
+    "clickable inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition duration-200 hover:scale-[1.01] active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:active:scale-100";
 
   const v =
     variant === "primary"
@@ -4002,7 +4002,7 @@ ${feedback}`,
         </header>
 
         {page === "chat" ? (
-          <div className="mt-6 grid gap-4 lg:grid-cols-3">
+          <div className="anim-page mt-6 grid gap-4 lg:grid-cols-3">
             <div className="space-y-3 lg:col-span-1">
               <div className="flex items-center justify-between gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                 <div>
@@ -4103,7 +4103,7 @@ ${feedback}`,
             </div>
           </div>
         ) : page === "storywriting" ? (
-          <div className="relative mt-6 space-y-4" ref={storywritingDndRef}>
+          <div className="anim-page relative mt-6 space-y-4" ref={storywritingDndRef}>
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xl font-semibold">Storywriting</div>
@@ -4205,7 +4205,7 @@ ${feedback}`,
             })() : null}
           </div>
         ) : page === "my_stories" ? (
-          <div className="mt-6 space-y-4">
+          <div className="anim-page mt-6 space-y-4">
             <div className="flex items-center justify-between gap-2">
               <div className="text-xl font-semibold">My Stories</div>
               <div className="flex gap-2">
@@ -4241,7 +4241,7 @@ ${feedback}`,
             </div>
           </div>
         ) : page === "lorebooks" ? (
-          <div className="mt-6 space-y-4">
+          <div className="anim-page mt-6 space-y-4">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xl font-semibold">Lorebooks</div>
@@ -4282,7 +4282,7 @@ ${feedback}`,
             </div>
           </div>
         ) : page === "lorebook_create" ? (
-          <div className="mt-6 space-y-4">
+          <div className="anim-page mt-6 space-y-4">
             {!activeLorebook ? (
               <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-sm text-[hsl(var(--muted-foreground))]">Pick a lorebook from the lorebooks menu first.</div>
             ) : (
@@ -4540,7 +4540,7 @@ ${feedback}`,
             )}
           </div>
         ) : page === "story_editor" ? (
-          <div className="mt-6 space-y-4">
+          <div className="anim-page mt-6 space-y-4">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xl font-semibold">{activeStory?.title || "Story Editor"}</div>
@@ -5011,7 +5011,7 @@ ${feedback}`,
           </div>
         ) : page === "story_relationship_board" ? (
           !activeStory ? (
-            <div className="mt-6 text-sm text-[hsl(var(--muted-foreground))]">Select a story first.</div>
+            <div className="anim-page mt-6 text-sm text-[hsl(var(--muted-foreground))]">Select a story first.</div>
           ) : (
             <div className="fixed inset-0 z-30 bg-[hsl(var(--background))] p-3 md:p-6">
               <div className="mb-2 flex items-center justify-between">
@@ -5345,8 +5345,8 @@ ${feedback}`,
             </div>
           )
         ) : page === "library" ? (
-          <div className="mt-6 space-y-6">
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="anim-page mt-6 space-y-6">
+            <div className="anim-stagger grid gap-4 md:grid-cols-3">
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                 <Button variant="primary" className="w-full justify-center py-3" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}>
                   <Plus className="h-4 w-4" /> Create a new character
@@ -5420,7 +5420,7 @@ ${feedback}`,
             </div>
           </div>
         ) : page === "characters" ? (
-          <div className="mt-6 space-y-4">
+          <div className="anim-page mt-6 space-y-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="relative w-full md:max-w-xl">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-[hsl(var(--muted-foreground))]" />
@@ -5478,7 +5478,7 @@ ${feedback}`,
             )}
           </div>
         ) : (
-          <div className="mt-6 space-y-4">
+          <div className="anim-page mt-6 space-y-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-2">
                 <Button variant="secondary" onClick={() => navigateTo("library")}>
@@ -6083,7 +6083,7 @@ ${feedback}`,
 
 
         <Modal open={characterLorebookPickerOpen} onClose={() => setCharacterLorebookPickerOpen(false)} title="Assign Lorebooks to Character" widthClass="max-w-4xl">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="anim-stagger grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {lorebooks.map((book) => {
               const selected = previewChar ? (previewChar.assignedLorebookIds || []).includes(book.id) : characterAssignedLorebookIds.includes(book.id);
               return (
