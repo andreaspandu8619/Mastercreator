@@ -1028,12 +1028,25 @@ export default function CharacterCreatorApp() {
   const [genError, setGenError] = useState<string | null>(null);
   const [proxyProgress, setProxyProgress] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
+  const [navMenuOpen, setNavMenuOpen] = useState<null | "characters" | "stories" | "lorebooks" | "settings">(null);
+  const navMenusRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const sync = () => setIsMobile(window.innerWidth < 768);
     sync();
     window.addEventListener("resize", sync);
     return () => window.removeEventListener("resize", sync);
+  }, []);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!navMenusRef.current) return;
+      const target = event.target as Node | null;
+      if (target && navMenusRef.current.contains(target)) return;
+      setNavMenuOpen(null);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
   }, []);
 
   function startGeneratedTextPage(fieldKey: string) {
@@ -2565,15 +2578,12 @@ Return only the revised world entry content.`,
     const baseY = refNode.y;
     return {
       x: baseX + 128,
-      y: baseY - 6,
+      y: baseY + 10,
     };
   }
 
-  function getFlowPath(from: { x: number; y: number }, to: { x: number; y: number }, lane = 0) {
-    const midX = from.x + (to.x - from.x) / 2;
-    const over = from.y <= to.y;
-    const archY = over ? Math.min(from.y, to.y) - (110 + lane * 10) : Math.max(from.y, to.y) + (110 + lane * 10);
-    return `M ${from.x} ${from.y} C ${midX} ${archY}, ${midX} ${archY}, ${to.x} ${to.y}`;
+  function getFlowPath(from: { x: number; y: number }, to: { x: number; y: number }) {
+    return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
   }
 
   function selectExistingRelationship(rel: StoryRelationship) {
@@ -4037,43 +4047,53 @@ ${feedback}`,
             </button>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-            <details className="relative">
-              <summary className="clickable list-none cursor-pointer rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-sm font-medium">Characters</summary>
-              <div className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
-                <Button className="w-full justify-start" variant="secondary" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}><Plus className="h-4 w-4" /> Create new character</Button>
-                <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => navigateTo("characters")}><Library className="h-4 w-4" /> View character gallery</Button>
+            <div ref={navMenusRef} className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "characters" ? null : "characters"))}>Characters</Button>
+                {navMenuOpen === "characters" ? (
+                  <div className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
+                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); resetForm(); navigateTo("create"); setTab("overview"); }}><Plus className="h-4 w-4" /> Create new character</Button>
+                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("characters"); }}><Library className="h-4 w-4" /> View character gallery</Button>
+                  </div>
+                ) : null}
               </div>
-            </details>
 
-            <details className="relative">
-              <summary className="clickable list-none cursor-pointer rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-sm font-medium">Stories</summary>
-              <div className="absolute right-0 z-50 mt-2 w-52 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
-                <Button className="w-full justify-start" variant="secondary" onClick={() => navigateTo("storywriting")}><Plus className="h-4 w-4" /> Create new story</Button>
-                <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => navigateTo("my_stories")}><Library className="h-4 w-4" /> View stories</Button>
+              <div className="relative">
+                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "stories" ? null : "stories"))}>Stories</Button>
+                {navMenuOpen === "stories" ? (
+                  <div className="absolute right-0 z-50 mt-2 w-52 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
+                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("storywriting"); }}><Plus className="h-4 w-4" /> Create new story</Button>
+                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("my_stories"); }}><Library className="h-4 w-4" /> View stories</Button>
+                  </div>
+                ) : null}
               </div>
-            </details>
 
-            <details className="relative">
-              <summary className="clickable list-none cursor-pointer rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-sm font-medium">Lorebooks</summary>
-              <div className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
-                <Button className="w-full justify-start" variant="secondary" onClick={createLorebook}><Plus className="h-4 w-4" /> Create new lorebook</Button>
-                <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => navigateTo("lorebooks")}><BookOpen className="h-4 w-4" /> View lorebooks</Button>
+              <div className="relative">
+                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "lorebooks" ? null : "lorebooks"))}>Lorebooks</Button>
+                {navMenuOpen === "lorebooks" ? (
+                  <div className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
+                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); createLorebook(); }}><Plus className="h-4 w-4" /> Create new lorebook</Button>
+                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("lorebooks"); }}><BookOpen className="h-4 w-4" /> View lorebooks</Button>
+                  </div>
+                ) : null}
               </div>
-            </details>
 
-            <details className="relative">
-              <summary className="clickable list-none cursor-pointer rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-sm font-medium"><Settings className="inline h-4 w-4" /> Settings</summary>
-              <div className="absolute right-0 z-50 mt-2 w-48 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
-                <Button className="w-full justify-start" variant="secondary" onClick={() => setProxyOpen(true)}><SlidersHorizontal className="h-4 w-4" /> Proxy</Button>
-                <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}>
-                  {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
-                </Button>
+              <div className="relative">
+                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "settings" ? null : "settings"))}><Settings className="h-4 w-4" /> Settings</Button>
+                {navMenuOpen === "settings" ? (
+                  <div className="absolute right-0 z-50 mt-2 w-48 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
+                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); setProxyOpen(true); }}><SlidersHorizontal className="h-4 w-4" /> Proxy</Button>
+                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); setTheme((t) => (t === "light" ? "dark" : "light")); }}>
+                      {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
-            </details>
-            <Button variant="secondary" onClick={() => setPersonaOpen(true)}>
+            </div>
+            <Button variant="secondary" onClick={() => { setNavMenuOpen(null); setPersonaOpen(true); }}>
               <UserRound className="h-4 w-4" /> Persona
             </Button>
-            <Button variant="secondary" onClick={() => navigateTo("chat")}>
+            <Button variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("chat"); }}>
               <MessageCircle className="h-4 w-4" /> Chats
             </Button>
           </div>
@@ -5137,7 +5157,7 @@ ${feedback}`,
           !activeStory ? (
             <div className="anim-page mt-6 text-sm text-[hsl(var(--muted-foreground))]">Select a story first.</div>
           ) : (
-            <div className="fixed inset-0 z-30 bg-[hsl(var(--background))] p-3 md:p-6">
+            <div className="fixed inset-0 z-[70] bg-[hsl(var(--background))] p-3 md:p-6">
               <div className="mb-2 flex items-center justify-between">
                 <div className="text-sm text-[hsl(var(--muted-foreground))]">Drag picture cards and connect top dots to create two-way links</div>
                 <Button variant="secondary" onClick={closeRelationshipBoard}>Close full board</Button>
@@ -5241,16 +5261,64 @@ ${feedback}`,
                     </div>
                   </div>
                   <div className="absolute inset-0" style={{ transform: `translate(${boardPan.x}px, ${boardPan.y}px)` }}>
-                  <svg className="absolute inset-0 h-full w-full">
-                    {activeStory.relationships.map((r, idx) => {
+                  {[...activeStory.boardNodes, ...(activeStory.boardNodes.some((bn) => bn.characterId === USER_NODE_ID) ? [] : [{ characterId: USER_NODE_ID, x: 40, y: 120 }])].map((n) => {
+                    const c = n.characterId === USER_NODE_ID ? ({ id: USER_NODE_ID, name: "USER", imageDataUrl: "" } as any) : characters.find((x) => x.id === n.characterId);
+                    if (!c) return null;
+                    return (
+                      <div
+                        key={n.characterId}
+                        data-board-item="1"
+                        onMouseDown={(e) => {
+                          if (dotPointerDownRef.current || e.button !== 0) return;
+                          beginRelationshipCardDrag(n.characterId, "board", e, n.x, n.y);
+                        }}
+                        className={cn(
+                          "absolute z-10 w-64 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow transition-all duration-200",
+                          storyDragCharacterId === n.characterId && "scale-95 opacity-70"
+                        )}
+                        style={{ left: n.x, top: n.y }}
+                      >
+                        <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
+                          {c.imageDataUrl ? (
+                            <img src={c.imageDataUrl} alt={c.name} className="absolute inset-0 h-full w-full object-cover object-top" />
+                          ) : (
+                            <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
+                          )}
+                          <button
+                            type="button"
+                            className={cn(
+                              "absolute left-1/2 top-1 h-3 w-3 -translate-x-1/2 rounded-full bg-[hsl(var(--ring))] transition-all",
+                              connectionSnapTargetId === n.characterId && "ring-2 ring-[hsl(var(--hover-accent))]"
+                            )}
+                            onMouseDown={(e) => {
+                              dotPointerDownRef.current = true;
+                              beginConnectionDrag(n.characterId, e);
+                            }}
+                            onMouseUp={(e) => {
+                              dotPointerDownRef.current = false;
+                              if (connectingFromIdRef.current && connectingFromIdRef.current !== n.characterId) {
+                                finishConnectionDrag(n.characterId, e);
+                              }
+                            }}
+                            aria-label="from-dot"
+                          />
+                          <div className="absolute inset-x-0 top-6 bg-black/45 px-1 py-0.5 text-center text-[11px] font-semibold text-white">{c.name}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <svg className="absolute left-[-6000px] top-[-6000px] z-20 h-[12000px] w-[12000px]" style={{ overflow: "visible" }}>
+                    {activeStory.relationships.map((r) => {
                       const from = getBoardNodeCenter(r.fromCharacterId);
                       const to = getBoardNodeCenter(r.toCharacterId);
                       if (!from || !to) return null;
                       const selected = selectedRelationshipId === r.id;
+                      const shiftedFrom = { x: from.x + 6000, y: from.y + 6000 };
+                      const shiftedTo = { x: to.x + 6000, y: to.y + 6000 };
                       return (
                         <path
                           key={r.id}
-                          d={getFlowPath(from, to, idx % 6)}
+                          d={getFlowPath(shiftedFrom, shiftedTo)}
                           stroke={selected ? "hsl(var(--hover-accent))" : "hsl(var(--muted-foreground))"}
                           strokeWidth={selected ? 4 : 2}
                           fill="none"
@@ -5267,7 +5335,7 @@ ${feedback}`,
                       if (!from || !to) return null;
                       return (
                         <path
-                          d={getFlowPath(from, to, 0)}
+                          d={getFlowPath({ x: from.x + 6000, y: from.y + 6000 }, { x: to.x + 6000, y: to.y + 6000 })}
                           stroke="hsl(var(--hover-accent))"
                           strokeWidth={3}
                           fill="none"
@@ -5280,7 +5348,7 @@ ${feedback}`,
                       if (!from) return null;
                       return (
                         <path
-                          d={getFlowPath(from, connectingPointer, 0)}
+                          d={getFlowPath({ x: from.x + 6000, y: from.y + 6000 }, { x: connectingPointer.x + 6000, y: connectingPointer.y + 6000 })}
                           stroke="hsl(var(--hover-accent))"
                           strokeWidth={2}
                           fill="none"
@@ -5289,52 +5357,6 @@ ${feedback}`,
                       );
                     })() : null}
                   </svg>
-                  {[...activeStory.boardNodes, ...(activeStory.boardNodes.some((bn) => bn.characterId === USER_NODE_ID) ? [] : [{ characterId: USER_NODE_ID, x: 40, y: 120 }])].map((n) => {
-                    const c = n.characterId === USER_NODE_ID ? ({ id: USER_NODE_ID, name: "USER", imageDataUrl: "" } as any) : characters.find((x) => x.id === n.characterId);
-                    if (!c) return null;
-                    return (
-                      <div
-                        key={n.characterId}
-                        data-board-item="1"
-                        onMouseDown={(e) => {
-                          if (dotPointerDownRef.current || e.button !== 0) return;
-                          beginRelationshipCardDrag(n.characterId, "board", e, n.x, n.y);
-                        }}
-                        className={cn(
-                          "absolute w-64 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow transition-all duration-200",
-                          storyDragCharacterId === n.characterId && "scale-95 opacity-70"
-                        )}
-                        style={{ left: n.x, top: n.y }}
-                      >
-                        <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[hsl(var(--border))]">
-                          {c.imageDataUrl ? (
-                            <img src={c.imageDataUrl} alt={c.name} className="absolute inset-0 h-full w-full object-cover object-top" />
-                          ) : (
-                            <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
-                          )}
-                          <button
-                            type="button"
-                            className={cn(
-                              "absolute left-1 top-1 h-3 w-3 rounded-full bg-[hsl(var(--ring))] transition-all",
-                              connectionSnapTargetId === n.characterId && "ring-2 ring-[hsl(var(--hover-accent))]"
-                            )}
-                            onMouseDown={(e) => {
-                              dotPointerDownRef.current = true;
-                              beginConnectionDrag(n.characterId, e);
-                            }}
-                            onMouseUp={(e) => {
-                              dotPointerDownRef.current = false;
-                              if (connectingFromIdRef.current && connectingFromIdRef.current !== n.characterId) {
-                                finishConnectionDrag(n.characterId, e);
-                              }
-                            }}
-                            aria-label="from-dot"
-                          />
-                          <div className="absolute inset-x-0 top-4 bg-black/45 px-1 py-0.5 text-center text-[11px] font-semibold text-white">{c.name}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
                   {relationshipDrag ? (() => {
                     const c = characters.find((x) => x.id === relationshipDrag.id);
                     if (!c) return null;
@@ -5349,7 +5371,7 @@ ${feedback}`,
                           ) : (
                             <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
                           )}
-                          <div className="absolute inset-x-0 top-4 bg-black/45 px-1 py-0.5 text-center text-[11px] font-semibold text-white">{c.name}</div>
+                          <div className="absolute inset-x-0 top-6 bg-black/45 px-1 py-0.5 text-center text-[11px] font-semibold text-white">{c.name}</div>
                         </div>
                       </div>
                     );
