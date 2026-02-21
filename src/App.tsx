@@ -87,6 +87,8 @@ type StoryProject = {
   imageDataUrl: string;
   scenario: string;
   firstMessage: string;
+  firstMessageVersions: string[];
+  selectedFirstMessageIndex: number;
   firstMessageStyle: "realistic" | "dramatic" | "melancholic";
   systemRules: string;
   selectedSystemRuleIds: string[];
@@ -938,6 +940,7 @@ export default function CharacterCreatorApp() {
   const [storyFirstMessageInput, setStoryFirstMessageInput] = useState("");
   const [storyFirstMessageStyle, setStoryFirstMessageStyle] = useState<"realistic" | "dramatic" | "melancholic">("realistic");
   const [storyFirstMessagePrompt, setStoryFirstMessagePrompt] = useState("");
+  const [storyFirstMessageRevisionPrompt, setStoryFirstMessageRevisionPrompt] = useState("");
   const [storySystemRulesInput, setStorySystemRulesInput] = useState("");
 
   const [introMessages, setIntroMessages] = useState<string[]>([""]);
@@ -1192,6 +1195,14 @@ export default function CharacterCreatorApp() {
             imageDataUrl: typeof (s as any).imageDataUrl === "string" ? (s as any).imageDataUrl : "",
             scenario: typeof (s as any).scenario === "string" ? (s as any).scenario : "",
             firstMessage: typeof (s as any).firstMessage === "string" ? (s as any).firstMessage : "",
+            firstMessageVersions: normalizeStringArray((s as any).firstMessageVersions).length
+              ? normalizeStringArray((s as any).firstMessageVersions)
+              : (typeof (s as any).firstMessage === "string" && collapseWhitespace((s as any).firstMessage))
+                ? [String((s as any).firstMessage)]
+                : [""],
+            selectedFirstMessageIndex: Number.isFinite(Number((s as any).selectedFirstMessageIndex))
+              ? Math.max(0, Number((s as any).selectedFirstMessageIndex))
+              : 0,
             firstMessageStyle: (s as any).firstMessageStyle === "dramatic" || (s as any).firstMessageStyle === "melancholic" ? (s as any).firstMessageStyle : "realistic",
             systemRules: typeof (s as any).systemRules === "string" ? (s as any).systemRules : "",
             selectedSystemRuleIds: normalizeStringArray((s as any).selectedSystemRuleIds),
@@ -1887,11 +1898,16 @@ export default function CharacterCreatorApp() {
   );
 
   useEffect(() => {
+    const versions = activeStory?.firstMessageVersions?.length
+      ? activeStory.firstMessageVersions
+      : [activeStory?.firstMessage || ""];
+    const selectedIdx = clampIndex(activeStory?.selectedFirstMessageIndex || 0, versions.length);
     setStoryImageDataUrl(activeStory?.imageDataUrl || "");
-    setStoryFirstMessageInput(activeStory?.firstMessage || "");
+    setStoryFirstMessageInput(versions[selectedIdx] || "");
+    setStoryFirstMessageRevisionPrompt(`Current first message context:\n${versions[selectedIdx] || "(empty)"}\n\nRevision instructions:\n`);
     setStoryFirstMessageStyle(activeStory?.firstMessageStyle || "realistic");
     setStorySystemRulesInput(activeStory?.systemRules || "");
-  }, [activeStory?.id, activeStory?.imageDataUrl, activeStory?.firstMessage, activeStory?.firstMessageStyle, activeStory?.systemRules]);
+  }, [activeStory?.id, activeStory?.imageDataUrl, activeStory?.firstMessage, activeStory?.firstMessageStyle, activeStory?.systemRules, activeStory?.selectedFirstMessageIndex, activeStory?.firstMessageVersions]);
 
   const latestCharacter = useMemo(
     () => (characters.length ? [...characters].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] : null),
@@ -2333,6 +2349,8 @@ Return only the revised world entry content.`,
       imageDataUrl: storyImageDataUrl,
       scenario: "",
       firstMessage: "",
+      firstMessageVersions: [""],
+      selectedFirstMessageIndex: 0,
       firstMessageStyle: "realistic",
       systemRules: "",
       selectedSystemRuleIds: [],
@@ -2847,10 +2865,14 @@ ${prompt}`,
     const storyCharacterContext = getStoryCharacterContext(activeStory);
     const relationshipContext = getStoryRelationshipContext(activeStory);
     const selectedRules = getStorySelectedSystemRules(activeStory);
-    const fieldKey = `story-first-message:${activeStory.id}`;
+    let targetIndex = 0;
+    const baseVersions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
+    targetIndex = baseVersions.length;
+    const nextVersions = [...baseVersions, ""];
+    updateStory(activeStory.id, { firstMessageVersions: nextVersions, selectedFirstMessageIndex: targetIndex, firstMessage: "" });
+    setStoryFirstMessageInput("");
     setGenError(null);
     setGenLoading(true);
-    startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
         system: `You create first messages for roleplay story sessions. ${styleInstruction} Return only the message text.`,
@@ -2880,12 +2902,89 @@ ${prompt}`,
         lorebookIds: activeStory.assignedLorebookIds,
         maxTokens: Math.max(400, proxyMaxTokens),
         stream: proxyStreamingEnabled,
-        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setStoryFirstMessageInput),
+        onStreamUpdate: (partial) => {
+          setStoryFirstMessageInput(partial);
+          updateStory(activeStory.id, {
+            firstMessageVersions: nextVersions.map((m, i) => (i === targetIndex ? partial : m)),
+            selectedFirstMessageIndex: targetIndex,
+            firstMessage: partial,
+            firstMessageStyle: storyFirstMessageStyle,
+            systemRules: storySystemRulesInput,
+          });
+        },
       });
-      commitGeneratedText(fieldKey, out, setStoryFirstMessageInput, true);
-      updateStory(activeStory.id, { firstMessage: out, firstMessageStyle: storyFirstMessageStyle, systemRules: storySystemRulesInput });
+      setStoryFirstMessageInput(out);
+      updateStory(activeStory.id, {
+        firstMessageVersions: nextVersions.map((m, i) => (i === targetIndex ? out : m)),
+        selectedFirstMessageIndex: targetIndex,
+        firstMessage: out,
+        firstMessageStyle: storyFirstMessageStyle,
+        systemRules: storySystemRulesInput,
+      });
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "First message generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  async function reviseStoryFirstMessage() {
+    if (!activeStory) return;
+    const feedback = collapseWhitespace(storyFirstMessageRevisionPrompt);
+    const currentMessage = storyFirstMessageInput || activeStory.firstMessage || "";
+    if (!collapseWhitespace(currentMessage)) {
+      setGenError("Write or generate a first message before revising.");
+      return;
+    }
+    if (!feedback) {
+      setGenError("Write revision instructions first.");
+      return;
+    }
+
+    const cast = activeStory.characterIds
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c)
+      .map((c) => `${c.name}: ${c.synopsis || ""}`)
+      .join("\n");
+    const storyCharacterContext = getStoryCharacterContext(activeStory);
+    const relationshipContext = getStoryRelationshipContext(activeStory);
+    const selectedRules = getStorySelectedSystemRules(activeStory);
+
+    const baseVersions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
+    const targetIndex = baseVersions.length;
+    const nextVersions = [...baseVersions, ""];
+    updateStory(activeStory.id, { firstMessageVersions: nextVersions, selectedFirstMessageIndex: targetIndex, firstMessage: "" });
+    setStoryFirstMessageInput("");
+    setGenError(null);
+    setGenLoading(true);
+    try {
+      const out = await callProxyChatCompletion({
+        system: "Revise the first message while preserving continuity with story context and character details. Return only the revised first message text.",
+        user: `Scenario:\n${activeStory.scenario}\n\nSystem rules:\n${storySystemRulesInput || activeStory.systemRules || ""}\n\nSelected system rules:\n${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}\n\nCharacters:\n${cast}\n\nCharacter context:\n${storyCharacterContext}\n\nRelationships:\n${relationshipContext}\n\nCurrent first message:\n${currentMessage}\n\nRevision instructions:\n${feedback}`,
+        lorebookIds: activeStory.assignedLorebookIds,
+        maxTokens: Math.max(400, proxyMaxTokens),
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => {
+          setStoryFirstMessageInput(partial);
+          updateStory(activeStory.id, {
+            firstMessageVersions: nextVersions.map((m, i) => (i === targetIndex ? partial : m)),
+            selectedFirstMessageIndex: targetIndex,
+            firstMessage: partial,
+            firstMessageStyle: storyFirstMessageStyle,
+            systemRules: storySystemRulesInput,
+          });
+        },
+      });
+      setStoryFirstMessageInput(out);
+      updateStory(activeStory.id, {
+        firstMessageVersions: nextVersions.map((m, i) => (i === targetIndex ? out : m)),
+        selectedFirstMessageIndex: targetIndex,
+        firstMessage: out,
+        firstMessageStyle: storyFirstMessageStyle,
+        systemRules: storySystemRulesInput,
+      });
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "First message revision failed.");
     } finally {
       setGenLoading(false);
     }
@@ -4406,6 +4505,59 @@ ${feedback}`,
               </div>
             ) : storyTab === "first_message" ? (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-lg font-semibold">First Message</div>
+                    <div className="text-sm text-[hsl(var(--muted-foreground))]">Create multiple first-message versions and switch between them.</div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={() => {
+                      if (!activeStory) return;
+                      const versions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
+                      const idx = versions.length;
+                      const next = [...versions, ""];
+                      updateStory(activeStory.id, { firstMessageVersions: next, selectedFirstMessageIndex: idx, firstMessage: "" });
+                      setStoryFirstMessageInput("");
+                    }}
+                  >
+                    <Plus className="h-4 w-4" /> New
+                  </Button>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={() => {
+                      if (!activeStory) return;
+                      const versions = activeStory.firstMessageVersions?.length ? activeStory.firstMessageVersions : [activeStory.firstMessage || ""];
+                      const idx = clampIndex((activeStory.selectedFirstMessageIndex || 0) - 1, versions.length);
+                      updateStory(activeStory.id, { selectedFirstMessageIndex: idx, firstMessage: versions[idx] || "" });
+                      setStoryFirstMessageInput(versions[idx] || "");
+                    }}
+                  >
+                    <ChevronLeft className="h-4 w-4" /> Roll back
+                  </Button>
+                  <div className="text-sm">
+                    Version <span className="font-semibold">{(activeStory.selectedFirstMessageIndex || 0) + 1}</span> / {Math.max(1, activeStory.firstMessageVersions?.length || 1)}
+                  </div>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={() => {
+                      if (!activeStory) return;
+                      const versions = activeStory.firstMessageVersions?.length ? activeStory.firstMessageVersions : [activeStory.firstMessage || ""];
+                      const idx = clampIndex((activeStory.selectedFirstMessageIndex || 0) + 1, versions.length);
+                      updateStory(activeStory.id, { selectedFirstMessageIndex: idx, firstMessage: versions[idx] || "" });
+                      setStoryFirstMessageInput(versions[idx] || "");
+                    }}
+                  >
+                    Roll forward <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
                     <div className="mb-1 text-sm font-medium">Style preset</div>
@@ -4421,15 +4573,33 @@ ${feedback}`,
                   </div>
                 </div>
                 <Button variant="secondary" onClick={generateStoryFirstMessage} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate first message</Button>
-                {renderGeneratedTextarea({
-                  fieldKey: `story-first-message:${activeStory.id}`,
-                  value: storyFirstMessageInput,
-                  onChange: (next) => {
+
+                <Textarea
+                  value={storyFirstMessageInput}
+                  onChange={(e) => {
+                    const next = e.target.value;
                     setStoryFirstMessageInput(next);
-                    if (activeStory) updateStory(activeStory.id, { firstMessage: next, firstMessageStyle: storyFirstMessageStyle });
-                  },
-                  rows: 10,
-                })}
+                    if (!activeStory) return;
+                    const versions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
+                    const idx = clampIndex(activeStory.selectedFirstMessageIndex || 0, versions.length);
+                    versions[idx] = next;
+                    updateStory(activeStory.id, { firstMessage: next, firstMessageStyle: storyFirstMessageStyle, firstMessageVersions: versions, selectedFirstMessageIndex: idx });
+                  }}
+                  rows={10}
+                />
+
+                <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
+                  <div className="text-sm font-medium">Revise selected first message</div>
+                  <Textarea
+                    value={storyFirstMessageRevisionPrompt}
+                    onChange={(e) => setStoryFirstMessageRevisionPrompt(e.target.value)}
+                    rows={6}
+                    placeholder="Revision prompt for this first message..."
+                  />
+                  <Button variant="secondary" onClick={reviseStoryFirstMessage} disabled={genLoading || !collapseWhitespace(storyFirstMessageRevisionPrompt)}>
+                    <Sparkles className="h-4 w-4" /> Revise first message
+                  </Button>
+                </div>
               </div>
             ) : storyTab === "system_rules" ? (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-4">
