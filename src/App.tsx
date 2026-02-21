@@ -89,6 +89,7 @@ type StoryProject = {
   firstMessage: string;
   firstMessageStyle: "realistic" | "dramatic" | "melancholic";
   systemRules: string;
+  selectedSystemRuleIds: string[];
   plotPoints: string[];
   relationships: StoryRelationship[];
   boardNodes: StoryBoardNode[];
@@ -276,6 +277,17 @@ const REL_TYPES = [
   "Ally",
   "Other",
 ];
+
+const STORY_SYSTEM_RULE_CARDS = [
+  { id: "no-user-control", label: "Never speak or act as user", text: "{{char}} will NEVER talk nor act as {{user}} under any circumstances whatsoever." },
+  { id: "personality-consistent", label: "Stay true to personality", text: "{{char}} will ALWAYS stay true to their/his/her personality." },
+  { id: "story-forward", label: "Always move story forward", text: "The story will ALWAYS move forward with {{user}}’s and {{char}}’s actions." },
+  { id: "no-fancy-language", label: "Avoid fancy language", text: "{{char}} will NEVER talk in overly fancy language." },
+  { id: "speech-pattern", label: "Match speech pattern", text: "{{char}} will ALWAYS speak according to their/his/her personality, this includes speech pattern in responses." },
+  { id: "interesting-dialogue", label: "Use interesting dialogue", text: "{{char}} will ALWAYS answer in interesting dialogues according to the conversation and topic and/or mood of the interaction, not short answers or short quips." },
+  { id: "situational-awareness", label: "Situational awareness", text: "Have situational awareness and be cognizant of intercharacter relationships, characters avoid being overly familiar or sexually pushy towards {{user}} unless the situation calls for it, it is in character for them to do so, or they have a sexual relationship." },
+  { id: "long-replies", label: "Reply over 500 tokens", text: "{{char}} will ALWAYS reply in over 500 tokens." },
+] as const;
 
 const USER_NODE_ID = "{{user}}";
 
@@ -1182,6 +1194,7 @@ export default function CharacterCreatorApp() {
             firstMessage: typeof (s as any).firstMessage === "string" ? (s as any).firstMessage : "",
             firstMessageStyle: (s as any).firstMessageStyle === "dramatic" || (s as any).firstMessageStyle === "melancholic" ? (s as any).firstMessageStyle : "realistic",
             systemRules: typeof (s as any).systemRules === "string" ? (s as any).systemRules : "",
+            selectedSystemRuleIds: normalizeStringArray((s as any).selectedSystemRuleIds),
             plotPoints: normalizeStringArray((s as any).plotPoints),
             relationships: Array.isArray((s as any).relationships) ? (s as any).relationships : [],
             boardNodes: Array.isArray((s as any).boardNodes) ? (s as any).boardNodes : [],
@@ -2322,6 +2335,7 @@ Return only the revised world entry content.`,
       firstMessage: "",
       firstMessageStyle: "realistic",
       systemRules: "",
+      selectedSystemRuleIds: [],
       plotPoints: [],
       relationships: [],
       boardNodes: [],
@@ -2830,6 +2844,9 @@ ${prompt}`,
       .filter((c): c is Character => !!c)
       .map((c) => `${c.name}: ${c.synopsis || ""}`)
       .join("\n");
+    const storyCharacterContext = getStoryCharacterContext(activeStory);
+    const relationshipContext = getStoryRelationshipContext(activeStory);
+    const selectedRules = getStorySelectedSystemRules(activeStory);
     const fieldKey = `story-first-message:${activeStory.id}`;
     setGenError(null);
     setGenLoading(true);
@@ -2843,11 +2860,17 @@ ${activeStory.scenario}
 System rules:
 ${storySystemRulesInput || activeStory.systemRules || ""}
 
+Selected system rules:
+${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
+
 Characters:
 ${cast}
 
+Character context:
+${storyCharacterContext}
+
 Relationships:
-${activeStory.relationships.map((r) => `${r.fromCharacterId}->${r.toCharacterId} ${r.relationType} ${r.alignment}`).join("\n")}
+${relationshipContext}
 
 Plot points:
 ${activeStory.plotPoints.join("\n")}
@@ -3283,6 +3306,44 @@ Return only the revised synopsis.`;
     setIntroIndex((i) => clampIndex(i, Math.max(1, introMessages.length)));
   }, [introMessages.length]);
 
+  function getStoryCharacterContext(story: StoryProject) {
+    const cast = story.characterIds
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c);
+    if (!cast.length) return "No character data available.";
+    return cast
+      .map((c) => [
+        `Character: ${collapseWhitespace(c.name) || "(unnamed)"}`,
+        `Gender: ${c.gender || ""}`,
+        `Race: ${collapseWhitespace(c.race) || collapseWhitespace(c.racePreset) || ""}`,
+        `Origins: ${collapseWhitespace(c.origins)}`,
+        `Personality: ${(c.personalities || []).join(", ")}`,
+        `Unique traits: ${(c.uniqueTraits || []).join(", ")}`,
+        `Behavior (problem response): ${(c.respondToProblems || []).join(", ")}`,
+        `Behavior (sexual): ${(c.sexualBehavior || []).join(", ")}`,
+        `Backstory: ${(c.backstory || []).join(" | ")}`,
+        `Synopsis: ${collapseWhitespace(c.synopsis)}`,
+      ].join("\n"))
+      .join("\n\n");
+  }
+
+  function getStoryRelationshipContext(story: StoryProject) {
+    if (!story.relationships.length) return "None";
+    return story.relationships
+      .map((r) => {
+        const from = characters.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
+        const to = characters.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
+        const details = collapseWhitespace(r.details);
+        return `${from} -> ${to}: ${r.relationType} (${r.alignment})${details ? ` | ${details}` : ""}`;
+      })
+      .join("\n");
+  }
+
+  function getStorySelectedSystemRules(story: StoryProject) {
+    const selected = new Set(story.selectedSystemRuleIds || []);
+    return STORY_SYSTEM_RULE_CARDS.filter((rule) => selected.has(rule.id)).map((rule) => rule.text);
+  }
+
   async function generateStoryScenario() {
     if (!activeStory) return;
     const prompt = collapseWhitespace(storyScenarioPrompt);
@@ -3293,6 +3354,8 @@ Return only the revised synopsis.`;
     const charBlob = activeStory.characterIds
       .map((id) => characters.find((c) => c.id === id)?.name || id)
       .join(", ");
+    const storyCharacterContext = getStoryCharacterContext(activeStory);
+    const selectedRules = getStorySelectedSystemRules(activeStory);
     const fieldKey = `story-scenario:${activeStory.id}`;
     setGenError(null);
     setGenLoading(true);
@@ -3300,8 +3363,16 @@ Return only the revised synopsis.`;
     try {
       const out = await callProxyChatCompletion({
         system:
-          "You create roleplay story scenarios for multi-character casts. Return only scenario prose.",
-        user: `Characters: ${charBlob}\nPrompt: ${prompt}`,
+          "You create roleplay story scenarios for multi-character casts. Preserve continuity with provided character context and selected story rules. Return only scenario prose.",
+        user: `Characters: ${charBlob}
+
+Character context:
+${storyCharacterContext}
+
+Selected system rules:
+${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
+
+Prompt: ${prompt}`,
         maxTokens: Math.min(400, Math.max(120, proxyMaxTokens)),
         lorebookIds: activeStory.assignedLorebookIds,
         stream: proxyStreamingEnabled,
@@ -3322,14 +3393,26 @@ Return only the revised synopsis.`;
       setGenError("Write scenario revision feedback first.");
       return;
     }
+    const storyCharacterContext = getStoryCharacterContext(activeStory);
+    const selectedRules = getStorySelectedSystemRules(activeStory);
     const fieldKey = `story-scenario:${activeStory.id}`;
     setGenError(null);
     setGenLoading(true);
     startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
-        system: "Revise scenario text based on feedback. Return only revised scenario.",
-        user: `Current scenario:\n${activeStory.scenario}\n\nFeedback:\n${feedback}`,
+        system: "Revise scenario text based on feedback while preserving continuity with cast context and selected system rules. Return only revised scenario.",
+        user: `Character context:
+${storyCharacterContext}
+
+Selected system rules:
+${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
+
+Current scenario:
+${activeStory.scenario}
+
+Feedback:
+${feedback}`,
         maxTokens: Math.min(450, Math.max(140, proxyMaxTokens)),
         lorebookIds: activeStory.assignedLorebookIds,
         stream: proxyStreamingEnabled,
@@ -3349,13 +3432,26 @@ Return only the revised synopsis.`;
       setGenError("Add at least one plot point first.");
       return;
     }
+    const storyCharacterContext = getStoryCharacterContext(activeStory);
+    const relationshipContext = getStoryRelationshipContext(activeStory);
+    const selectedRules = getStorySelectedSystemRules(activeStory);
     setGenError(null);
     setGenLoading(true);
     try {
       const out = await callProxyChatCompletion({
         system:
           "Expand plot points into more detailed entries, each max 30 words. Return JSON array of strings only.",
-        user: `Current plot points:\n${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}`,
+        user: `Character context:
+${storyCharacterContext}
+
+Selected system rules:
+${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
+
+Relationships:
+${relationshipContext}
+
+Current plot points:
+${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}`,
         maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
         lorebookIds: activeStory.assignedLorebookIds,
         stream: proxyStreamingEnabled,
@@ -3380,12 +3476,28 @@ Return only the revised synopsis.`;
       setGenError("Write plot point revision feedback first.");
       return;
     }
+    const storyCharacterContext = getStoryCharacterContext(activeStory);
+    const relationshipContext = getStoryRelationshipContext(activeStory);
+    const selectedRules = getStorySelectedSystemRules(activeStory);
     setGenError(null);
     setGenLoading(true);
     try {
       const out = await callProxyChatCompletion({
         system: "Revise plot point list with each entry max 30 words. Return JSON array of strings only.",
-        user: `Current points:\n${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}\n\nFeedback:\n${feedback}`,
+        user: `Character context:
+${storyCharacterContext}
+
+Selected system rules:
+${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
+
+Relationships:
+${relationshipContext}
+
+Current points:
+${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}
+
+Feedback:
+${feedback}`,
         maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
         lorebookIds: activeStory.assignedLorebookIds,
         stream: proxyStreamingEnabled,
@@ -4311,9 +4423,53 @@ Return only the revised synopsis.`;
                 })}
               </div>
             ) : storyTab === "system_rules" ? (
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-2">
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-4">
                 <div className="text-sm font-medium">System rules</div>
-                <Textarea value={storySystemRulesInput} onChange={(e) => { setStorySystemRulesInput(e.target.value); if (activeStory) updateStory(activeStory.id, { systemRules: e.target.value }); }} rows={10} />
+                <div className="grid gap-2 md:grid-cols-2">
+                  {STORY_SYSTEM_RULE_CARDS.map((rule) => {
+                    const selected = !!activeStory.selectedSystemRuleIds?.includes(rule.id);
+                    return (
+                      <button
+                        key={rule.id}
+                        type="button"
+                        className={cn(
+                          "rounded-xl border px-3 py-3 text-left text-sm transition-colors",
+                          selected
+                            ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]"
+                            : "border-[hsl(var(--border))] bg-[hsl(var(--background))]"
+                        )}
+                        onClick={() => {
+                          if (!activeStory) return;
+                          const selectedSet = new Set(activeStory.selectedSystemRuleIds || []);
+                          if (selectedSet.has(rule.id)) selectedSet.delete(rule.id);
+                          else selectedSet.add(rule.id);
+                          updateStory(activeStory.id, { selectedSystemRuleIds: Array.from(selectedSet) });
+                        }}
+                      >
+                        <div className="font-medium">{rule.label}</div>
+                        <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{rule.text}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
+                  <div className="text-sm font-medium">Selected rule list</div>
+                  {(activeStory.selectedSystemRuleIds || []).length ? (
+                    <ul className="list-disc space-y-1 pl-5 text-sm">
+                      {STORY_SYSTEM_RULE_CARDS.filter((rule) => activeStory.selectedSystemRuleIds.includes(rule.id)).map((rule) => (
+                        <li key={rule.id}>{rule.text}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="text-xs text-[hsl(var(--muted-foreground))]">No rule cards selected yet.</div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs font-medium text-[hsl(var(--muted-foreground))]">Additional custom system rules</div>
+                  <Textarea value={storySystemRulesInput} onChange={(e) => { setStorySystemRulesInput(e.target.value); if (activeStory) updateStory(activeStory.id, { systemRules: e.target.value }); }} rows={8} />
+                </div>
               </div>
             ) : storyTab === "relationships" ? (
               <div className="space-y-3">
