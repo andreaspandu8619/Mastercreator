@@ -5466,22 +5466,31 @@ ${feedback}`,
             <div className="anim-page mt-6 space-y-6">
             <div className="anim-stagger grid gap-4 md:grid-cols-3">
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <div className="mb-3 text-sm font-semibold">Characters</div>
                 <Button variant="primary" className="w-full justify-center py-3" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}>
-                  <Plus className="h-4 w-4" /> Create a new character
+                  <Plus className="h-4 w-4" /> Create new character
                 </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("characters")}>View characters</Button>
+                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("characters")}>
+                  <Library className="h-4 w-4" /> View character gallery
+                </Button>
               </div>
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <div className="mb-3 text-sm font-semibold">Stories</div>
                 <Button variant="primary" className="w-full justify-center py-3" onClick={() => navigateTo("storywriting")}>
-                  <Plus className="h-4 w-4" /> Create a new story
+                  <Plus className="h-4 w-4" /> Create new story
                 </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("my_stories")}>View stories</Button>
+                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("my_stories")}>
+                  <Library className="h-4 w-4" /> View stories
+                </Button>
               </div>
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                <Button variant="primary" className="w-full justify-center py-3" onClick={() => navigateTo("lorebooks")}>
-                  <Plus className="h-4 w-4" /> Lorebook creation
+                <div className="mb-3 text-sm font-semibold">Lorebooks</div>
+                <Button variant="primary" className="w-full justify-center py-3" onClick={createLorebook}>
+                  <Plus className="h-4 w-4" /> Create new lorebook
                 </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("lorebooks")}>View lorebooks</Button>
+                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("lorebooks")}>
+                  <BookOpen className="h-4 w-4" /> View lorebooks
+                </Button>
               </div>
             </div>
 
