@@ -35,6 +35,7 @@ type ProxyConfig = {
   temperature: number;
   contextSize: number;
   customPrompt: string;
+  streamingEnabled: boolean;
 };
 
 type ChatMessage = {
@@ -192,6 +193,7 @@ const DEFAULT_PROXY: ProxyConfig = {
   temperature: 0.9,
   contextSize: 32000,
   customPrompt: "",
+  streamingEnabled: true,
 };
 
 const PERSONALITIES: string[] = [
@@ -788,6 +790,7 @@ export default function CharacterCreatorApp() {
   const [proxyTemperatureInput, setProxyTemperatureInput] = useState(String(DEFAULT_PROXY.temperature));
   const [proxyContextSize, setProxyContextSize] = useState(DEFAULT_PROXY.contextSize);
   const [proxyCustomPrompt, setProxyCustomPrompt] = useState(DEFAULT_PROXY.customPrompt);
+  const [proxyStreamingEnabled, setProxyStreamingEnabled] = useState(DEFAULT_PROXY.streamingEnabled);
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaText, setPersonaText] = useState("");
 
@@ -796,9 +799,6 @@ export default function CharacterCreatorApp() {
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
-  const [chatStreamEnabled, setChatStreamEnabled] = useState(true);
-  const [introStreamEnabled, setIntroStreamEnabled] = useState(false);
-  const [synopsisStreamEnabled, setSynopsisStreamEnabled] = useState(false);
 
   const [query, setQuery] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -1025,6 +1025,7 @@ export default function CharacterCreatorApp() {
       const ctx = Number((savedProxy as any).contextSize);
       if (Number.isFinite(ctx) && ctx > 1) setProxyContextSize(Math.floor(ctx));
       if (typeof (savedProxy as any).customPrompt === "string") setProxyCustomPrompt((savedProxy as any).customPrompt);
+      if (typeof (savedProxy as any).streamingEnabled === "boolean") setProxyStreamingEnabled((savedProxy as any).streamingEnabled);
     }
 
     const savedPersona = localStorage.getItem(PERSONA_KEY);
@@ -1287,9 +1288,10 @@ export default function CharacterCreatorApp() {
         temperature: proxyTemperature,
         contextSize: proxyContextSize,
         customPrompt: proxyCustomPrompt,
+        streamingEnabled: proxyStreamingEnabled,
       })
     );
-  }, [proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt]);
+  }, [proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt, proxyStreamingEnabled]);
 
   useEffect(() => {
     setProxyTemperatureInput(String(proxyTemperature));
@@ -2134,6 +2136,8 @@ User prompt for improvements:
 ${prompt}`,
         maxTokens: Math.max(2000, proxyMaxTokens),
         temperature: 0.8,
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => onPatch({ content: partial }),
       });
       onPatch({ content: text });
       rememberLoreIteration(activeLorebook.id, entry.id, prompt, text);
@@ -2174,6 +2178,11 @@ ${prompt}
 Return only the revised world entry content.`,
         maxTokens: Math.max(2500, proxyMaxTokens),
         temperature: 0.85,
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) =>
+          updateLorebook(activeLorebook.id, {
+            worldEntry: { ...activeLorebook.worldEntry, content: partial, tagsRaw: "world", category: "world" },
+          }),
       });
       updateLorebook(activeLorebook.id, { worldEntry: { ...activeLorebook.worldEntry, content: text, tagsRaw: "world", category: "world" } });
       rememberLoreIteration(activeLorebook.id, activeLorebook.worldEntry.id, prompt, text);
@@ -2586,8 +2595,11 @@ Write the character's next reply to the latest user message.`;
       const reply = await callProxyChatCompletion({
         system,
         user,
-        stream: chatStreamEnabled,
+        stream: proxyStreamingEnabled,
         lorebookIds: chatCharacter.assignedLorebookIds,
+        onStreamUpdate: (partial) => {
+          setChatMessages([...newHistory, { role: "assistant" as const, content: partial }]);
+        },
       });
       const finalMessages = [...newHistory, { role: "assistant" as const, content: reply }];
       setChatMessages(finalMessages);
@@ -2659,6 +2671,8 @@ Instruction:
 ${prompt}`,
         maxTokens: Math.max(1000, proxyMaxTokens),
         lorebookIds: characterAssignedLorebookIds,
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: setBackstoryText,
       });
       setBackstoryText(text);
     } catch (e: any) {
@@ -2721,6 +2735,8 @@ Prompt:
 ${prompt}`,
         lorebookIds: activeStory.assignedLorebookIds,
         maxTokens: Math.max(400, proxyMaxTokens),
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: setStoryFirstMessageInput,
       });
       setStoryFirstMessageInput(out);
       updateStory(activeStory.id, { firstMessage: out, firstMessageStyle: storyFirstMessageStyle, systemRules: storySystemRulesInput });
@@ -2782,6 +2798,7 @@ ${prompt}`,
     temperature?: number;
     stream?: boolean;
     lorebookIds?: string[];
+    onStreamUpdate?: (text: string) => void;
   }) {
     const chatUrl = collapseWhitespace(proxyChatUrl);
     const apiKey = collapseWhitespace(proxyApiKey);
@@ -2825,6 +2842,48 @@ ${lorebookContext}` : "",
     }
 
     if (args.stream) {
+      const reader = res.body?.getReader();
+      if (reader) {
+        const decoder = new TextDecoder();
+        let merged = "";
+        let buffer = "";
+
+        const parseEventLine = (line: string) => {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data:")) return;
+          const payload = trimmed.replace(/^data:\s*/, "");
+          if (!payload || payload === "[DONE]") return;
+          let delta = "";
+          try {
+            const part = JSON.parse(payload);
+            delta =
+              part?.choices?.[0]?.delta?.content ??
+              part?.choices?.[0]?.message?.content ??
+              part?.choices?.[0]?.text ??
+              "";
+          } catch {
+            delta = payload;
+          }
+          if (!delta) return;
+          merged += delta;
+          args.onStreamUpdate?.(merged);
+        };
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() || "";
+          for (const line of lines) parseEventLine(line);
+        }
+        if (buffer) parseEventLine(buffer);
+
+        const clean = String(merged ?? "").trim();
+        if (!clean) throw new Error("No text returned by the model.");
+        return clean;
+      }
+
       const raw = await res.text();
       const lines = raw
         .split(/\r?\n/)
@@ -2845,6 +2904,7 @@ ${lorebookContext}` : "",
         } catch {
           merged += line;
         }
+        args.onStreamUpdate?.(merged);
       }
       const clean = String(merged ?? "").trim();
       if (!clean) throw new Error("No text returned by the model.");
@@ -2910,8 +2970,16 @@ ${more}`.trim();
         system,
         user,
         temperature: 0.95,
-        stream: introStreamEnabled,
+        stream: proxyStreamingEnabled,
         lorebookIds: characterAssignedLorebookIds,
+        onStreamUpdate: (partial) => {
+          setIntroMessages((prev) => {
+            const base = prev.length ? [...prev] : [""];
+            const i = clampIndex(introIndex, base.length);
+            base[i] = partial;
+            return base;
+          });
+        },
       });
       setIntroMessages((prev) => {
         const base = prev.length ? [...prev] : [""];
@@ -2941,8 +3009,9 @@ ${more}`.trim();
         user,
         maxTokens: Math.min(220, Math.max(64, proxyMaxTokens)),
         temperature: 0.9,
-        stream: synopsisStreamEnabled,
+        stream: proxyStreamingEnabled,
         lorebookIds: characterAssignedLorebookIds,
+        onStreamUpdate: (partial) => setSynopsis(partial),
       });
       setSynopsis(text);
     } catch (e: any) {
@@ -2990,6 +3059,15 @@ Return only the revised intro message.`;
         user,
         temperature: 0.9,
         lorebookIds: characterAssignedLorebookIds,
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => {
+          setIntroMessages((prev) => {
+            const base = prev.length ? [...prev] : [""];
+            const i = clampIndex(introIndex, base.length);
+            base[i] = partial;
+            return base;
+          });
+        },
       });
       setIntroMessages((prev) => {
         const base = prev.length ? [...prev] : [""];
@@ -3038,6 +3116,8 @@ Return only the revised synopsis.`;
         maxTokens: Math.min(280, Math.max(80, proxyMaxTokens)),
         temperature: 0.9,
         lorebookIds: characterAssignedLorebookIds,
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => setSynopsis(partial),
       });
       setSynopsis(text);
     } catch (e: any) {
@@ -3079,6 +3159,8 @@ Return only the revised synopsis.`;
         user: `Characters: ${charBlob}\nPrompt: ${prompt}`,
         maxTokens: Math.min(400, Math.max(120, proxyMaxTokens)),
         lorebookIds: activeStory.assignedLorebookIds,
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => updateStory(activeStory.id, { scenario: partial }),
       });
       updateStory(activeStory.id, { scenario: out });
     } catch (e: any) {
@@ -3103,6 +3185,8 @@ Return only the revised synopsis.`;
         user: `Current scenario:\n${activeStory.scenario}\n\nFeedback:\n${feedback}`,
         maxTokens: Math.min(450, Math.max(140, proxyMaxTokens)),
         lorebookIds: activeStory.assignedLorebookIds,
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => updateStory(activeStory.id, { scenario: partial }),
       });
       updateStory(activeStory.id, { scenario: out });
     } catch (e: any) {
@@ -3127,6 +3211,7 @@ Return only the revised synopsis.`;
         user: `Current plot points:\n${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}`,
         maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
         lorebookIds: activeStory.assignedLorebookIds,
+        stream: proxyStreamingEnabled,
       });
       const items = parseGeneratedBackstoryEntries(out);
       if (!items.length) throw new Error("No valid plot points returned.");
@@ -3156,6 +3241,7 @@ Return only the revised synopsis.`;
         user: `Current points:\n${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}\n\nFeedback:\n${feedback}`,
         maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
         lorebookIds: activeStory.assignedLorebookIds,
+        stream: proxyStreamingEnabled,
       });
       const items = parseGeneratedBackstoryEntries(out);
       if (!items.length) throw new Error("No valid revised plot points returned.");
@@ -3455,14 +3541,6 @@ Return only the revised synopsis.`;
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-lg font-semibold">Chat with {chatCharacter.name}</div>
-                    <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
-                      <input
-                        type="checkbox"
-                        checked={chatStreamEnabled}
-                        onChange={(e) => setChatStreamEnabled(e.target.checked)}
-                      />
-                      Stream text
-                    </label>
                   </div>
                   <div className="max-h-[62vh] space-y-2 overflow-auto rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
                     {chatMessages.length ? (
@@ -4911,14 +4989,6 @@ Return only the revised synopsis.`;
 
                       <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
                         <div className="text-sm font-medium">Generate with Proxy</div>
-                        <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
-                          <input
-                            type="checkbox"
-                            checked={introStreamEnabled}
-                            onChange={(e) => setIntroStreamEnabled(e.target.checked)}
-                          />
-                          Stream text
-                        </label>
                         <Textarea
                           value={introPrompt}
                           onChange={(e) => setIntroPrompt(e.target.value)}
@@ -4980,14 +5050,6 @@ Return only the revised synopsis.`;
                           <Sparkles className="h-4 w-4" /> {genLoading ? "Generating…" : "Generate"}
                         </Button>
                       </div>
-                      <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
-                        <input
-                          type="checkbox"
-                          checked={synopsisStreamEnabled}
-                          onChange={(e) => setSynopsisStreamEnabled(e.target.checked)}
-                        />
-                        Stream text
-                      </label>
                       <Textarea
                         value={synopsis}
                         onChange={(e) => setSynopsis(e.target.value)}
@@ -5278,7 +5340,7 @@ Return only the revised synopsis.`;
         </Modal>
 
         <Modal open={proxyOpen} onClose={() => setProxyOpen(false)} title="Proxy" widthClass="max-w-xl">
-          <div className="space-y-4">
+          <div className="max-h-[80vh] space-y-4 overflow-y-auto pr-1">
             <div className="text-sm text-[hsl(var(--muted-foreground))]">
               You can type any OpenAI-compatible Chat Completions URL (Chutes, OpenRouter, etc.).
             </div>
@@ -5344,6 +5406,19 @@ Return only the revised synopsis.`;
                 rows={4}
                 placeholder="Optional global instructions for the model (e.g., writing style, tone, pacing, formatting rules)."
               />
+            </div>
+            <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
+              <label className="flex items-center justify-between gap-3 text-sm font-medium">
+                <span>Enable text streaming</span>
+                <input
+                  type="checkbox"
+                  checked={proxyStreamingEnabled}
+                  onChange={(e) => setProxyStreamingEnabled(e.target.checked)}
+                />
+              </label>
+              <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
+                When enabled, all LLM-generated fields stream text in real time.
+              </div>
             </div>
             <div className="space-y-2">
               <div className="text-sm font-medium">Context size (tokens)</div>
