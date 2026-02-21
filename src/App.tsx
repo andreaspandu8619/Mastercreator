@@ -941,6 +941,8 @@ export default function CharacterCreatorApp() {
   const [storyFirstMessageStyle, setStoryFirstMessageStyle] = useState<"realistic" | "dramatic" | "melancholic">("realistic");
   const [storyFirstMessagePrompt, setStoryFirstMessagePrompt] = useState("");
   const [storyFirstMessageRevisionPrompt, setStoryFirstMessageRevisionPrompt] = useState("");
+  const [storyFirstMessageHistories, setStoryFirstMessageHistories] = useState<string[][]>([[""]]);
+  const [storyFirstMessageHistoryIndices, setStoryFirstMessageHistoryIndices] = useState<number[]>([0]);
   const [storySystemRulesInput, setStorySystemRulesInput] = useState("");
 
   const [introMessages, setIntroMessages] = useState<string[]>([""]);
@@ -1910,10 +1912,12 @@ export default function CharacterCreatorApp() {
     const selectedIdx = clampIndex(activeStory?.selectedFirstMessageIndex || 0, versions.length);
     setStoryImageDataUrl(activeStory?.imageDataUrl || "");
     setStoryFirstMessageInput(versions[selectedIdx] || "");
+    setStoryFirstMessageHistories(versions.map((text) => [text || ""]));
+    setStoryFirstMessageHistoryIndices(versions.map(() => 0));
     setStoryFirstMessageRevisionPrompt(`Current first message context:\n${versions[selectedIdx] || "(empty)"}\n\nRevision instructions:\n`);
     setStoryFirstMessageStyle(activeStory?.firstMessageStyle || "realistic");
     setStorySystemRulesInput(activeStory?.systemRules || "");
-  }, [activeStory?.id, activeStory?.imageDataUrl, activeStory?.firstMessage, activeStory?.firstMessageStyle, activeStory?.systemRules, activeStory?.selectedFirstMessageIndex, activeStory?.firstMessageVersions]);
+  }, [activeStory?.id]);
 
   const latestCharacter = useMemo(
     () => (characters.length ? [...characters].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] : null),
@@ -2884,12 +2888,25 @@ ${prompt}`,
     const storyCharacterContext = getStoryCharacterContext(activeStory);
     const relationshipContext = getStoryRelationshipContext(activeStory);
     const selectedRules = getStorySelectedSystemRules(activeStory);
-    let targetIndex = 0;
+    const targetIndex = clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1));
     const baseVersions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
-    targetIndex = baseVersions.length;
-    const nextVersions = [...baseVersions, ""];
-    updateStory(activeStory.id, { firstMessageVersions: nextVersions, selectedFirstMessageIndex: targetIndex, firstMessage: "" });
-    setStoryFirstMessageInput("");
+    const baseline = baseVersions[targetIndex] || "";
+    if (collapseWhitespace(baseline)) {
+      const ok = window.confirm("This message already has text. Generating will overwrite it. Use revise to refine instead. Continue?");
+      if (!ok) return;
+    }
+    setStoryFirstMessageHistories((prev) => {
+      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      while (base.length <= targetIndex) base.push([""]);
+      base[targetIndex].push(baseline);
+      return base;
+    });
+    setStoryFirstMessageHistoryIndices((prev) => {
+      const base = prev.length ? [...prev] : [0];
+      while (base.length <= targetIndex) base.push(0);
+      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
+      return base;
+    });
     setGenError(null);
     setGenLoading(true);
     try {
@@ -2923,8 +2940,15 @@ ${prompt}`,
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => {
           setStoryFirstMessageInput(partial);
+          setStoryFirstMessageHistories((prev) => {
+            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+            while (base.length <= targetIndex) base.push([""]);
+            const history = base[targetIndex];
+            history[history.length - 1] = partial;
+            return base;
+          });
           updateStory(activeStory.id, {
-            firstMessageVersions: nextVersions.map((m, i) => (i === targetIndex ? partial : m)),
+            firstMessageVersions: baseVersions.map((m, i) => (i === targetIndex ? partial : m)),
             selectedFirstMessageIndex: targetIndex,
             firstMessage: partial,
             firstMessageStyle: storyFirstMessageStyle,
@@ -2933,8 +2957,14 @@ ${prompt}`,
         },
       });
       setStoryFirstMessageInput(out);
+      setStoryFirstMessageHistories((prev) => {
+        const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+        while (base.length <= targetIndex) base.push([""]);
+        base[targetIndex][base[targetIndex].length - 1] = out;
+        return base;
+      });
       updateStory(activeStory.id, {
-        firstMessageVersions: nextVersions.map((m, i) => (i === targetIndex ? out : m)),
+        firstMessageVersions: baseVersions.map((m, i) => (i === targetIndex ? out : m)),
         selectedFirstMessageIndex: targetIndex,
         firstMessage: out,
         firstMessageStyle: storyFirstMessageStyle,
@@ -2970,10 +3000,20 @@ ${prompt}`,
     const selectedRules = getStorySelectedSystemRules(activeStory);
 
     const baseVersions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
-    const targetIndex = baseVersions.length;
-    const nextVersions = [...baseVersions, ""];
-    updateStory(activeStory.id, { firstMessageVersions: nextVersions, selectedFirstMessageIndex: targetIndex, firstMessage: "" });
-    setStoryFirstMessageInput("");
+    const targetIndex = clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, baseVersions.length));
+    const baseline = baseVersions[targetIndex] || "";
+    setStoryFirstMessageHistories((prev) => {
+      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      while (base.length <= targetIndex) base.push([""]);
+      base[targetIndex].push(baseline);
+      return base;
+    });
+    setStoryFirstMessageHistoryIndices((prev) => {
+      const base = prev.length ? [...prev] : [0];
+      while (base.length <= targetIndex) base.push(0);
+      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
+      return base;
+    });
     setGenError(null);
     setGenLoading(true);
     try {
@@ -2985,8 +3025,15 @@ ${prompt}`,
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => {
           setStoryFirstMessageInput(partial);
+          setStoryFirstMessageHistories((prev) => {
+            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+            while (base.length <= targetIndex) base.push([""]);
+            const history = base[targetIndex];
+            history[history.length - 1] = partial;
+            return base;
+          });
           updateStory(activeStory.id, {
-            firstMessageVersions: nextVersions.map((m, i) => (i === targetIndex ? partial : m)),
+            firstMessageVersions: baseVersions.map((m, i) => (i === targetIndex ? partial : m)),
             selectedFirstMessageIndex: targetIndex,
             firstMessage: partial,
             firstMessageStyle: storyFirstMessageStyle,
@@ -2995,8 +3042,14 @@ ${prompt}`,
         },
       });
       setStoryFirstMessageInput(out);
+      setStoryFirstMessageHistories((prev) => {
+        const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+        while (base.length <= targetIndex) base.push([""]);
+        base[targetIndex][base[targetIndex].length - 1] = out;
+        return base;
+      });
       updateStory(activeStory.id, {
-        firstMessageVersions: nextVersions.map((m, i) => (i === targetIndex ? out : m)),
+        firstMessageVersions: baseVersions.map((m, i) => (i === targetIndex ? out : m)),
         selectedFirstMessageIndex: targetIndex,
         firstMessage: out,
         firstMessageStyle: storyFirstMessageStyle,
@@ -4604,6 +4657,16 @@ ${feedback}`,
                       const next = [...versions, ""];
                       updateStory(activeStory.id, { firstMessageVersions: next, selectedFirstMessageIndex: idx, firstMessage: "" });
                       setStoryFirstMessageInput("");
+                      setStoryFirstMessageHistories((prev) => {
+                        const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+                        base.push([""]);
+                        return base;
+                      });
+                      setStoryFirstMessageHistoryIndices((prev) => {
+                        const base = prev.length ? [...prev] : [0];
+                        base.push(0);
+                        return base;
+                      });
                     }}
                   >
                     <Plus className="h-4 w-4" /> New
@@ -4614,28 +4677,96 @@ ${feedback}`,
                   <Button
                     variant="secondary"
                     type="button"
+                    disabled={(activeStory.selectedFirstMessageIndex || 0) <= 0}
                     onClick={() => {
                       if (!activeStory) return;
                       const versions = activeStory.firstMessageVersions?.length ? activeStory.firstMessageVersions : [activeStory.firstMessage || ""];
                       const idx = clampIndex((activeStory.selectedFirstMessageIndex || 0) - 1, versions.length);
                       updateStory(activeStory.id, { selectedFirstMessageIndex: idx, firstMessage: versions[idx] || "" });
                       setStoryFirstMessageInput(versions[idx] || "");
+                      setStoryFirstMessageRevisionPrompt(`Current first message context:\n${versions[idx] || "(empty)"}\n\nRevision instructions:\n`);
                     }}
                   >
-                    <ChevronLeft className="h-4 w-4" /> Roll back
+                    <ChevronLeft className="h-4 w-4" /> Prev message
                   </Button>
                   <div className="text-sm">
-                    Version <span className="font-semibold">{(activeStory.selectedFirstMessageIndex || 0) + 1}</span> / {Math.max(1, activeStory.firstMessageVersions?.length || 1)}
+                    Message <span className="font-semibold">{(activeStory.selectedFirstMessageIndex || 0) + 1}</span> / {Math.max(1, activeStory.firstMessageVersions?.length || 1)}
                   </div>
                   <Button
                     variant="secondary"
                     type="button"
+                    disabled={(activeStory.selectedFirstMessageIndex || 0) >= Math.max(1, activeStory.firstMessageVersions?.length || 1) - 1}
                     onClick={() => {
                       if (!activeStory) return;
                       const versions = activeStory.firstMessageVersions?.length ? activeStory.firstMessageVersions : [activeStory.firstMessage || ""];
                       const idx = clampIndex((activeStory.selectedFirstMessageIndex || 0) + 1, versions.length);
                       updateStory(activeStory.id, { selectedFirstMessageIndex: idx, firstMessage: versions[idx] || "" });
                       setStoryFirstMessageInput(versions[idx] || "");
+                      setStoryFirstMessageRevisionPrompt(`Current first message context:\n${versions[idx] || "(empty)"}\n\nRevision instructions:\n`);
+                    }}
+                  >
+                    Next message <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    disabled={(() => {
+                      const i = clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1));
+                      const history = storyFirstMessageHistories[i] || [storyFirstMessageInput || ""];
+                      const current = clampIndex(storyFirstMessageHistoryIndices[i] || 0, history.length);
+                      return current <= 0;
+                    })()}
+                    onClick={() => {
+                      const i = clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1));
+                      const history = storyFirstMessageHistories[i] || [storyFirstMessageInput || ""];
+                      const current = clampIndex(storyFirstMessageHistoryIndices[i] || 0, history.length);
+                      const nextIdx = clampIndex(current - 1, history.length);
+                      const nextText = history[nextIdx] || "";
+                      setStoryFirstMessageHistoryIndices((prev) => {
+                        const base = prev.length ? [...prev] : [0];
+                        while (base.length <= i) base.push(0);
+                        base[i] = nextIdx;
+                        return base;
+                      });
+                      setStoryFirstMessageInput(nextText);
+                      const versions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
+                      versions[i] = nextText;
+                      updateStory(activeStory.id, { firstMessage: nextText, firstMessageVersions: versions, selectedFirstMessageIndex: i });
+                    }}
+                  >
+                    <ChevronLeft className="h-4 w-4" /> Roll back
+                  </Button>
+                  <div className="text-sm text-[hsl(var(--muted-foreground))]">
+                    Iteration {(storyFirstMessageHistoryIndices[clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1))] || 0) + 1} / {Math.max(1, storyFirstMessageHistories[clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1))]?.length || 1)}
+                  </div>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    disabled={(() => {
+                      const i = clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1));
+                      const history = storyFirstMessageHistories[i] || [storyFirstMessageInput || ""];
+                      const current = clampIndex(storyFirstMessageHistoryIndices[i] || 0, history.length);
+                      return current >= history.length - 1;
+                    })()}
+                    onClick={() => {
+                      const i = clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1));
+                      const history = storyFirstMessageHistories[i] || [storyFirstMessageInput || ""];
+                      const current = clampIndex(storyFirstMessageHistoryIndices[i] || 0, history.length);
+                      const nextIdx = clampIndex(current + 1, history.length);
+                      const nextText = history[nextIdx] || "";
+                      setStoryFirstMessageHistoryIndices((prev) => {
+                        const base = prev.length ? [...prev] : [0];
+                        while (base.length <= i) base.push(0);
+                        base[i] = nextIdx;
+                        return base;
+                      });
+                      setStoryFirstMessageInput(nextText);
+                      const versions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
+                      versions[i] = nextText;
+                      updateStory(activeStory.id, { firstMessage: nextText, firstMessageVersions: versions, selectedFirstMessageIndex: i });
                     }}
                   >
                     Roll forward <ChevronRight className="h-4 w-4" />
@@ -4667,6 +4798,14 @@ ${feedback}`,
                     const versions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
                     const idx = clampIndex(activeStory.selectedFirstMessageIndex || 0, versions.length);
                     versions[idx] = next;
+                    setStoryFirstMessageHistories((prev) => {
+                      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+                      while (base.length <= idx) base.push([""]);
+                      const history = base[idx];
+                      const iterIdx = clampIndex(storyFirstMessageHistoryIndices[idx] || 0, history.length);
+                      history[iterIdx] = next;
+                      return base;
+                    });
                     updateStory(activeStory.id, { firstMessage: next, firstMessageStyle: storyFirstMessageStyle, firstMessageVersions: versions, selectedFirstMessageIndex: idx });
                   }}
                   rows={10}
