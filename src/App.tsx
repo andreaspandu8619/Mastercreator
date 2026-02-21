@@ -9,6 +9,7 @@ import {
   Plus,
   Search,
   SlidersHorizontal,
+  Settings,
   Sun,
   Trash2,
   MessageCircle,
@@ -856,6 +857,7 @@ export default function CharacterCreatorApp() {
   const [activeItemEntryId, setActiveItemEntryId] = useState<string | null>(null);
   const [activeSpecialEntryId, setActiveSpecialEntryId] = useState<string | null>(null);
   const [storyDraftCharacterIds, setStoryDraftCharacterIds] = useState<string[]>([]);
+  const [storyDraftMobileSelection, setStoryDraftMobileSelection] = useState<string[]>([]);
   const [storySidebarHidden, setStorySidebarHidden] = useState(false);
   const [activeStoryId, setActiveStoryId] = useState<string | null>(null);
   const [storyTab, setStoryTab] = useState<StoryTab>("scenario");
@@ -1025,6 +1027,14 @@ export default function CharacterCreatorApp() {
   const [genLoading, setGenLoading] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [proxyProgress, setProxyProgress] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setIsMobile(window.innerWidth < 768);
+    sync();
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
 
   function startGeneratedTextPage(fieldKey: string) {
     const pageId = uid();
@@ -1123,7 +1133,6 @@ export default function CharacterCreatorApp() {
     );
   }
 
-  const fileRef = useRef<HTMLInputElement | null>(null);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
   const storyImageFileRef = useRef<HTMLInputElement | null>(null);
   const lorebookCoverFileRef = useRef<HTMLInputElement | null>(null);
@@ -1748,35 +1757,6 @@ export default function CharacterCreatorApp() {
     });
   }
 
-  function exportAll() {
-    downloadJSON(
-      "characters_" + new Date().toISOString().slice(0, 10) + ".json",
-      characters
-    );
-  }
-
-  async function handleImportFile(file: File) {
-    const text = await file.text();
-    const parsed = safeParseJSON(text);
-    if (!Array.isArray(parsed)) return alert("Invalid file. Import a JSON export from this app.");
-
-    const cleaned: Character[] = parsed.map(normalizeCharacter).filter(Boolean) as Character[];
-
-    setCharacters((prev) => {
-      const map = new Map<string, Character>();
-      for (const c of prev) map.set(c.id, c);
-      for (const c of cleaned) map.set(c.id, c);
-      return Array.from(map.values()).sort((a, b) =>
-        (b.updatedAt || "").localeCompare(a.updatedAt || "")
-      );
-    });
-
-    try {
-      await idbPutManyCharacters(cleaned);
-    } catch {}
-
-    navigateTo("library");
-  }
 
   function loadCharacterIntoForm(c: Character) {
     setSelectedId(c.id);
@@ -1977,6 +1957,11 @@ export default function CharacterCreatorApp() {
     );
     setSaveToastOpen(true);
     window.setTimeout(() => setSaveToastOpen(false), 1400);
+  }
+
+  function deleteStory(id: string) {
+    setStories((prev) => prev.filter((s) => s.id !== id));
+    if (activeStoryId === id) setActiveStoryId(null);
   }
 
 
@@ -4028,14 +4013,15 @@ ${feedback}`,
         }
       `}</style>
 
-      <div className="mx-auto max-w-7xl">
+      <div className="mx-auto max-w-7xl pt-28 md:pt-32">
         {storageError ? (
           <div className="mt-4 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-sm">
             <div className="font-semibold">Storage issue</div>
             <div className="mt-1 text-[hsl(var(--muted-foreground))]">{storageError}</div>
           </div>
         ) : null}
-        <header className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <header className="fixed inset-x-0 top-0 z-50 border-b border-[hsl(var(--border))] bg-[hsl(var(--background))/0.95] backdrop-blur">
+          <div className="mx-auto flex w-full max-w-7xl flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:justify-between md:px-8">
           <div className="flex items-center gap-2">
             {page !== "library" && canGoBack ? (
               <Button variant="secondary" onClick={goBack}>
@@ -4051,48 +4037,46 @@ ${feedback}`,
             </button>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-            <Button variant="secondary" onClick={() => setProxyOpen(true)}>
-              <SlidersHorizontal className="h-4 w-4" /> Proxy
-            </Button>
+            <details className="relative">
+              <summary className="clickable list-none cursor-pointer rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-sm font-medium">Characters</summary>
+              <div className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
+                <Button className="w-full justify-start" variant="secondary" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}><Plus className="h-4 w-4" /> Create new character</Button>
+                <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => navigateTo("characters")}><Library className="h-4 w-4" /> View character gallery</Button>
+              </div>
+            </details>
+
+            <details className="relative">
+              <summary className="clickable list-none cursor-pointer rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-sm font-medium">Stories</summary>
+              <div className="absolute right-0 z-50 mt-2 w-52 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
+                <Button className="w-full justify-start" variant="secondary" onClick={() => navigateTo("storywriting")}><Plus className="h-4 w-4" /> Create new story</Button>
+                <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => navigateTo("my_stories")}><Library className="h-4 w-4" /> View stories</Button>
+              </div>
+            </details>
+
+            <details className="relative">
+              <summary className="clickable list-none cursor-pointer rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-sm font-medium">Lorebooks</summary>
+              <div className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
+                <Button className="w-full justify-start" variant="secondary" onClick={createLorebook}><Plus className="h-4 w-4" /> Create new lorebook</Button>
+                <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => navigateTo("lorebooks")}><BookOpen className="h-4 w-4" /> View lorebooks</Button>
+              </div>
+            </details>
+
+            <details className="relative">
+              <summary className="clickable list-none cursor-pointer rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-sm font-medium"><Settings className="inline h-4 w-4" /> Settings</summary>
+              <div className="absolute right-0 z-50 mt-2 w-48 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
+                <Button className="w-full justify-start" variant="secondary" onClick={() => setProxyOpen(true)}><SlidersHorizontal className="h-4 w-4" /> Proxy</Button>
+                <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}>
+                  {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
+                </Button>
+              </div>
+            </details>
             <Button variant="secondary" onClick={() => setPersonaOpen(true)}>
               <UserRound className="h-4 w-4" /> Persona
             </Button>
             <Button variant="secondary" onClick={() => navigateTo("chat")}>
               <MessageCircle className="h-4 w-4" /> Chats
             </Button>
-            <Button variant="secondary" onClick={() => navigateTo("storywriting")}>
-              <BookOpen className="h-4 w-4" /> Storywriting
-            </Button>
-            <Button variant="secondary" onClick={() => navigateTo("my_stories")}>
-              <Library className="h-4 w-4" /> My Stories
-            </Button>
-            <Button variant="secondary" onClick={() => navigateTo("lorebooks")}>
-              <BookOpen className="h-4 w-4" /> Lorebooks
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
-            >
-              {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-              {theme === "light" ? "Dark" : "Light"}
-            </Button>
-            <Button variant="secondary" onClick={exportAll}>
-              <Download className="h-4 w-4" /> Export
-            </Button>
-            <Button variant="secondary" onClick={() => fileRef.current?.click()}>
-              <Upload className="h-4 w-4" /> Import
-            </Button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/json"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) handleImportFile(f);
-                e.currentTarget.value = "";
-              }}
-            />
+          </div>
           </div>
         </header>
 
@@ -4209,6 +4193,38 @@ ${feedback}`,
               </Button>
             </div>
 
+            {isMobile ? (
+              <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <div className="text-sm font-semibold">Select cast members</div>
+                <div className="space-y-2">
+                  {characters.map((c) => (
+                    <label key={c.id} className="flex items-center gap-2 rounded-lg border border-[hsl(var(--border))] p-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={storyDraftMobileSelection.includes(c.id)}
+                        onChange={(e) => {
+                          setStoryDraftMobileSelection((prev) => e.target.checked ? [...prev, c.id] : prev.filter((id) => id !== c.id));
+                        }}
+                      />
+                      <span>{c.name}</span>
+                    </label>
+                  ))}
+                  {!characters.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No characters available.</div> : null}
+                </div>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    const ids = Array.from(new Set([...storyDraftCharacterIds, ...storyDraftMobileSelection]));
+                    setStoryDraftCharacterIds(ids);
+                    setStoryDraftMobileSelection([]);
+                  }}
+                  disabled={!storyDraftMobileSelection.length}
+                >
+                  Confirm add to cast
+                </Button>
+                <div className="text-xs text-[hsl(var(--muted-foreground))]">Current cast: {storyDraftCharacterIds.length}</div>
+              </div>
+            ) : (
             <div className="grid gap-4 lg:grid-cols-4">
               {!storySidebarHidden ? (
                 <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 lg:col-span-1">
@@ -4279,6 +4295,7 @@ ${feedback}`,
                 ) : null}
               </div>
             </div>
+            )}
 
             <div className="fixed bottom-4 right-4">
               <Button variant="primary" className="rounded-full px-6 py-3" onClick={proceedStoryDraft}>
@@ -4302,7 +4319,7 @@ ${feedback}`,
         ) : page === "my_stories" ? (
           <div className="anim-page mt-6 space-y-4">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-xl font-semibold">My Stories</div>
+              <div className="text-xl font-semibold">Stories</div>
               <div className="flex gap-2">
                 <Button variant="primary" onClick={() => navigateTo("storywriting")}>
                   <Plus className="h-4 w-4" /> Create
@@ -4312,22 +4329,19 @@ ${feedback}`,
                 </Button>
               </div>
             </div>
-            <div className="space-y-2">
+            <div className="anim-stagger grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {stories.map((s) => (
-                <div key={s.id} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <div className="font-medium">{s.title}</div>
-                      <div className="text-xs text-[hsl(var(--muted-foreground))]">{new Date(s.updatedAt).toLocaleString()}</div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
+                <div key={s.id} className="overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]">
+                  <div className="relative aspect-[4/3] border-b border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                    {s.imageDataUrl ? <img src={s.imageDataUrl} alt={s.title} className="absolute inset-0 h-full w-full object-cover" /> : null}
+                  </div>
+                  <div className="p-3">
+                    <div className="font-medium">{s.title}</div>
+                    <div className="text-xs text-[hsl(var(--muted-foreground))]">{new Date(s.updatedAt).toLocaleString()}</div>
+                    <div className="mt-3 flex flex-wrap gap-2">
                       <Button variant="secondary" onClick={() => { setActiveStoryId(s.id); navigateTo("story_editor"); }}>Open</Button>
-                      <Button variant="secondary" onClick={() => downloadJSON((filenameSafe(s.title) || "story") + ".json", s)}>
-                        <Download className="h-4 w-4" /> JSON
-                      </Button>
-                      <Button variant="secondary" onClick={() => exportStoryTxt(s)}>
-                        <Download className="h-4 w-4" /> TXT
-                      </Button>
+                      <Button variant="secondary" onClick={() => exportStoryTxt(s)}><Download className="h-4 w-4" /> TXT</Button>
+                      <Button variant="danger" onClick={() => { if (window.confirm(`Delete ${s.title}?`)) deleteStory(s.id); }}><Trash2 className="h-4 w-4" /> Delete</Button>
                     </div>
                   </div>
                 </div>
@@ -4642,7 +4656,7 @@ ${feedback}`,
                 <div className="text-sm text-[hsl(var(--muted-foreground))]">Scenario • Relationships • Plot Points</div>
               </div>
               <div className="flex gap-2">
-                <Button variant="secondary" onClick={() => navigateTo("my_stories")}>My Stories</Button>
+                <Button variant="secondary" onClick={() => navigateTo("my_stories")}>Stories</Button>
                 <Button variant="secondary" onClick={() => activeStory && downloadJSON((filenameSafe(activeStory.title) || "story") + ".json", activeStory)}>
                   <Download className="h-4 w-4" /> JSON
                 </Button>
@@ -4970,10 +4984,17 @@ ${feedback}`,
               </div>
             ) : storyTab === "relationships" ? (
               <div className="space-y-3">
-                <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                  <div className="mb-3 text-sm text-[hsl(var(--muted-foreground))]">Build one-way visual links between cast cards in the full relationship board.</div>
-                  <Button variant="secondary" onClick={() => navigateTo("story_relationship_board")}>Open Relationship Builder</Button>
-                </div>
+                {!isMobile ? (
+                  <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                    <div className="mb-3 text-sm text-[hsl(var(--muted-foreground))]">Build relationship links on the full relationship board.</div>
+                    <Button variant="secondary" onClick={() => navigateTo("story_relationship_board")}>Open Relationship Builder</Button>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                    <div className="mb-3 text-sm text-[hsl(var(--muted-foreground))]">Mobile mode: create relationships directly from cards using the editor below.</div>
+                    <Button variant="secondary" onClick={() => { setSelectedRelationshipId(null); setStoryRelFromId(activeStory.characterIds[0] || ""); setStoryRelToId(activeStory.characterIds[1] || ""); setStoryRelAlignment("Neutral"); setStoryRelType("Platonic"); setStoryRelDetails(""); setStoryRelationshipEditorOpen(true); }}>Create new relationship</Button>
+                  </div>
+                )}
                 <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                   <div className="mb-2 text-sm font-medium">Relationships</div>
                   {activeStory.relationships.length ? (
