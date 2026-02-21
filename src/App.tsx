@@ -945,6 +945,8 @@ export default function CharacterCreatorApp() {
 
   const [introMessages, setIntroMessages] = useState<string[]>([""]);
   const [introIndex, setIntroIndex] = useState(0);
+  const [introVersionHistories, setIntroVersionHistories] = useState<string[][]>([[""]]);
+  const [introVersionIndices, setIntroVersionIndices] = useState<number[]>([0]);
   const [introPrompt, setIntroPrompt] = useState("");
 
   useEffect(() => {
@@ -1525,6 +1527,8 @@ export default function CharacterCreatorApp() {
 
     setIntroMessages([""]);
     setIntroIndex(0);
+    setIntroVersionHistories([[""]]);
+    setIntroVersionIndices([0]);
     setIntroPrompt("");
 
     setIntroRevisionPrompt("");
@@ -1790,6 +1794,8 @@ export default function CharacterCreatorApp() {
         : [""];
     setIntroMessages(im);
     setIntroIndex(clampIndex(c.selectedIntroIndex ?? 0, im.length));
+    setIntroVersionHistories(im.map((text) => [text || ""]));
+    setIntroVersionIndices(im.map(() => 0));
     setIntroPrompt("");
     setCharacterAssignedLorebookIds(Array.isArray(c.assignedLorebookIds) ? c.assignedLorebookIds : []);
 
@@ -2698,8 +2704,9 @@ Return only the revised world entry content.`,
 
   function saveRelationshipEdge() {
     if (!activeStory || !storyRelFromId || !storyRelToId) return;
+    const relId = selectedRelationshipId || uid();
     const rel: StoryRelationship = {
-      id: uid(),
+      id: relId,
       fromCharacterId: storyRelFromId,
       toCharacterId: storyRelToId,
       alignment: storyRelAlignment,
@@ -2707,9 +2714,21 @@ Return only the revised world entry content.`,
       details: storyRelDetails,
       createdAt: new Date().toISOString(),
     };
+    const others = activeStory.relationships.filter((r) => r.id !== relId);
     updateStory(activeStory.id, {
-      relationships: [rel, ...activeStory.relationships],
+      relationships: [rel, ...others],
     });
+    setSelectedRelationshipId(relId);
+    setPendingRelationshipEdge(null);
+    setStoryRelationshipEditorOpen(false);
+  }
+
+  function deleteSelectedRelationship() {
+    if (!activeStory || !selectedRelationshipId) return;
+    updateStory(activeStory.id, {
+      relationships: activeStory.relationships.filter((r) => r.id !== selectedRelationshipId),
+    });
+    setSelectedRelationshipId(null);
     setPendingRelationshipEdge(null);
     setStoryRelationshipEditorOpen(false);
   }
@@ -3207,13 +3226,29 @@ ${more}`.trim();
 
     const user = `Character info:\n${getCharacterSummaryForLLM()}\n\nUser prompt:\n${userPrompt}\n\nReturn ONLY the intro message text.`;
 
-    let targetIndex = 0;
-    setIntroMessages((prev) => {
-      const base = prev.length ? [...prev] : [""];
-      targetIndex = base.length;
-      return [...base, ""];
+    const targetIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
+    const existing = introMessages[targetIndex] || "";
+    if (collapseWhitespace(existing)) {
+      const ok = window.confirm(
+        "This intro already has text. Generating will overwrite this intro. Use the revise box to refine instead. Continue?"
+      );
+      if (!ok) return;
+    }
+
+    const baseline = existing;
+    setIntroVersionHistories((prev) => {
+      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      while (base.length <= targetIndex) base.push([""]);
+      const history = base[targetIndex];
+      history.push(baseline);
+      return base;
     });
-    setIntroIndex(targetIndex);
+    setIntroVersionIndices((prev) => {
+      const base = prev.length ? [...prev] : [0];
+      while (base.length <= targetIndex) base.push(0);
+      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
+      return base;
+    });
     setGenLoading(true);
     try {
       const text = await callProxyChatCompletion({
@@ -3223,6 +3258,14 @@ ${more}`.trim();
         stream: proxyStreamingEnabled,
         lorebookIds: characterAssignedLorebookIds,
         onStreamUpdate: (partial) => {
+          setIntroVersionHistories((prev) => {
+            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+            while (base.length <= targetIndex) base.push([""]);
+            const history = base[targetIndex];
+            if (!history.length) history.push("");
+            history[history.length - 1] = partial;
+            return base;
+          });
           setIntroMessages((prev) => {
             const base = prev.length ? [...prev] : [""];
             const i = clampIndex(targetIndex, base.length);
@@ -3235,6 +3278,14 @@ ${more}`.trim();
         const base = prev.length ? [...prev] : [""];
         const i = clampIndex(targetIndex, base.length);
         base[i] = text;
+        return base;
+      });
+      setIntroVersionHistories((prev) => {
+        const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+        while (base.length <= targetIndex) base.push([""]);
+        const history = base[targetIndex];
+        if (!history.length) history.push(text);
+        else history[history.length - 1] = text;
         return base;
       });
     } catch (e: any) {
@@ -3304,13 +3355,20 @@ ${feedback}
 
 Return only the revised intro message.`;
 
-    let targetIndex = 0;
-    setIntroMessages((prev) => {
-      const base = prev.length ? [...prev] : [""];
-      targetIndex = base.length;
-      return [...base, ""];
+    const targetIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
+    setIntroVersionHistories((prev) => {
+      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      while (base.length <= targetIndex) base.push([""]);
+      const history = base[targetIndex];
+      history.push(currentIntro);
+      return base;
     });
-    setIntroIndex(targetIndex);
+    setIntroVersionIndices((prev) => {
+      const base = prev.length ? [...prev] : [0];
+      while (base.length <= targetIndex) base.push(0);
+      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
+      return base;
+    });
     setGenLoading(true);
     try {
       const text = await callProxyChatCompletion({
@@ -3320,6 +3378,14 @@ Return only the revised intro message.`;
         lorebookIds: characterAssignedLorebookIds,
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => {
+          setIntroVersionHistories((prev) => {
+            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+            while (base.length <= targetIndex) base.push([""]);
+            const history = base[targetIndex];
+            if (!history.length) history.push("");
+            history[history.length - 1] = partial;
+            return base;
+          });
           setIntroMessages((prev) => {
             const base = prev.length ? [...prev] : [""];
             const i = clampIndex(targetIndex, base.length);
@@ -3332,6 +3398,14 @@ Return only the revised intro message.`;
         const base = prev.length ? [...prev] : [""];
         const i = clampIndex(targetIndex, base.length);
         base[i] = text;
+        return base;
+      });
+      setIntroVersionHistories((prev) => {
+        const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+        while (base.length <= targetIndex) base.push([""]);
+        const history = base[targetIndex];
+        if (!history.length) history.push(text);
+        else history[history.length - 1] = text;
         return base;
       });
     } catch (e: any) {
@@ -3392,6 +3466,16 @@ Return only the revised synopsis.`;
     setIntroMessages((prev) => {
       const next = prev.length ? [...prev] : [""];
       next.push("");
+      return next;
+    });
+    setIntroVersionHistories((prev) => {
+      const next = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      next.push([""]);
+      return next;
+    });
+    setIntroVersionIndices((prev) => {
+      const next = prev.length ? [...prev] : [0];
+      next.push(0);
       return next;
     });
     setIntroIndex((prev) => prev + 1);
@@ -4733,6 +4817,7 @@ ${feedback}`,
                     </div>
                     <div className="flex gap-2">
                       <Button variant="primary" onClick={saveRelationshipEdge}>Save relation</Button>
+                      {selectedRelationshipId ? <Button variant="secondary" onClick={deleteSelectedRelationship}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
                       <Button variant="secondary" onClick={closeRelationshipEditor}>Close</Button>
                     </div>
                   </div>
@@ -4860,18 +4945,33 @@ ${feedback}`,
                         const fromName = r.fromCharacterId === USER_NODE_ID ? "USER" : (characters.find((c) => c.id === r.fromCharacterId)?.name || "?");
                         const toName = r.toCharacterId === USER_NODE_ID ? "USER" : (characters.find((c) => c.id === r.toCharacterId)?.name || "?");
                         return (
-                          <button
+                          <div
                             key={r.id}
-                            type="button"
-                            onClick={() => selectExistingRelationship(r)}
                             className={cn(
-                              "w-full rounded-lg border px-2 py-2 text-left text-xs",
+                              "flex items-center gap-2 rounded-lg border px-2 py-2 text-xs",
                               selectedRelationshipId === r.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))] bg-[hsl(var(--background))]"
                             )}
                           >
-                            <div className="font-medium">{fromName} → {toName}</div>
-                            <div className="text-[hsl(var(--muted-foreground))]">{r.relationType} · {r.alignment}</div>
-                          </button>
+                            <button type="button" onClick={() => selectExistingRelationship(r)} className="flex-1 text-left">
+                              <div className="font-medium">{fromName} → {toName}</div>
+                              <div className="text-[hsl(var(--muted-foreground))]">{r.relationType} · {r.alignment}</div>
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded border border-[hsl(var(--border))] p-1"
+                              onClick={() => {
+                                updateStory(activeStory.id, { relationships: activeStory.relationships.filter((x) => x.id !== r.id) });
+                                if (selectedRelationshipId === r.id) {
+                                  setSelectedRelationshipId(null);
+                                  setStoryRelationshipEditorOpen(false);
+                                  setPendingRelationshipEdge(null);
+                                }
+                              }}
+                              aria-label="Delete relationship"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         );
                       })}
                       {!activeStory.relationships.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No relationships yet.</div> : null}
@@ -5096,6 +5196,7 @@ ${feedback}`,
                       </div>
                       <div className="flex gap-2">
                         <Button variant="primary" onClick={saveRelationshipEdge}>Save relation</Button>
+                        {selectedRelationshipId ? <Button variant="secondary" onClick={deleteSelectedRelationship}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
                         <Button variant="secondary" onClick={closeRelationshipEditor}>Close</Button>
                       </div>
                     </div>
@@ -5438,8 +5539,8 @@ ${feedback}`,
                             Create multiple intros and switch between them.
                           </div>
                         </div>
-                        <Button variant="secondary" type="button" onClick={addNewIntro}>
-                          <Plus className="h-4 w-4" /> New
+                        <Button variant="primary" type="button" onClick={addNewIntro}>
+                          <Plus className="h-4 w-4" /> Create
                         </Button>
                       </div>
 
@@ -5453,7 +5554,7 @@ ${feedback}`,
                             )
                           }
                         >
-                          <ChevronLeft className="h-4 w-4" /> Roll back
+                          <ChevronLeft className="h-4 w-4" /> Prev intro
                         </Button>
                         <div className="text-sm">
                           Intro <span className="font-semibold">{introIndex + 1}</span> / {Math.max(1, introMessages.length)}
@@ -5466,6 +5567,58 @@ ${feedback}`,
                               clampIndex(i + 1, Math.max(1, introMessages.length))
                             )
                           }
+                        >
+                          Next intro <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          onClick={() => {
+                            const i = clampIndex(introIndex, Math.max(1, introMessages.length));
+                            const history = introVersionHistories[i] || [introMessages[i] || ""];
+                            const current = clampIndex(introVersionIndices[i] || 0, history.length);
+                            const nextIdx = clampIndex(current - 1, history.length);
+                            setIntroVersionIndices((prev) => {
+                              const base = prev.length ? [...prev] : [0];
+                              while (base.length <= i) base.push(0);
+                              base[i] = nextIdx;
+                              return base;
+                            });
+                            setIntroMessages((prev) => {
+                              const base = prev.length ? [...prev] : [""];
+                              base[i] = history[nextIdx] || "";
+                              return base;
+                            });
+                          }}
+                        >
+                          <ChevronLeft className="h-4 w-4" /> Roll back
+                        </Button>
+                        <div className="text-sm text-[hsl(var(--muted-foreground))]">
+                          Version {(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) + 1} / {Math.max(1, introVersionHistories[clampIndex(introIndex, Math.max(1, introMessages.length))]?.length || 1)}
+                        </div>
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          onClick={() => {
+                            const i = clampIndex(introIndex, Math.max(1, introMessages.length));
+                            const history = introVersionHistories[i] || [introMessages[i] || ""];
+                            const current = clampIndex(introVersionIndices[i] || 0, history.length);
+                            const nextIdx = clampIndex(current + 1, history.length);
+                            setIntroVersionIndices((prev) => {
+                              const base = prev.length ? [...prev] : [0];
+                              while (base.length <= i) base.push(0);
+                              base[i] = nextIdx;
+                              return base;
+                            });
+                            setIntroMessages((prev) => {
+                              const base = prev.length ? [...prev] : [""];
+                              base[i] = history[nextIdx] || "";
+                              return base;
+                            });
+                          }}
                         >
                           Roll forward <ChevronRight className="h-4 w-4" />
                         </Button>
@@ -5483,6 +5636,15 @@ ${feedback}`,
                             const base = prev.length ? [...prev] : [""];
                             const i = clampIndex(introIndex, base.length);
                             base[i] = v;
+                            return base;
+                          });
+                          setIntroVersionHistories((prev) => {
+                            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+                            const i = clampIndex(introIndex, Math.max(1, base.length));
+                            while (base.length <= i) base.push([""]);
+                            const history = base[i];
+                            const versionIdx = clampIndex(introVersionIndices[i] || 0, history.length);
+                            history[versionIdx] = v;
                             return base;
                           });
                         }}
