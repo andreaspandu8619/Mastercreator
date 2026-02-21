@@ -5307,7 +5307,7 @@ ${feedback}`,
                       </div>
                     );
                   })}
-                  <svg className="absolute left-[-6000px] top-[-6000px] z-20 h-[12000px] w-[12000px]" style={{ overflow: "visible" }}>
+                  <svg className="pointer-events-none absolute left-[-6000px] top-[-6000px] z-20 h-[12000px] w-[12000px]" style={{ overflow: "visible" }}>
                     {activeStory.relationships.map((r) => {
                       const from = getBoardNodeCenter(r.fromCharacterId);
                       const to = getBoardNodeCenter(r.toCharacterId);
@@ -5323,9 +5323,7 @@ ${feedback}`,
                           strokeWidth={selected ? 4 : 2}
                           fill="none"
                           strokeLinecap="round"
-                          style={{ pointerEvents: "stroke", cursor: "pointer" }}
-                          onMouseEnter={() => setSelectedRelationshipId(r.id)}
-                          onClick={() => selectExistingRelationship(r)}
+
                         />
                       );
                     })}
