@@ -25,7 +25,7 @@ type ThemeMode = "light" | "dark";
 type Gender = "Male" | "Female" | "";
 type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board" | "lorebooks" | "lorebook_create";
 type CreateTab = "overview" | "personality" | "behavior" | "definition" | "system" | "intro" | "synopsis";
-type StoryTab = "scenario" | "first_message" | "system_rules" | "relationships" | "plot_points";
+type StoryTab = "scenario" | "first_message" | "system_rules" | "relationships" | "synopsis";
 type LorebookTab = "overview" | "world" | "locations" | "factions" | "rules" | "items" | "specials";
 
 type ProxyConfig = {
@@ -93,7 +93,8 @@ type StoryProject = {
   firstMessageStyle: "realistic" | "dramatic" | "melancholic";
   systemRules: string;
   selectedSystemRuleIds: string[];
-  plotPoints: string[];
+  synopsis: string;
+  synopsisStyle: "realistic" | "dramatic" | "melancholic";
   relationships: StoryRelationship[];
   boardNodes: StoryBoardNode[];
   assignedLorebookIds: string[];
@@ -181,6 +182,7 @@ type Character = {
   respondToProblems: string[];
   sexualBehavior: string[];
   backstory: string[];
+  selectedBackstoryIndex: number;
   systemRules: string;
   synopsis: string;
   introMessages: string[];
@@ -501,35 +503,31 @@ async function idbDeleteCharacter(id: string): Promise<void> {
 
 
 function characterToTxt(c: Character) {
+  const selectedBackstory = (c.backstory || []).length
+    ? (c.backstory || [])[Math.max(0, Math.min((c.backstory || []).length - 1, (c as any).selectedBackstoryIndex || 0))] || ""
+    : "";
+  const selectedIntro = (c.introMessages || []).length
+    ? (c.introMessages || [])[Math.max(0, Math.min((c.introMessages || []).length - 1, c.selectedIntroIndex || 0))] || ""
+    : "";
+
   const lines = [
     `# ${c.name || "Character"}`,
     "",
-    "## Details",
+    "## Character Information",
     `Name: ${c.name || ""}`,
     `Age: ${c.age === "" ? "" : String(c.age)}`,
     `Height: ${c.height || ""}`,
     `Origins: ${c.origins || ""}`,
     `Race: ${c.race || ""}`,
     `Personality: ${(c.personalities || []).join(", ")}`,
-    `Unique traits: ${(c.uniqueTraits || []).join(", ")}`,
-    "",
-    "## Synopsis",
-    c.synopsis || "",
+    `Physical appearance: ${(c.physicalAppearance || []).join(", ")}`,
+    `Behavior: ${[...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", ")}`,
     "",
     "## Backstory",
-    ...(c.backstory || []).map((b) => `- ${b}`),
+    selectedBackstory,
     "",
-    "## System Rules",
-    c.systemRules || "",
-    "",
-    "## Assigned Lorebooks",
-    (c.assignedLorebookIds || []).join(", "),
-    "",
-    "## Intro Messages",
-    ...(c.introMessages || []).map((m, i) => {
-      const mark = i === c.selectedIntroIndex ? "*" : "-";
-      return `${mark} Intro ${i + 1}:\n${m || ""}`;
-    }),
+    "## Intro Message (Selected Iteration)",
+    selectedIntro,
     "",
   ];
   return lines.join("\n");
@@ -584,6 +582,7 @@ function normalizeCharacter(x: any): Character | null {
     respondToProblems: normalizeStringArray(x.respondToProblems),
     sexualBehavior: normalizeStringArray(x.sexualBehavior),
     backstory: normalizeStringArray(x.backstory),
+    selectedBackstoryIndex: Number.isFinite(Number(x.selectedBackstoryIndex)) ? Math.max(0, Number(x.selectedBackstoryIndex)) : 0,
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
     synopsis: typeof x.synopsis === "string" ? x.synopsis : "",
     introMessages: introMessages.length ? introMessages : [""],
@@ -784,6 +783,7 @@ function runTests() {
     respondToProblems: ["Logical"],
     sexualBehavior: ["Reserved"],
     backstory: ["Born in the rain"],
+    selectedBackstoryIndex: 0,
     systemRules: "No OOC",
     synopsis: "A hunter.",
     introMessages: ["Hello", "Hi"],
@@ -864,8 +864,9 @@ export default function CharacterCreatorApp() {
   const [storyScenarioPrompt, setStoryScenarioPrompt] = useState("");
   const [storyScenarioRevision, setStoryScenarioRevision] = useState("");
   const [storyImageDataUrl, setStoryImageDataUrl] = useState("");
-  const [storyPlotPointInput, setStoryPlotPointInput] = useState("");
-  const [storyPlotPointRevision, setStoryPlotPointRevision] = useState("");
+  const [storySynopsisPrompt, setStorySynopsisPrompt] = useState("");
+  const [storySynopsisRevision, setStorySynopsisRevision] = useState("");
+  const [storySynopsisStyle, setStorySynopsisStyle] = useState<"realistic" | "dramatic" | "melancholic">("realistic");
   const [storyRelationshipEditorOpen, setStoryRelationshipEditorOpen] = useState(false);
   const [storyRelFromId, setStoryRelFromId] = useState("");
   const [storyRelToId, setStoryRelToId] = useState("");
@@ -1023,6 +1024,7 @@ export default function CharacterCreatorApp() {
   const [relationshipDetailsPrompt, setRelationshipDetailsPrompt] = useState("");
   const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
   const [generatedTextStates, setGeneratedTextStates] = useState<Record<string, GeneratedTextState>>({});
+  const [iterationSelections, setIterationSelections] = useState<Record<string, string>>({});
 
   const [genLoading, setGenLoading] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
@@ -1135,6 +1137,21 @@ export default function CharacterCreatorApp() {
             </Button>
           </div>
         ) : null}
+        <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
+          <input
+            type="checkbox"
+            checked={pages.length <= 1 || (!!activePage && iterationSelections[args.fieldKey] === activePage.id)}
+            disabled={pages.length <= 1 || !activePage}
+            onChange={(e) => {
+              if (!activePage) return;
+              setIterationSelections((prev) => ({
+                ...prev,
+                [args.fieldKey]: e.target.checked ? activePage.id : "",
+              }));
+            }}
+          />
+          Use this iteration
+        </label>
         <Textarea
           value={effectiveValue}
           onChange={(e) => commitGeneratedText(args.fieldKey, e.target.value, args.onChange, true)}
@@ -1243,7 +1260,8 @@ export default function CharacterCreatorApp() {
             firstMessageStyle: (s as any).firstMessageStyle === "dramatic" || (s as any).firstMessageStyle === "melancholic" ? (s as any).firstMessageStyle : "realistic",
             systemRules: typeof (s as any).systemRules === "string" ? (s as any).systemRules : "",
             selectedSystemRuleIds: normalizeStringArray((s as any).selectedSystemRuleIds),
-            plotPoints: normalizeStringArray((s as any).plotPoints),
+            synopsis: typeof (s as any).synopsis === "string" ? (s as any).synopsis : "",
+            synopsisStyle: (s as any).synopsisStyle === "dramatic" || (s as any).synopsisStyle === "melancholic" ? (s as any).synopsisStyle : "realistic",
             relationships: Array.isArray((s as any).relationships) ? (s as any).relationships : [],
             boardNodes: Array.isArray((s as any).boardNodes) ? (s as any).boardNodes : [],
             assignedLorebookIds: normalizeStringArray((s as any).assignedLorebookIds),
@@ -1639,6 +1657,15 @@ export default function CharacterCreatorApp() {
     const baseIntro = introMessages.length ? introMessages : [""];
     const safeIntroIndex = clampIndex(introIndex, Math.max(1, baseIntro.length));
 
+    const backstoryPages = generatedTextStates["character:backstory"]?.pages || [];
+    const backstoryVersions = backstoryPages.length
+      ? backstoryPages.map((p) => p.text).filter((x) => collapseWhitespace(x))
+      : (collapseWhitespace(backstoryText) ? [backstoryText] : []);
+    const selectedBackstoryPageId = iterationSelections["character:backstory"];
+    const selectedBackstoryIndex = backstoryPages.length && selectedBackstoryPageId
+      ? Math.max(0, backstoryPages.findIndex((p) => p.id === selectedBackstoryPageId))
+      : Math.max(0, backstoryVersions.length - 1);
+
     const base: Omit<Character, "id" | "createdAt" | "updatedAt"> = {
       name: cleanName,
       gender,
@@ -1653,7 +1680,8 @@ export default function CharacterCreatorApp() {
       physicalAppearance: Array.isArray(physicalAppearance) ? physicalAppearance : [],
       respondToProblems: Array.isArray(problemBehavior) ? problemBehavior : [],
       sexualBehavior: Array.isArray(sexualBehavior) ? sexualBehavior : [],
-      backstory: collapseWhitespace(backstoryText) ? [backstoryText] : [],
+      backstory: backstoryVersions,
+      selectedBackstoryIndex,
       systemRules,
       synopsis,
       introMessages: baseIntro,
@@ -2373,7 +2401,8 @@ Return only the revised world entry content.`,
       firstMessageStyle: "realistic",
       systemRules: "",
       selectedSystemRuleIds: [],
-      plotPoints: [],
+      synopsis: "",
+      synopsisStyle: "realistic",
       relationships: [],
       boardNodes: [],
       assignedLorebookIds: [],
@@ -2392,45 +2421,37 @@ Return only the revised world entry content.`,
     const chars = story.characterIds
       .map((id) => characters.find((c) => c.id === id))
       .filter((c): c is Character => !!c);
+    const allCharactersWritten = chars.length > 0 && chars.every((c) => collapseWhitespace(c.name) && (c.backstory || []).length);
     const relLines = story.relationships.map((r) => {
       const a = chars.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
       const b = chars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
       return `- ${a} -> ${b} | ${r.alignment} | ${r.relationType}${r.details ? ` | ${r.details}` : ""}`;
     });
-    const selectedRuleTexts = STORY_SYSTEM_RULE_CARDS
-      .filter((r) => (story.selectedSystemRuleIds || []).includes(r.id))
-      .map((r) => r.text);
     const firstMessages = story.firstMessageVersions?.length
       ? story.firstMessageVersions
       : [story.firstMessage || ""];
+    const selectedIntro = firstMessages[Math.max(0, Math.min(firstMessages.length - 1, story.selectedFirstMessageIndex || 0))] || "";
 
     const text = [
       `# ${story.title}`,
       "",
       "## Characters",
-      ...chars.map((c) => characterToTxt(c)),
+      ...chars.flatMap((c) => [characterToTxt(c), ""]),
+      ...(allCharactersWritten
+        ? [
+            "## Relationships",
+            ...(relLines.length ? relLines : ["- None"]),
+            "",
+            "## System Rules",
+            story.systemRules || "",
+            "",
+          ]
+        : []),
+      "## Intro Messages",
+      selectedIntro,
       "",
-      "## Storywriting",
-      "### Scenario",
-      story.scenario || "",
-      "",
-      "### Intro Messages (Storywriting)",
-      ...firstMessages.map((m, i) => `${i === (story.selectedFirstMessageIndex || 0) ? "*" : "-"} Intro ${i + 1}:\n${m || ""}`),
-      "",
-      "### First Message Style",
-      story.firstMessageStyle || "realistic",
-      "",
-      "### System Rules",
-      story.systemRules || "",
-      "",
-      "### Selected Rule Cards",
-      ...(selectedRuleTexts.length ? selectedRuleTexts.map((x) => `- ${x}`) : ["- None"]),
-      "",
-      "### Relationships",
-      ...(relLines.length ? relLines : ["- None"]),
-      "",
-      "### Plot Points",
-      ...(story.plotPoints.length ? story.plotPoints.map((p) => `- ${p}`) : ["- None"]),
+      "## Story Synopsis",
+      story.synopsis || "",
       "",
     ].join("\n");
     downloadText((filenameSafe(story.title) || "story") + ".txt", text);
@@ -3020,8 +3041,8 @@ ${storyCharacterContext}
 Relationships:
 ${relationshipContext}
 
-Plot points:
-${activeStory.plotPoints.join("\n")}
+Story synopsis:
+${activeStory.synopsis || ""}
 
 Prompt:
 ${prompt}`,
@@ -3150,49 +3171,6 @@ ${prompt}`,
     } finally {
       setGenLoading(false);
     }
-  }
-
-
-  function parseGeneratedBackstoryEntries(text: string) {
-    const clean = String(text || "").trim();
-    if (!clean) return [] as string[];
-
-    const parseAsArray = (value: any): string[] => {
-      if (!Array.isArray(value)) return [];
-      return value
-        .map((entry) => {
-          if (typeof entry === "string") return collapseWhitespace(entry);
-          if (entry && typeof entry === "object") {
-            return collapseWhitespace(entry.entry ?? entry.text ?? entry.content ?? "");
-          }
-          return "";
-        })
-        .filter(Boolean);
-    };
-
-    const tryParse = (raw: string) => {
-      try {
-        const parsed = JSON.parse(raw);
-        return parseAsArray(parsed);
-      } catch {
-        return [] as string[];
-      }
-    };
-
-    const direct = tryParse(clean);
-    if (direct.length) return direct;
-
-    const fenced = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-    if (fenced?.[1]) {
-      const fromFence = tryParse(fenced[1].trim());
-      if (fromFence.length) return fromFence;
-    }
-
-    return clean
-      .split(/\n+/)
-      .map((line) => line.replace(/^[-*\d.)\s]+/, ""))
-      .map((line) => collapseWhitespace(line))
-      .filter(Boolean);
   }
 
 
@@ -3778,21 +3756,23 @@ ${feedback}`,
     }
   }
 
-  async function generateStoryPlotPoints() {
+  async function generateStorySynopsis() {
     if (!activeStory) return;
-    if (!activeStory.plotPoints.length) {
-      setGenError("Add at least one plot point first.");
+    const prompt = collapseWhitespace(storySynopsisPrompt);
+    if (!prompt) {
+      setGenError("Write a synopsis prompt first.");
       return;
     }
     const storyCharacterContext = getStoryCharacterContext(activeStory);
     const relationshipContext = getStoryRelationshipContext(activeStory);
     const selectedRules = getStorySelectedSystemRules(activeStory);
+    const fieldKey = `story-synopsis:${activeStory.id}`;
     setGenError(null);
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
-        system:
-          "Expand plot points into more detailed entries, each max 30 words. Return JSON array of strings only.",
+        system: `Write a ${storySynopsisStyle} story synopsis that fits roleplay setup. Return only synopsis text.`,
         user: `Character context:
 ${storyCharacterContext}
 
@@ -3802,66 +3782,47 @@ ${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
 Relationships:
 ${relationshipContext}
 
-Current plot points:
-${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}`,
+Prompt: ${prompt}`,
         maxTokens: proxyMaxTokens,
         lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => updateStory(activeStory.id, { synopsis: next, synopsisStyle: storySynopsisStyle })),
       });
-      const items = parseGeneratedBackstoryEntries(out);
-      if (!items.length) throw new Error("No valid plot points returned.");
-      updateStory(
-        activeStory.id,
-        { plotPoints: items.map((x) => x.split(/\s+/).slice(0, 30).join(" ")) }
-      );
+      commitGeneratedText(fieldKey, out, (next) => updateStory(activeStory.id, { synopsis: next, synopsisStyle: storySynopsisStyle }), true);
     } catch (e: any) {
-      setGenError(e?.message ? String(e.message) : "Plot point generation failed.");
+      setGenError(e?.message ? String(e.message) : "Synopsis generation failed.");
     } finally {
       setGenLoading(false);
     }
   }
 
-  async function reviseStoryPlotPoints() {
+  async function reviseStorySynopsis() {
     if (!activeStory) return;
-    const feedback = collapseWhitespace(storyPlotPointRevision);
+    const feedback = collapseWhitespace(storySynopsisRevision);
     if (!feedback) {
-      setGenError("Write plot point revision feedback first.");
+      setGenError("Write synopsis revision feedback first.");
       return;
     }
-    const storyCharacterContext = getStoryCharacterContext(activeStory);
-    const relationshipContext = getStoryRelationshipContext(activeStory);
-    const selectedRules = getStorySelectedSystemRules(activeStory);
+    const fieldKey = `story-synopsis:${activeStory.id}`;
     setGenError(null);
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
-        system: "Revise plot point list with each entry max 30 words. Return JSON array of strings only.",
-        user: `Character context:
-${storyCharacterContext}
-
-Selected system rules:
-${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
-
-Relationships:
-${relationshipContext}
-
-Current points:
-${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}
+        system: "Revise story synopsis based on user feedback while preserving continuity. Return only revised synopsis text.",
+        user: `Current synopsis:
+${activeStory.synopsis || "(empty)"}
 
 Feedback:
 ${feedback}`,
         maxTokens: proxyMaxTokens,
         lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => updateStory(activeStory.id, { synopsis: next })),
       });
-      const items = parseGeneratedBackstoryEntries(out);
-      if (!items.length) throw new Error("No valid revised plot points returned.");
-      updateStory(
-        activeStory.id,
-        { plotPoints: items.map((x) => x.split(/\s+/).slice(0, 30).join(" ")) }
-      );
+      commitGeneratedText(fieldKey, out, (next) => updateStory(activeStory.id, { synopsis: next }), true);
     } catch (e: any) {
-      setGenError(e?.message ? String(e.message) : "Plot point revision failed.");
+      setGenError(e?.message ? String(e.message) : "Synopsis revision failed.");
     } finally {
       setGenLoading(false);
     }
@@ -4692,7 +4653,7 @@ ${feedback}`,
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xl font-semibold">{activeStory?.title || "Story Editor"}</div>
-                <div className="text-sm text-[hsl(var(--muted-foreground))]">Scenario • Relationships • Plot Points</div>
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">Scenario • Relationships • Synopsis</div>
               </div>
               <div className="flex gap-2">
                 <Button variant="secondary" onClick={() => navigateTo("my_stories")}>Stories</Button>
@@ -4712,7 +4673,7 @@ ${feedback}`,
                 ["first_message", "First Message"],
                 ["system_rules", "System Rules"],
                 ["relationships", "Relationships"],
-                ["plot_points", "Plot Points"],
+                ["synopsis", "Synopsis"],
               ].map(([id, label]) => (
                 <button
                   key={id}
@@ -5129,44 +5090,27 @@ ${feedback}`,
               </div>
             ) : (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
-                <div className="flex gap-2">
-                  <Input
-                    value={storyPlotPointInput}
-                    onChange={(e) => setStoryPlotPointInput(e.target.value)}
-                    onKeyDown={(e) => onEnterAdd(e, () => {
-                      if (!activeStory) return;
-                      const v = collapseWhitespace(storyPlotPointInput);
-                      if (!v) return;
-                      updateStory(activeStory.id, { plotPoints: [...activeStory.plotPoints, v] });
-                      setStoryPlotPointInput("");
-                    })}
-                    placeholder="Add plot point..."
-                  />
-                  <Button variant="secondary" onClick={() => {
-                    if (!activeStory) return;
-                    const v = collapseWhitespace(storyPlotPointInput);
-                    if (!v) return;
-                    updateStory(activeStory.id, { plotPoints: [...activeStory.plotPoints, v] });
-                    setStoryPlotPointInput("");
-                  }}>Add</Button>
-                </div>
-                <div className="space-y-2">
-                  {activeStory.plotPoints.map((p, i) => (
-                    <div key={p + i} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 text-sm">
-                      <RichText text={p} />
-                    </div>
-                  ))}
-                  {!activeStory.plotPoints.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No plot points yet.</div> : null}
+                {renderGeneratedTextarea({
+                  fieldKey: `story-synopsis:${activeStory.id}`,
+                  value: activeStory.synopsis || "",
+                  onChange: (next) => updateStory(activeStory.id, { synopsis: next, synopsisStyle: storySynopsisStyle }),
+                  rows: 10,
+                  placeholder: "Story synopsis...",
+                })}
+                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                  <div className="text-sm font-medium">Generate synopsis</div>
+                  <Select value={storySynopsisStyle} onChange={(e) => setStorySynopsisStyle(e.target.value as any)}>
+                    <option value="realistic">Realistic</option>
+                    <option value="dramatic">Dramatic</option>
+                    <option value="melancholic">Melancholic</option>
+                  </Select>
+                  <Textarea value={storySynopsisPrompt} onChange={(e) => setStorySynopsisPrompt(e.target.value)} rows={3} placeholder="Prompt for synopsis generation..." />
+                  <Button variant="secondary" onClick={generateStorySynopsis} disabled={genLoading || !collapseWhitespace(storySynopsisPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button>
                 </div>
                 <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
-                  <div className="text-sm font-medium">Generate detailed list</div>
-                  <div className="text-xs text-[hsl(var(--muted-foreground))]">Turns your written list into a more described list (max 30 words per entry).</div>
-                  <Button variant="secondary" onClick={generateStoryPlotPoints} disabled={genLoading || !activeStory.plotPoints.length}><Sparkles className="h-4 w-4" /> Generate detailed list</Button>
-                </div>
-                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
-                  <div className="text-sm font-medium">Revise plot points</div>
-                  <Textarea value={storyPlotPointRevision} onChange={(e) => setStoryPlotPointRevision(e.target.value)} rows={3} placeholder="Revision feedback..." />
-                  <Button variant="secondary" onClick={reviseStoryPlotPoints} disabled={genLoading}><Sparkles className="h-4 w-4" /> Revise</Button>
+                  <div className="text-sm font-medium">Revise synopsis</div>
+                  <Textarea value={storySynopsisRevision} onChange={(e) => setStorySynopsisRevision(e.target.value)} rows={3} placeholder="Revision feedback..." />
+                  <Button variant="secondary" onClick={reviseStorySynopsis} disabled={genLoading || !collapseWhitespace(storySynopsisRevision)}><Sparkles className="h-4 w-4" /> Revise</Button>
                 </div>
               </div>
             )}
