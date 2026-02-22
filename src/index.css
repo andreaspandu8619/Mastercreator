@@ -41,6 +41,17 @@
     }
   }
 
+  @keyframes dropdown-reveal-down {
+    0% {
+      opacity: 0;
+      transform: translateY(-8px) scale(0.98);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
   .anim-page {
     animation: fade-slide-zoom-in 280ms ease-out;
     transform-origin: 50% 24px;
@@ -65,6 +76,11 @@
   .anim-tab-switch {
     animation: tab-slide-fade 220ms ease-out;
   }
+
+  .anim-dropdown-down {
+    animation: dropdown-reveal-down 180ms ease-out;
+    transform-origin: top right;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -75,7 +91,8 @@
   }
 
   .anim-slide-in-right,
-  .anim-tab-switch {
+  .anim-tab-switch,
+  .anim-dropdown-down {
     animation: none !important;
   }
 }
