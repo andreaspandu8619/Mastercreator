@@ -1815,23 +1815,29 @@ export default function CharacterCreatorApp() {
     setRacePreset(preset);
     setCustomRace(preset === "Other" ? c.race || "" : "");
 
-    setPersonalities(Array.isArray(c.personalities) ? c.personalities : []);
-    setTraits(Array.isArray(c.uniqueTraits) ? c.uniqueTraits : []);
-    setBackstory(Array.isArray(c.backstory) ? c.backstory : []);
+    setPersonalities(Array.isArray(c.personalities) ? [...c.personalities] : []);
+    setTraits(Array.isArray(c.uniqueTraits) ? [...c.uniqueTraits] : []);
+    setPhysicalAppearance(Array.isArray(c.physicalAppearance) ? [...c.physicalAppearance] : []);
+    setProblemBehavior(Array.isArray(c.respondToProblems) ? [...c.respondToProblems] : []);
+    setSexualBehavior(Array.isArray(c.sexualBehavior) ? [...c.sexualBehavior] : []);
+    setBackstory(Array.isArray(c.backstory) ? [...c.backstory] : []);
+    setTraitInput("");
+    setAppearanceInput("");
+    setSexualBehaviorInput("");
 
     setSystemRules(c.systemRules || "");
     setSynopsis(c.synopsis || "");
 
     const im =
       Array.isArray(c.introMessages) && c.introMessages.length
-        ? c.introMessages
+        ? [...c.introMessages]
         : [""];
     setIntroMessages(im);
     setIntroIndex(clampIndex(c.selectedIntroIndex ?? 0, im.length));
     setIntroVersionHistories(im.map((text) => [text || ""]));
     setIntroVersionIndices(im.map(() => 0));
     setIntroPrompt("");
-    setCharacterAssignedLorebookIds(Array.isArray(c.assignedLorebookIds) ? c.assignedLorebookIds : []);
+    setCharacterAssignedLorebookIds(Array.isArray(c.assignedLorebookIds) ? [...c.assignedLorebookIds] : []);
 
     setIntroRevisionPrompt("");
     setSynopsisRevisionFeedback("");
