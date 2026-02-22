@@ -9,6 +9,7 @@ import {
   Plus,
   Search,
   SlidersHorizontal,
+  Settings,
   Sun,
   Trash2,
   MessageCircle,
@@ -87,8 +88,11 @@ type StoryProject = {
   imageDataUrl: string;
   scenario: string;
   firstMessage: string;
+  firstMessageVersions: string[];
+  selectedFirstMessageIndex: number;
   firstMessageStyle: "realistic" | "dramatic" | "melancholic";
   systemRules: string;
+  selectedSystemRuleIds: string[];
   plotPoints: string[];
   relationships: StoryRelationship[];
   boardNodes: StoryBoardNode[];
@@ -276,6 +280,17 @@ const REL_TYPES = [
   "Ally",
   "Other",
 ];
+
+const STORY_SYSTEM_RULE_CARDS = [
+  { id: "no-user-control", label: "Never speak or act as user", text: "{{char}} will NEVER talk nor act as {{user}} under any circumstances whatsoever." },
+  { id: "personality-consistent", label: "Stay true to personality", text: "{{char}} will ALWAYS stay true to their/his/her personality." },
+  { id: "story-forward", label: "Always move story forward", text: "The story will ALWAYS move forward with {{user}}’s and {{char}}’s actions." },
+  { id: "no-fancy-language", label: "Avoid fancy language", text: "{{char}} will NEVER talk in overly fancy language." },
+  { id: "speech-pattern", label: "Match speech pattern", text: "{{char}} will ALWAYS speak according to their/his/her personality, this includes speech pattern in responses." },
+  { id: "interesting-dialogue", label: "Use interesting dialogue", text: "{{char}} will ALWAYS answer in interesting dialogues according to the conversation and topic and/or mood of the interaction, not short answers or short quips." },
+  { id: "situational-awareness", label: "Situational awareness", text: "Have situational awareness and be cognizant of intercharacter relationships, characters avoid being overly familiar or sexually pushy towards {{user}} unless the situation calls for it, it is in character for them to do so, or they have a sexual relationship." },
+  { id: "long-replies", label: "Reply over 500 tokens", text: "{{char}} will ALWAYS reply in over 500 tokens." },
+] as const;
 
 const USER_NODE_ID = "{{user}}";
 
@@ -645,7 +660,7 @@ function Button({
   variant?: "primary" | "secondary" | "danger";
 }) {
   const base =
-    "clickable inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:opacity-50 disabled:cursor-not-allowed";
+    "clickable inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition duration-200 hover:scale-[1.01] active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:active:scale-100";
 
   const v =
     variant === "primary"
@@ -842,6 +857,7 @@ export default function CharacterCreatorApp() {
   const [activeItemEntryId, setActiveItemEntryId] = useState<string | null>(null);
   const [activeSpecialEntryId, setActiveSpecialEntryId] = useState<string | null>(null);
   const [storyDraftCharacterIds, setStoryDraftCharacterIds] = useState<string[]>([]);
+  const [storyDraftMobileSelection, setStoryDraftMobileSelection] = useState<string[]>([]);
   const [storySidebarHidden, setStorySidebarHidden] = useState(false);
   const [activeStoryId, setActiveStoryId] = useState<string | null>(null);
   const [storyTab, setStoryTab] = useState<StoryTab>("scenario");
@@ -926,10 +942,15 @@ export default function CharacterCreatorApp() {
   const [storyFirstMessageInput, setStoryFirstMessageInput] = useState("");
   const [storyFirstMessageStyle, setStoryFirstMessageStyle] = useState<"realistic" | "dramatic" | "melancholic">("realistic");
   const [storyFirstMessagePrompt, setStoryFirstMessagePrompt] = useState("");
+  const [storyFirstMessageRevisionPrompt, setStoryFirstMessageRevisionPrompt] = useState("");
+  const [storyFirstMessageHistories, setStoryFirstMessageHistories] = useState<string[][]>([[""]]);
+  const [storyFirstMessageHistoryIndices, setStoryFirstMessageHistoryIndices] = useState<number[]>([0]);
   const [storySystemRulesInput, setStorySystemRulesInput] = useState("");
 
   const [introMessages, setIntroMessages] = useState<string[]>([""]);
   const [introIndex, setIntroIndex] = useState(0);
+  const [introVersionHistories, setIntroVersionHistories] = useState<string[][]>([[""]]);
+  const [introVersionIndices, setIntroVersionIndices] = useState<number[]>([0]);
   const [introPrompt, setIntroPrompt] = useState("");
 
   useEffect(() => {
@@ -998,13 +1019,35 @@ export default function CharacterCreatorApp() {
     };
   }, [storywritingDragPreview]);
 
-  const [introRevisionFeedback, setIntroRevisionFeedback] = useState("");
+  const [introRevisionPrompt, setIntroRevisionPrompt] = useState("");
+  const [relationshipDetailsPrompt, setRelationshipDetailsPrompt] = useState("");
   const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
   const [generatedTextStates, setGeneratedTextStates] = useState<Record<string, GeneratedTextState>>({});
 
   const [genLoading, setGenLoading] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [proxyProgress, setProxyProgress] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
+  const [navMenuOpen, setNavMenuOpen] = useState<null | "characters" | "stories" | "lorebooks" | "settings">(null);
+  const navMenusRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const sync = () => setIsMobile(window.innerWidth < 768);
+    sync();
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!navMenusRef.current) return;
+      const target = event.target as Node | null;
+      if (target && navMenusRef.current.contains(target)) return;
+      setNavMenuOpen(null);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, []);
 
   function startGeneratedTextPage(fieldKey: string) {
     const pageId = uid();
@@ -1058,28 +1101,38 @@ export default function CharacterCreatorApp() {
     const effectiveValue = activePage ? activePage.text : args.value;
     const isStreaming = !!activePage && !activePage.isFinal;
 
+    const canBack = pages.length > 0 && activeIndex > 0;
+    const canForward = pages.length > 0 && activeIndex < pages.length - 1;
+
     return (
       <div className="space-y-2">
         {pages.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
-            {pages.map((p, i) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => {
-                  setGeneratedTextActivePage(args.fieldKey, i);
-                  args.onChange(p.text);
-                }}
-                className={cn(
-                  "rounded-full border px-2 py-1 text-xs",
-                  i === activeIndex
-                    ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]"
-                    : "border-[hsl(var(--border))]"
-                )}
-              >
-                {`Page ${i + 1}`}
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-2">
+            <Button
+              variant="secondary"
+              type="button"
+              disabled={!canBack}
+              onClick={() => {
+                const next = Math.max(0, activeIndex - 1);
+                setGeneratedTextActivePage(args.fieldKey, next);
+                args.onChange(pages[next]?.text || "");
+              }}
+            >
+              <ChevronLeft className="h-4 w-4" /> Roll back
+            </Button>
+            <div className="text-xs text-[hsl(var(--muted-foreground))]">Iteration {activeIndex + 1} / {pages.length}</div>
+            <Button
+              variant="secondary"
+              type="button"
+              disabled={!canForward}
+              onClick={() => {
+                const next = Math.min(pages.length - 1, activeIndex + 1);
+                setGeneratedTextActivePage(args.fieldKey, next);
+                args.onChange(pages[next]?.text || "");
+              }}
+            >
+              Roll forward <ChevronRight className="h-4 w-4" />
+            </Button>
           </div>
         ) : null}
         <Textarea
@@ -1093,7 +1146,6 @@ export default function CharacterCreatorApp() {
     );
   }
 
-  const fileRef = useRef<HTMLInputElement | null>(null);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
   const storyImageFileRef = useRef<HTMLInputElement | null>(null);
   const lorebookCoverFileRef = useRef<HTMLInputElement | null>(null);
@@ -1180,8 +1232,17 @@ export default function CharacterCreatorApp() {
             imageDataUrl: typeof (s as any).imageDataUrl === "string" ? (s as any).imageDataUrl : "",
             scenario: typeof (s as any).scenario === "string" ? (s as any).scenario : "",
             firstMessage: typeof (s as any).firstMessage === "string" ? (s as any).firstMessage : "",
+            firstMessageVersions: normalizeStringArray((s as any).firstMessageVersions).length
+              ? normalizeStringArray((s as any).firstMessageVersions)
+              : (typeof (s as any).firstMessage === "string" && collapseWhitespace((s as any).firstMessage))
+                ? [String((s as any).firstMessage)]
+                : [""],
+            selectedFirstMessageIndex: Number.isFinite(Number((s as any).selectedFirstMessageIndex))
+              ? Math.max(0, Number((s as any).selectedFirstMessageIndex))
+              : 0,
             firstMessageStyle: (s as any).firstMessageStyle === "dramatic" || (s as any).firstMessageStyle === "melancholic" ? (s as any).firstMessageStyle : "realistic",
             systemRules: typeof (s as any).systemRules === "string" ? (s as any).systemRules : "",
+            selectedSystemRuleIds: normalizeStringArray((s as any).selectedSystemRuleIds),
             plotPoints: normalizeStringArray((s as any).plotPoints),
             relationships: Array.isArray((s as any).relationships) ? (s as any).relationships : [],
             boardNodes: Array.isArray((s as any).boardNodes) ? (s as any).boardNodes : [],
@@ -1501,9 +1562,11 @@ export default function CharacterCreatorApp() {
 
     setIntroMessages([""]);
     setIntroIndex(0);
+    setIntroVersionHistories([[""]]);
+    setIntroVersionIndices([0]);
     setIntroPrompt("");
 
-    setIntroRevisionFeedback("");
+    setIntroRevisionPrompt("");
     setSynopsisRevisionFeedback("");
 
     setGenError(null);
@@ -1707,35 +1770,6 @@ export default function CharacterCreatorApp() {
     });
   }
 
-  function exportAll() {
-    downloadJSON(
-      "characters_" + new Date().toISOString().slice(0, 10) + ".json",
-      characters
-    );
-  }
-
-  async function handleImportFile(file: File) {
-    const text = await file.text();
-    const parsed = safeParseJSON(text);
-    if (!Array.isArray(parsed)) return alert("Invalid file. Import a JSON export from this app.");
-
-    const cleaned: Character[] = parsed.map(normalizeCharacter).filter(Boolean) as Character[];
-
-    setCharacters((prev) => {
-      const map = new Map<string, Character>();
-      for (const c of prev) map.set(c.id, c);
-      for (const c of cleaned) map.set(c.id, c);
-      return Array.from(map.values()).sort((a, b) =>
-        (b.updatedAt || "").localeCompare(a.updatedAt || "")
-      );
-    });
-
-    try {
-      await idbPutManyCharacters(cleaned);
-    } catch {}
-
-    navigateTo("library");
-  }
 
   function loadCharacterIntoForm(c: Character) {
     setSelectedId(c.id);
@@ -1766,10 +1800,12 @@ export default function CharacterCreatorApp() {
         : [""];
     setIntroMessages(im);
     setIntroIndex(clampIndex(c.selectedIntroIndex ?? 0, im.length));
+    setIntroVersionHistories(im.map((text) => [text || ""]));
+    setIntroVersionIndices(im.map(() => 0));
     setIntroPrompt("");
     setCharacterAssignedLorebookIds(Array.isArray(c.assignedLorebookIds) ? c.assignedLorebookIds : []);
 
-    setIntroRevisionFeedback("");
+    setIntroRevisionPrompt("");
     setSynopsisRevisionFeedback("");
 
     setGenError(null);
@@ -1874,11 +1910,18 @@ export default function CharacterCreatorApp() {
   );
 
   useEffect(() => {
+    const versions = activeStory?.firstMessageVersions?.length
+      ? activeStory.firstMessageVersions
+      : [activeStory?.firstMessage || ""];
+    const selectedIdx = clampIndex(activeStory?.selectedFirstMessageIndex || 0, versions.length);
     setStoryImageDataUrl(activeStory?.imageDataUrl || "");
-    setStoryFirstMessageInput(activeStory?.firstMessage || "");
+    setStoryFirstMessageInput(versions[selectedIdx] || "");
+    setStoryFirstMessageHistories(versions.map((text) => [text || ""]));
+    setStoryFirstMessageHistoryIndices(versions.map(() => 0));
+    setStoryFirstMessageRevisionPrompt(`Current first message context:\n${versions[selectedIdx] || "(empty)"}\n\nRevision instructions:\n`);
     setStoryFirstMessageStyle(activeStory?.firstMessageStyle || "realistic");
     setStorySystemRulesInput(activeStory?.systemRules || "");
-  }, [activeStory?.id, activeStory?.imageDataUrl, activeStory?.firstMessage, activeStory?.firstMessageStyle, activeStory?.systemRules]);
+  }, [activeStory?.id]);
 
   const latestCharacter = useMemo(
     () => (characters.length ? [...characters].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] : null),
@@ -1927,6 +1970,11 @@ export default function CharacterCreatorApp() {
     );
     setSaveToastOpen(true);
     window.setTimeout(() => setSaveToastOpen(false), 1400);
+  }
+
+  function deleteStory(id: string) {
+    setStories((prev) => prev.filter((s) => s.id !== id));
+    if (activeStoryId === id) setActiveStoryId(null);
   }
 
 
@@ -2235,7 +2283,7 @@ ${entry.content || "(empty)"}
 
 User prompt for improvements:
 ${prompt}`,
-        maxTokens: Math.max(2000, proxyMaxTokens),
+        maxTokens: proxyMaxTokens,
         temperature: 0.8,
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => onPatch({ content: next })),
@@ -2279,7 +2327,7 @@ New prompt:
 ${prompt}
 
 Return only the revised world entry content.`,
-        maxTokens: Math.max(2500, proxyMaxTokens),
+        maxTokens: proxyMaxTokens,
         temperature: 0.85,
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) =>
@@ -2320,8 +2368,11 @@ Return only the revised world entry content.`,
       imageDataUrl: storyImageDataUrl,
       scenario: "",
       firstMessage: "",
+      firstMessageVersions: [""],
+      selectedFirstMessageIndex: 0,
       firstMessageStyle: "realistic",
       systemRules: "",
+      selectedSystemRuleIds: [],
       plotPoints: [],
       relationships: [],
       boardNodes: [],
@@ -2346,6 +2397,13 @@ Return only the revised world entry content.`,
       const b = chars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
       return `- ${a} -> ${b} | ${r.alignment} | ${r.relationType}${r.details ? ` | ${r.details}` : ""}`;
     });
+    const selectedRuleTexts = STORY_SYSTEM_RULE_CARDS
+      .filter((r) => (story.selectedSystemRuleIds || []).includes(r.id))
+      .map((r) => r.text);
+    const firstMessages = story.firstMessageVersions?.length
+      ? story.firstMessageVersions
+      : [story.firstMessage || ""];
+
     const text = [
       `# ${story.title}`,
       "",
@@ -2355,6 +2413,18 @@ Return only the revised world entry content.`,
       "## Storywriting",
       "### Scenario",
       story.scenario || "",
+      "",
+      "### Intro Messages (Storywriting)",
+      ...firstMessages.map((m, i) => `${i === (story.selectedFirstMessageIndex || 0) ? "*" : "-"} Intro ${i + 1}:\n${m || ""}`),
+      "",
+      "### First Message Style",
+      story.firstMessageStyle || "realistic",
+      "",
+      "### System Rules",
+      story.systemRules || "",
+      "",
+      "### Selected Rule Cards",
+      ...(selectedRuleTexts.length ? selectedRuleTexts.map((x) => `- ${x}`) : ["- None"]),
       "",
       "### Relationships",
       ...(relLines.length ? relLines : ["- None"]),
@@ -2499,7 +2569,7 @@ Return only the revised world entry content.`,
     setPendingRelationshipEdge(null);
   }
 
-  function getBoardNodeCenter(characterId: string, side: "from" | "to") {
+  function getBoardNodeCenter(characterId: string) {
     if (!activeStory) return null;
     const node = activeStory.boardNodes.find((n) => n.characterId === characterId);
     if (!node && characterId !== USER_NODE_ID) return null;
@@ -2507,16 +2577,13 @@ Return only the revised world entry content.`,
     const baseX = refNode.x;
     const baseY = refNode.y;
     return {
-      x: side === "from" ? baseX + 14 : baseX + 242,
+      x: baseX + 128,
       y: baseY + 10,
     };
   }
 
-  function getFlowPath(from: { x: number; y: number }, to: { x: number; y: number }, lane = 0) {
-    const midX = from.x + (to.x - from.x) / 2;
-    const over = from.y <= to.y;
-    const archY = over ? Math.min(from.y, to.y) - (110 + lane * 10) : Math.max(from.y, to.y) + (110 + lane * 10);
-    return `M ${from.x} ${from.y} C ${midX} ${archY}, ${midX} ${archY}, ${to.x} ${to.y}`;
+  function getFlowPath(from: { x: number; y: number }, to: { x: number; y: number }) {
+    return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
   }
 
   function selectExistingRelationship(rel: StoryRelationship) {
@@ -2538,7 +2605,7 @@ Return only the revised world entry content.`,
     const SNAP_RADIUS_SQ = SNAP_RADIUS * SNAP_RADIUS;
     for (const node of activeStory.boardNodes) {
       if (node.characterId === currentFromId) continue;
-      const center = getBoardNodeCenter(node.characterId, "from");
+      const center = getBoardNodeCenter(node.characterId);
       if (!center) continue;
       const dx = center.x - x;
       const dy = center.y - y;
@@ -2554,7 +2621,7 @@ Return only the revised world entry content.`,
     e.stopPropagation();
     connectingFromIdRef.current = characterId;
     setConnectingFromId(characterId);
-    const startPoint = getBoardNodeCenter(characterId, "to");
+    const startPoint = getBoardNodeCenter(characterId);
     setConnectingPointer(startPoint);
     connectionSnapTargetIdRef.current = null;
     setConnectionSnapTargetId(null);
@@ -2666,20 +2733,98 @@ Return only the revised world entry content.`,
 
   function saveRelationshipEdge() {
     if (!activeStory || !storyRelFromId || !storyRelToId) return;
+    const [aId, bId] = [storyRelFromId, storyRelToId].sort();
+    const relId = selectedRelationshipId || uid();
     const rel: StoryRelationship = {
-      id: uid(),
-      fromCharacterId: storyRelFromId,
-      toCharacterId: storyRelToId,
+      id: relId,
+      fromCharacterId: aId,
+      toCharacterId: bId,
       alignment: storyRelAlignment,
       relationType: storyRelType,
       details: storyRelDetails,
       createdAt: new Date().toISOString(),
     };
+    const others = activeStory.relationships.filter(
+      (r) =>
+        r.id !== relId &&
+        !(
+          (r.fromCharacterId === aId && r.toCharacterId === bId) ||
+          (r.fromCharacterId === bId && r.toCharacterId === aId)
+        )
+    );
     updateStory(activeStory.id, {
-      relationships: [rel, ...activeStory.relationships],
+      relationships: [rel, ...others],
     });
+    setSelectedRelationshipId(relId);
     setPendingRelationshipEdge(null);
     setStoryRelationshipEditorOpen(false);
+  }
+
+  function deleteSelectedRelationship() {
+    if (!activeStory || !selectedRelationshipId) return;
+    updateStory(activeStory.id, {
+      relationships: activeStory.relationships.filter((r) => r.id !== selectedRelationshipId),
+    });
+    setSelectedRelationshipId(null);
+    setPendingRelationshipEdge(null);
+    setStoryRelationshipEditorOpen(false);
+  }
+
+  async function improveSelectedRelationshipDetails(mode: "generate" | "revise") {
+    if (!activeStory || !selectedRelationshipId) return;
+    const rel = activeStory.relationships.find((r) => r.id === selectedRelationshipId);
+    if (!rel) return;
+    const prompt = collapseWhitespace(relationshipDetailsPrompt);
+    if (!prompt) {
+      setGenError("Write a relationship details prompt first.");
+      return;
+    }
+    const fromName = rel.fromCharacterId === USER_NODE_ID ? "USER" : (characters.find((c) => c.id === rel.fromCharacterId)?.name || rel.fromCharacterId);
+    const toName = rel.toCharacterId === USER_NODE_ID ? "USER" : (characters.find((c) => c.id === rel.toCharacterId)?.name || rel.toCharacterId);
+    const fieldKey = `story-relationship-details:${activeStory.id}:${rel.id}`;
+    setGenError(null);
+    setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
+    try {
+      const out = await callProxyChatCompletion({
+        system: mode === "generate"
+          ? "Generate rich relationship details for the given pair. Return only details text."
+          : "Revise and improve the current relationship details based on prompt. Return only details text.",
+        user: `Relationship: ${fromName} ↔ ${toName}
+Type: ${rel.relationType}
+Alignment: ${rel.alignment}
+Current details:
+${rel.details || "(empty)"}
+
+Prompt:
+${prompt}`,
+        maxTokens: Math.min(150, proxyMaxTokens),
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => {
+          commitGeneratedText(fieldKey, partial, (next) => {
+            setStoryRelDetails(next);
+            updateStory(activeStory.id, {
+              relationships: activeStory.relationships.map((r) =>
+                r.id === rel.id ? { ...r, details: next } : r
+              ),
+            });
+          });
+        },
+      });
+      commitGeneratedText(fieldKey, out, (next) => {
+        setStoryRelDetails(next);
+        updateStory(activeStory.id, {
+          relationships: activeStory.relationships.map((r) =>
+            r.id === rel.id ? { ...r, details: next } : r
+          ),
+        });
+      }, true);
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Relationship details generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
   }
 
   async function sendChatMessage() {
@@ -2788,7 +2933,7 @@ ${backstoryText || "(empty)"}
 
 Instruction:
 ${prompt}`,
-        maxTokens: Math.max(1000, proxyMaxTokens),
+        maxTokens: proxyMaxTokens,
         lorebookIds: characterAssignedLorebookIds,
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setBackstoryText),
@@ -2830,10 +2975,30 @@ ${prompt}`,
       .filter((c): c is Character => !!c)
       .map((c) => `${c.name}: ${c.synopsis || ""}`)
       .join("\n");
-    const fieldKey = `story-first-message:${activeStory.id}`;
+    const storyCharacterContext = getStoryCharacterContext(activeStory);
+    const relationshipContext = getStoryRelationshipContext(activeStory);
+    const selectedRules = getStorySelectedSystemRules(activeStory);
+    const targetIndex = clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1));
+    const baseVersions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
+    const baseline = baseVersions[targetIndex] || "";
+    if (collapseWhitespace(baseline)) {
+      const ok = window.confirm("This message already has text. Generating will overwrite it. Use revise to refine instead. Continue?");
+      if (!ok) return;
+    }
+    setStoryFirstMessageHistories((prev) => {
+      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      while (base.length <= targetIndex) base.push([""]);
+      base[targetIndex].push(baseline);
+      return base;
+    });
+    setStoryFirstMessageHistoryIndices((prev) => {
+      const base = prev.length ? [...prev] : [0];
+      while (base.length <= targetIndex) base.push(0);
+      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
+      return base;
+    });
     setGenError(null);
     setGenLoading(true);
-    startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
         system: `You create first messages for roleplay story sessions. ${styleInstruction} Return only the message text.`,
@@ -2843,26 +3008,145 @@ ${activeStory.scenario}
 System rules:
 ${storySystemRulesInput || activeStory.systemRules || ""}
 
+Selected system rules:
+${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
+
 Characters:
 ${cast}
 
+Character context:
+${storyCharacterContext}
+
 Relationships:
-${activeStory.relationships.map((r) => `${r.fromCharacterId}->${r.toCharacterId} ${r.relationType} ${r.alignment}`).join("\n")}
+${relationshipContext}
 
 Plot points:
 ${activeStory.plotPoints.join("\n")}
 
 Prompt:
 ${prompt}`,
-        lorebookIds: activeStory.assignedLorebookIds,
-        maxTokens: Math.max(400, proxyMaxTokens),
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
+        maxTokens: proxyMaxTokens,
         stream: proxyStreamingEnabled,
-        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setStoryFirstMessageInput),
+        onStreamUpdate: (partial) => {
+          setStoryFirstMessageInput(partial);
+          setStoryFirstMessageHistories((prev) => {
+            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+            while (base.length <= targetIndex) base.push([""]);
+            const history = base[targetIndex];
+            history[history.length - 1] = partial;
+            return base;
+          });
+          updateStory(activeStory.id, {
+            firstMessageVersions: baseVersions.map((m, i) => (i === targetIndex ? partial : m)),
+            selectedFirstMessageIndex: targetIndex,
+            firstMessage: partial,
+            firstMessageStyle: storyFirstMessageStyle,
+            systemRules: storySystemRulesInput,
+          });
+        },
       });
-      commitGeneratedText(fieldKey, out, setStoryFirstMessageInput, true);
-      updateStory(activeStory.id, { firstMessage: out, firstMessageStyle: storyFirstMessageStyle, systemRules: storySystemRulesInput });
+      setStoryFirstMessageInput(out);
+      setStoryFirstMessageHistories((prev) => {
+        const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+        while (base.length <= targetIndex) base.push([""]);
+        base[targetIndex][base[targetIndex].length - 1] = out;
+        return base;
+      });
+      updateStory(activeStory.id, {
+        firstMessageVersions: baseVersions.map((m, i) => (i === targetIndex ? out : m)),
+        selectedFirstMessageIndex: targetIndex,
+        firstMessage: out,
+        firstMessageStyle: storyFirstMessageStyle,
+        systemRules: storySystemRulesInput,
+      });
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "First message generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  async function reviseStoryFirstMessage() {
+    if (!activeStory) return;
+    const feedback = collapseWhitespace(storyFirstMessageRevisionPrompt);
+    const currentMessage = storyFirstMessageInput || activeStory.firstMessage || "";
+    if (!collapseWhitespace(currentMessage)) {
+      setGenError("Write or generate a first message before revising.");
+      return;
+    }
+    if (!feedback) {
+      setGenError("Write revision instructions first.");
+      return;
+    }
+
+    const cast = activeStory.characterIds
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c)
+      .map((c) => `${c.name}: ${c.synopsis || ""}`)
+      .join("\n");
+    const storyCharacterContext = getStoryCharacterContext(activeStory);
+    const relationshipContext = getStoryRelationshipContext(activeStory);
+    const selectedRules = getStorySelectedSystemRules(activeStory);
+
+    const baseVersions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
+    const targetIndex = clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, baseVersions.length));
+    const baseline = baseVersions[targetIndex] || "";
+    setStoryFirstMessageHistories((prev) => {
+      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      while (base.length <= targetIndex) base.push([""]);
+      base[targetIndex].push(baseline);
+      return base;
+    });
+    setStoryFirstMessageHistoryIndices((prev) => {
+      const base = prev.length ? [...prev] : [0];
+      while (base.length <= targetIndex) base.push(0);
+      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
+      return base;
+    });
+    setGenError(null);
+    setGenLoading(true);
+    try {
+      const out = await callProxyChatCompletion({
+        system: "Revise the first message while preserving continuity with story context and character details. Return only the revised first message text.",
+        user: `Scenario:\n${activeStory.scenario}\n\nSystem rules:\n${storySystemRulesInput || activeStory.systemRules || ""}\n\nSelected system rules:\n${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}\n\nCharacters:\n${cast}\n\nCharacter context:\n${storyCharacterContext}\n\nRelationships:\n${relationshipContext}\n\nCurrent first message:\n${currentMessage}\n\nRevision instructions:\n${feedback}`,
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
+        maxTokens: proxyMaxTokens,
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => {
+          setStoryFirstMessageInput(partial);
+          setStoryFirstMessageHistories((prev) => {
+            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+            while (base.length <= targetIndex) base.push([""]);
+            const history = base[targetIndex];
+            history[history.length - 1] = partial;
+            return base;
+          });
+          updateStory(activeStory.id, {
+            firstMessageVersions: baseVersions.map((m, i) => (i === targetIndex ? partial : m)),
+            selectedFirstMessageIndex: targetIndex,
+            firstMessage: partial,
+            firstMessageStyle: storyFirstMessageStyle,
+            systemRules: storySystemRulesInput,
+          });
+        },
+      });
+      setStoryFirstMessageInput(out);
+      setStoryFirstMessageHistories((prev) => {
+        const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+        while (base.length <= targetIndex) base.push([""]);
+        base[targetIndex][base[targetIndex].length - 1] = out;
+        return base;
+      });
+      updateStory(activeStory.id, {
+        firstMessageVersions: baseVersions.map((m, i) => (i === targetIndex ? out : m)),
+        selectedFirstMessageIndex: targetIndex,
+        firstMessage: out,
+        firstMessageStyle: storyFirstMessageStyle,
+        systemRules: storySystemRulesInput,
+      });
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "First message revision failed.");
     } finally {
       setGenLoading(false);
     }
@@ -2953,6 +3237,10 @@ ${lorebookContext}` : "",
         ],
         temperature: args.temperature ?? proxyTemperature,
         max_tokens: args.maxTokens ?? proxyMaxTokens,
+        max_completion_tokens: args.maxTokens ?? proxyMaxTokens,
+        context_size: proxyContextSize,
+        max_context_tokens: proxyContextSize,
+        num_ctx: proxyContextSize,
         stream: !!args.stream,
       }),
     });
@@ -3057,6 +3345,10 @@ ${lorebookContext}` : "",
           ],
           temperature: args.temperature ?? proxyTemperature,
           max_tokens: args.maxTokens ?? proxyMaxTokens,
+          max_completion_tokens: args.maxTokens ?? proxyMaxTokens,
+          context_size: proxyContextSize,
+          max_context_tokens: proxyContextSize,
+          num_ctx: proxyContextSize,
           stream: false,
         }),
       });
@@ -3085,16 +3377,30 @@ ${more}`.trim();
 
     const user = `Character info:\n${getCharacterSummaryForLLM()}\n\nUser prompt:\n${userPrompt}\n\nReturn ONLY the intro message text.`;
 
-    let targetIndex = 0;
-    setIntroMessages((prev) => {
-      const base = prev.length ? [...prev] : [""];
-      targetIndex = base.length;
-      return [...base, ""];
+    const targetIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
+    const existing = introMessages[targetIndex] || "";
+    if (collapseWhitespace(existing)) {
+      const ok = window.confirm(
+        "This intro already has text. Generating will overwrite this intro. Use the revise box to refine instead. Continue?"
+      );
+      if (!ok) return;
+    }
+
+    const baseline = existing;
+    setIntroVersionHistories((prev) => {
+      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      while (base.length <= targetIndex) base.push([""]);
+      const history = base[targetIndex];
+      history.push(baseline);
+      return base;
     });
-    setIntroIndex(targetIndex);
-    const fieldKey = `character:intro:${targetIndex}`;
+    setIntroVersionIndices((prev) => {
+      const base = prev.length ? [...prev] : [0];
+      while (base.length <= targetIndex) base.push(0);
+      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
+      return base;
+    });
     setGenLoading(true);
-    startGeneratedTextPage(fieldKey);
     try {
       const text = await callProxyChatCompletion({
         system,
@@ -3102,21 +3408,37 @@ ${more}`.trim();
         temperature: 0.95,
         stream: proxyStreamingEnabled,
         lorebookIds: characterAssignedLorebookIds,
-        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => {
+        onStreamUpdate: (partial) => {
+          setIntroVersionHistories((prev) => {
+            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+            while (base.length <= targetIndex) base.push([""]);
+            const history = base[targetIndex];
+            if (!history.length) history.push("");
+            history[history.length - 1] = partial;
+            return base;
+          });
           setIntroMessages((prev) => {
             const base = prev.length ? [...prev] : [""];
             const i = clampIndex(targetIndex, base.length);
-            base[i] = next;
+            base[i] = partial;
             return base;
           });
-        }),
+        },
       });
-      commitGeneratedText(fieldKey, text, (next) => setIntroMessages((prev) => {
+      setIntroMessages((prev) => {
         const base = prev.length ? [...prev] : [""];
         const i = clampIndex(targetIndex, base.length);
-        base[i] = next;
+        base[i] = text;
         return base;
-      }), true);
+      });
+      setIntroVersionHistories((prev) => {
+        const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+        while (base.length <= targetIndex) base.push([""]);
+        const history = base[targetIndex];
+        if (!history.length) history.push(text);
+        else history[history.length - 1] = text;
+        return base;
+      });
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Generation failed.");
     } finally {
@@ -3139,7 +3461,7 @@ ${more}`.trim();
       const text = await callProxyChatCompletion({
         system,
         user,
-        maxTokens: Math.min(220, Math.max(64, proxyMaxTokens)),
+        maxTokens: proxyMaxTokens,
         temperature: 0.9,
         stream: proxyStreamingEnabled,
         lorebookIds: characterAssignedLorebookIds,
@@ -3157,7 +3479,7 @@ ${more}`.trim();
 
   async function reviseSelectedIntro() {
     setGenError(null);
-    const feedback = collapseWhitespace(introRevisionFeedback);
+    const feedback = collapseWhitespace(introRevisionPrompt);
     const currentIntro =
       introMessages[clampIndex(introIndex, Math.max(1, introMessages.length))] || "";
 
@@ -3184,16 +3506,21 @@ ${feedback}
 
 Return only the revised intro message.`;
 
-    let targetIndex = 0;
-    setIntroMessages((prev) => {
-      const base = prev.length ? [...prev] : [""];
-      targetIndex = base.length;
-      return [...base, ""];
+    const targetIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
+    setIntroVersionHistories((prev) => {
+      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      while (base.length <= targetIndex) base.push([""]);
+      const history = base[targetIndex];
+      history.push(currentIntro);
+      return base;
     });
-    setIntroIndex(targetIndex);
-    const fieldKey = `character:intro:${targetIndex}`;
+    setIntroVersionIndices((prev) => {
+      const base = prev.length ? [...prev] : [0];
+      while (base.length <= targetIndex) base.push(0);
+      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
+      return base;
+    });
     setGenLoading(true);
-    startGeneratedTextPage(fieldKey);
     try {
       const text = await callProxyChatCompletion({
         system,
@@ -3201,21 +3528,37 @@ Return only the revised intro message.`;
         temperature: 0.9,
         lorebookIds: characterAssignedLorebookIds,
         stream: proxyStreamingEnabled,
-        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => {
+        onStreamUpdate: (partial) => {
+          setIntroVersionHistories((prev) => {
+            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+            while (base.length <= targetIndex) base.push([""]);
+            const history = base[targetIndex];
+            if (!history.length) history.push("");
+            history[history.length - 1] = partial;
+            return base;
+          });
           setIntroMessages((prev) => {
             const base = prev.length ? [...prev] : [""];
             const i = clampIndex(targetIndex, base.length);
-            base[i] = next;
+            base[i] = partial;
             return base;
           });
-        }),
+        },
       });
-      commitGeneratedText(fieldKey, text, (next) => setIntroMessages((prev) => {
+      setIntroMessages((prev) => {
         const base = prev.length ? [...prev] : [""];
         const i = clampIndex(targetIndex, base.length);
-        base[i] = next;
+        base[i] = text;
         return base;
-      }), true);
+      });
+      setIntroVersionHistories((prev) => {
+        const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+        while (base.length <= targetIndex) base.push([""]);
+        const history = base[targetIndex];
+        if (!history.length) history.push(text);
+        else history[history.length - 1] = text;
+        return base;
+      });
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Revision failed.");
     } finally {
@@ -3256,7 +3599,7 @@ Return only the revised synopsis.`;
       const text = await callProxyChatCompletion({
         system,
         user,
-        maxTokens: Math.min(280, Math.max(80, proxyMaxTokens)),
+        maxTokens: proxyMaxTokens,
         temperature: 0.9,
         lorebookIds: characterAssignedLorebookIds,
         stream: proxyStreamingEnabled,
@@ -3276,12 +3619,82 @@ Return only the revised synopsis.`;
       next.push("");
       return next;
     });
+    setIntroVersionHistories((prev) => {
+      const next = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      next.push([""]);
+      return next;
+    });
+    setIntroVersionIndices((prev) => {
+      const next = prev.length ? [...prev] : [0];
+      next.push(0);
+      return next;
+    });
     setIntroIndex((prev) => prev + 1);
+  }
+
+  function buildIntroRevisionTemplate(introText: string) {
+    return `Current intro context:
+${introText || "(empty)"}
+
+Revision instructions:
+`;
   }
 
   useEffect(() => {
     setIntroIndex((i) => clampIndex(i, Math.max(1, introMessages.length)));
   }, [introMessages.length]);
+
+  useEffect(() => {
+    const current = introMessages[clampIndex(introIndex, Math.max(1, introMessages.length))] || "";
+    setIntroRevisionPrompt(buildIntroRevisionTemplate(current));
+  }, [introIndex, introMessages.length]);
+
+  function getStoryCharacterContext(story: StoryProject) {
+    const cast = story.characterIds
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c);
+    if (!cast.length) return "No character data available.";
+    return cast
+      .map((c) => [
+        `Character: ${collapseWhitespace(c.name) || "(unnamed)"}`,
+        `Gender: ${c.gender || ""}`,
+        `Race: ${collapseWhitespace(c.race) || collapseWhitespace(c.racePreset) || ""}`,
+        `Origins: ${collapseWhitespace(c.origins)}`,
+        `Personality: ${(c.personalities || []).join(", ")}`,
+        `Unique traits: ${(c.uniqueTraits || []).join(", ")}`,
+        `Behavior (problem response): ${(c.respondToProblems || []).join(", ")}`,
+        `Behavior (sexual): ${(c.sexualBehavior || []).join(", ")}`,
+        `Backstory: ${(c.backstory || []).join(" | ")}`,
+        `Synopsis: ${collapseWhitespace(c.synopsis)}`,
+      ].join("\n"))
+      .join("\n\n");
+  }
+
+  function getStoryRelationshipContext(story: StoryProject) {
+    if (!story.relationships.length) return "None";
+    return story.relationships
+      .map((r) => {
+        const from = characters.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
+        const to = characters.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
+        const details = collapseWhitespace(r.details);
+        return `${from} -> ${to}: ${r.relationType} (${r.alignment})${details ? ` | ${details}` : ""}`;
+      })
+      .join("\n");
+  }
+
+  function getStorySelectedSystemRules(story: StoryProject) {
+    const selected = new Set(story.selectedSystemRuleIds || []);
+    return STORY_SYSTEM_RULE_CARDS.filter((rule) => selected.has(rule.id)).map((rule) => rule.text);
+  }
+
+  function getStoryGenerationLorebookIds(story: StoryProject) {
+    const ids = new Set<string>(story.assignedLorebookIds || []);
+    for (const characterId of story.characterIds || []) {
+      const c = characters.find((ch) => ch.id === characterId);
+      for (const lorebookId of c?.assignedLorebookIds || []) ids.add(lorebookId);
+    }
+    return Array.from(ids);
+  }
 
   async function generateStoryScenario() {
     if (!activeStory) return;
@@ -3293,6 +3706,8 @@ Return only the revised synopsis.`;
     const charBlob = activeStory.characterIds
       .map((id) => characters.find((c) => c.id === id)?.name || id)
       .join(", ");
+    const storyCharacterContext = getStoryCharacterContext(activeStory);
+    const selectedRules = getStorySelectedSystemRules(activeStory);
     const fieldKey = `story-scenario:${activeStory.id}`;
     setGenError(null);
     setGenLoading(true);
@@ -3300,10 +3715,18 @@ Return only the revised synopsis.`;
     try {
       const out = await callProxyChatCompletion({
         system:
-          "You create roleplay story scenarios for multi-character casts. Return only scenario prose.",
-        user: `Characters: ${charBlob}\nPrompt: ${prompt}`,
-        maxTokens: Math.min(400, Math.max(120, proxyMaxTokens)),
-        lorebookIds: activeStory.assignedLorebookIds,
+          "You create roleplay story scenarios for multi-character casts. Preserve continuity with provided character context and selected story rules. Return only scenario prose.",
+        user: `Characters: ${charBlob}
+
+Character context:
+${storyCharacterContext}
+
+Selected system rules:
+${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
+
+Prompt: ${prompt}`,
+        maxTokens: proxyMaxTokens,
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => updateStory(activeStory.id, { scenario: next })),
       });
@@ -3322,16 +3745,28 @@ Return only the revised synopsis.`;
       setGenError("Write scenario revision feedback first.");
       return;
     }
+    const storyCharacterContext = getStoryCharacterContext(activeStory);
+    const selectedRules = getStorySelectedSystemRules(activeStory);
     const fieldKey = `story-scenario:${activeStory.id}`;
     setGenError(null);
     setGenLoading(true);
     startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
-        system: "Revise scenario text based on feedback. Return only revised scenario.",
-        user: `Current scenario:\n${activeStory.scenario}\n\nFeedback:\n${feedback}`,
-        maxTokens: Math.min(450, Math.max(140, proxyMaxTokens)),
-        lorebookIds: activeStory.assignedLorebookIds,
+        system: "Revise scenario text based on feedback while preserving continuity with cast context and selected system rules. Return only revised scenario.",
+        user: `Character context:
+${storyCharacterContext}
+
+Selected system rules:
+${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
+
+Current scenario:
+${activeStory.scenario}
+
+Feedback:
+${feedback}`,
+        maxTokens: proxyMaxTokens,
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => updateStory(activeStory.id, { scenario: next })),
       });
@@ -3349,15 +3784,28 @@ Return only the revised synopsis.`;
       setGenError("Add at least one plot point first.");
       return;
     }
+    const storyCharacterContext = getStoryCharacterContext(activeStory);
+    const relationshipContext = getStoryRelationshipContext(activeStory);
+    const selectedRules = getStorySelectedSystemRules(activeStory);
     setGenError(null);
     setGenLoading(true);
     try {
       const out = await callProxyChatCompletion({
         system:
           "Expand plot points into more detailed entries, each max 30 words. Return JSON array of strings only.",
-        user: `Current plot points:\n${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}`,
-        maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
-        lorebookIds: activeStory.assignedLorebookIds,
+        user: `Character context:
+${storyCharacterContext}
+
+Selected system rules:
+${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
+
+Relationships:
+${relationshipContext}
+
+Current plot points:
+${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}`,
+        maxTokens: proxyMaxTokens,
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
       });
       const items = parseGeneratedBackstoryEntries(out);
@@ -3380,14 +3828,30 @@ Return only the revised synopsis.`;
       setGenError("Write plot point revision feedback first.");
       return;
     }
+    const storyCharacterContext = getStoryCharacterContext(activeStory);
+    const relationshipContext = getStoryRelationshipContext(activeStory);
+    const selectedRules = getStorySelectedSystemRules(activeStory);
     setGenError(null);
     setGenLoading(true);
     try {
       const out = await callProxyChatCompletion({
         system: "Revise plot point list with each entry max 30 words. Return JSON array of strings only.",
-        user: `Current points:\n${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}\n\nFeedback:\n${feedback}`,
-        maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
-        lorebookIds: activeStory.assignedLorebookIds,
+        user: `Character context:
+${storyCharacterContext}
+
+Selected system rules:
+${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
+
+Relationships:
+${relationshipContext}
+
+Current points:
+${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}
+
+Feedback:
+${feedback}`,
+        maxTokens: proxyMaxTokens,
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
       });
       const items = parseGeneratedBackstoryEntries(out);
@@ -3576,14 +4040,15 @@ Return only the revised synopsis.`;
         }
       `}</style>
 
-      <div className="mx-auto max-w-7xl">
+      <div className="mx-auto max-w-7xl pt-28 md:pt-32">
         {storageError ? (
           <div className="mt-4 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-sm">
             <div className="font-semibold">Storage issue</div>
             <div className="mt-1 text-[hsl(var(--muted-foreground))]">{storageError}</div>
           </div>
         ) : null}
-        <header className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <header className="fixed inset-x-0 top-0 z-50 border-b border-[hsl(var(--border))] bg-[hsl(var(--background))/0.95] backdrop-blur">
+          <div className="mx-auto flex w-full max-w-7xl flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:justify-between md:px-8">
           <div className="flex items-center gap-2">
             {page !== "library" && canGoBack ? (
               <Button variant="secondary" onClick={goBack}>
@@ -3599,53 +4064,61 @@ Return only the revised synopsis.`;
             </button>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-            <Button variant="secondary" onClick={() => setProxyOpen(true)}>
-              <SlidersHorizontal className="h-4 w-4" /> Proxy
-            </Button>
-            <Button variant="secondary" onClick={() => setPersonaOpen(true)}>
+            <div ref={navMenusRef} className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "characters" ? null : "characters"))}>Characters</Button>
+                {navMenuOpen === "characters" ? (
+                  <div className="anim-dropdown-down absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
+                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); resetForm(); navigateTo("create"); setTab("overview"); }}><Plus className="h-4 w-4" /> Create new character</Button>
+                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("characters"); }}><Library className="h-4 w-4" /> View character gallery</Button>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="relative">
+                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "stories" ? null : "stories"))}>Stories</Button>
+                {navMenuOpen === "stories" ? (
+                  <div className="anim-dropdown-down absolute right-0 z-50 mt-2 w-52 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
+                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("storywriting"); }}><Plus className="h-4 w-4" /> Create new story</Button>
+                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("my_stories"); }}><Library className="h-4 w-4" /> View stories</Button>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="relative">
+                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "lorebooks" ? null : "lorebooks"))}>Lorebooks</Button>
+                {navMenuOpen === "lorebooks" ? (
+                  <div className="anim-dropdown-down absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
+                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); createLorebook(); }}><Plus className="h-4 w-4" /> Create new lorebook</Button>
+                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("lorebooks"); }}><BookOpen className="h-4 w-4" /> View lorebooks</Button>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="relative">
+                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "settings" ? null : "settings"))}><Settings className="h-4 w-4" /> Settings</Button>
+                {navMenuOpen === "settings" ? (
+                  <div className="anim-dropdown-down absolute right-0 z-50 mt-2 w-48 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
+                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); setProxyOpen(true); }}><SlidersHorizontal className="h-4 w-4" /> Proxy</Button>
+                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); setTheme((t) => (t === "light" ? "dark" : "light")); }}>
+                      {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            <Button variant="secondary" onClick={() => { setNavMenuOpen(null); setPersonaOpen(true); }}>
               <UserRound className="h-4 w-4" /> Persona
             </Button>
-            <Button variant="secondary" onClick={() => navigateTo("chat")}>
+            <Button variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("chat"); }}>
               <MessageCircle className="h-4 w-4" /> Chats
             </Button>
-            <Button variant="secondary" onClick={() => navigateTo("storywriting")}>
-              <BookOpen className="h-4 w-4" /> Storywriting
-            </Button>
-            <Button variant="secondary" onClick={() => navigateTo("my_stories")}>
-              <Library className="h-4 w-4" /> My Stories
-            </Button>
-            <Button variant="secondary" onClick={() => navigateTo("lorebooks")}>
-              <BookOpen className="h-4 w-4" /> Lorebooks
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
-            >
-              {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-              {theme === "light" ? "Dark" : "Light"}
-            </Button>
-            <Button variant="secondary" onClick={exportAll}>
-              <Download className="h-4 w-4" /> Export
-            </Button>
-            <Button variant="secondary" onClick={() => fileRef.current?.click()}>
-              <Upload className="h-4 w-4" /> Import
-            </Button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/json"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) handleImportFile(f);
-                e.currentTarget.value = "";
-              }}
-            />
+          </div>
           </div>
         </header>
 
         {page === "chat" ? (
-          <div className="mt-6 grid gap-4 lg:grid-cols-3">
+          <div className="anim-page mt-6 grid gap-4 lg:grid-cols-3">
             <div className="space-y-3 lg:col-span-1">
               <div className="flex items-center justify-between gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                 <div>
@@ -3746,7 +4219,7 @@ Return only the revised synopsis.`;
             </div>
           </div>
         ) : page === "storywriting" ? (
-          <div className="relative mt-6 space-y-4" ref={storywritingDndRef}>
+          <div className="anim-page relative mt-6 space-y-4" ref={storywritingDndRef}>
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xl font-semibold">Storywriting</div>
@@ -3757,6 +4230,38 @@ Return only the revised synopsis.`;
               </Button>
             </div>
 
+            {isMobile ? (
+              <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <div className="text-sm font-semibold">Select cast members</div>
+                <div className="space-y-2">
+                  {characters.map((c) => (
+                    <label key={c.id} className="flex items-center gap-2 rounded-lg border border-[hsl(var(--border))] p-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={storyDraftMobileSelection.includes(c.id)}
+                        onChange={(e) => {
+                          setStoryDraftMobileSelection((prev) => e.target.checked ? [...prev, c.id] : prev.filter((id) => id !== c.id));
+                        }}
+                      />
+                      <span>{c.name}</span>
+                    </label>
+                  ))}
+                  {!characters.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No characters available.</div> : null}
+                </div>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    const ids = Array.from(new Set([...storyDraftCharacterIds, ...storyDraftMobileSelection]));
+                    setStoryDraftCharacterIds(ids);
+                    setStoryDraftMobileSelection([]);
+                  }}
+                  disabled={!storyDraftMobileSelection.length}
+                >
+                  Confirm add to cast
+                </Button>
+                <div className="text-xs text-[hsl(var(--muted-foreground))]">Current cast: {storyDraftCharacterIds.length}</div>
+              </div>
+            ) : (
             <div className="grid gap-4 lg:grid-cols-4">
               {!storySidebarHidden ? (
                 <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 lg:col-span-1">
@@ -3827,6 +4332,7 @@ Return only the revised synopsis.`;
                 ) : null}
               </div>
             </div>
+            )}
 
             <div className="fixed bottom-4 right-4">
               <Button variant="primary" className="rounded-full px-6 py-3" onClick={proceedStoryDraft}>
@@ -3848,9 +4354,9 @@ Return only the revised synopsis.`;
             })() : null}
           </div>
         ) : page === "my_stories" ? (
-          <div className="mt-6 space-y-4">
+          <div className="anim-page mt-6 space-y-4">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-xl font-semibold">My Stories</div>
+              <div className="text-xl font-semibold">Stories</div>
               <div className="flex gap-2">
                 <Button variant="primary" onClick={() => navigateTo("storywriting")}>
                   <Plus className="h-4 w-4" /> Create
@@ -3860,22 +4366,19 @@ Return only the revised synopsis.`;
                 </Button>
               </div>
             </div>
-            <div className="space-y-2">
+            <div className="anim-stagger grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {stories.map((s) => (
-                <div key={s.id} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <div className="font-medium">{s.title}</div>
-                      <div className="text-xs text-[hsl(var(--muted-foreground))]">{new Date(s.updatedAt).toLocaleString()}</div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
+                <div key={s.id} className="overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))]">
+                  <div className="relative aspect-[4/3] border-b border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                    {s.imageDataUrl ? <img src={s.imageDataUrl} alt={s.title} className="absolute inset-0 h-full w-full object-cover" /> : null}
+                  </div>
+                  <div className="p-3">
+                    <div className="font-medium">{s.title}</div>
+                    <div className="text-xs text-[hsl(var(--muted-foreground))]">{new Date(s.updatedAt).toLocaleString()}</div>
+                    <div className="mt-3 flex flex-wrap gap-2">
                       <Button variant="secondary" onClick={() => { setActiveStoryId(s.id); navigateTo("story_editor"); }}>Open</Button>
-                      <Button variant="secondary" onClick={() => downloadJSON((filenameSafe(s.title) || "story") + ".json", s)}>
-                        <Download className="h-4 w-4" /> JSON
-                      </Button>
-                      <Button variant="secondary" onClick={() => exportStoryTxt(s)}>
-                        <Download className="h-4 w-4" /> TXT
-                      </Button>
+                      <Button variant="secondary" onClick={() => exportStoryTxt(s)}><Download className="h-4 w-4" /> TXT</Button>
+                      <Button variant="danger" onClick={() => { if (window.confirm(`Delete ${s.title}?`)) deleteStory(s.id); }}><Trash2 className="h-4 w-4" /> Delete</Button>
                     </div>
                   </div>
                 </div>
@@ -3884,7 +4387,7 @@ Return only the revised synopsis.`;
             </div>
           </div>
         ) : page === "lorebooks" ? (
-          <div className="mt-6 space-y-4">
+          <div className="anim-page mt-6 space-y-4">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xl font-semibold">Lorebooks</div>
@@ -3925,7 +4428,7 @@ Return only the revised synopsis.`;
             </div>
           </div>
         ) : page === "lorebook_create" ? (
-          <div className="mt-6 space-y-4">
+          <div className="anim-page mt-6 space-y-4">
             {!activeLorebook ? (
               <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-sm text-[hsl(var(--muted-foreground))]">Pick a lorebook from the lorebooks menu first.</div>
             ) : (
@@ -3968,6 +4471,7 @@ Return only the revised synopsis.`;
                   ))}
                 </div>
 
+                <div key={lorebookTab} className="anim-tab-switch">
                 {lorebookTab === "overview" ? (
                   <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                     <div>
@@ -4073,7 +4577,7 @@ Return only the revised synopsis.`;
                     </div>
 
                     {factionEditorOpen ? (
-                      <div className="fixed right-0 top-0 z-50 h-screen w-full max-w-[34vw] min-w-[320px] overflow-y-auto border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 shadow-2xl">
+                      <div className="fixed right-0 top-0 z-50 h-screen w-full max-w-[34vw] min-w-[320px] overflow-y-auto border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 shadow-2xl anim-slide-in-right">
                         <div className="mb-3 flex items-center justify-between">
                           <div className="text-lg font-semibold">{editingFactionId ? "Edit faction" : "Create faction"}</div>
                           <Button variant="secondary" onClick={() => setFactionEditorOpen(false)}><X className="h-4 w-4" /></Button>
@@ -4179,18 +4683,19 @@ Return only the revised synopsis.`;
                     </div>
                   </div>
                 ) : null}
+                </div>
               </>
             )}
           </div>
         ) : page === "story_editor" ? (
-          <div className="mt-6 space-y-4">
+          <div className="anim-page mt-6 space-y-4">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xl font-semibold">{activeStory?.title || "Story Editor"}</div>
                 <div className="text-sm text-[hsl(var(--muted-foreground))]">Scenario • Relationships • Plot Points</div>
               </div>
               <div className="flex gap-2">
-                <Button variant="secondary" onClick={() => navigateTo("my_stories")}>My Stories</Button>
+                <Button variant="secondary" onClick={() => navigateTo("my_stories")}>Stories</Button>
                 <Button variant="secondary" onClick={() => activeStory && downloadJSON((filenameSafe(activeStory.title) || "story") + ".json", activeStory)}>
                   <Download className="h-4 w-4" /> JSON
                 </Button>
@@ -4229,6 +4734,7 @@ Return only the revised synopsis.`;
               ))}
             </div>
 
+            <div key={storyTab} className="anim-tab-switch">
             {!activeStory ? (
               <div className="text-sm text-[hsl(var(--muted-foreground))]">Select a story first.</div>
             ) : storyTab === "scenario" ? (
@@ -4285,6 +4791,137 @@ Return only the revised synopsis.`;
               </div>
             ) : storyTab === "first_message" ? (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-lg font-semibold">First Message</div>
+                    <div className="text-sm text-[hsl(var(--muted-foreground))]">Create multiple first-message versions and switch between them.</div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={() => {
+                      if (!activeStory) return;
+                      const versions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
+                      const idx = versions.length;
+                      const next = [...versions, ""];
+                      updateStory(activeStory.id, { firstMessageVersions: next, selectedFirstMessageIndex: idx, firstMessage: "" });
+                      setStoryFirstMessageInput("");
+                      setStoryFirstMessageHistories((prev) => {
+                        const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+                        base.push([""]);
+                        return base;
+                      });
+                      setStoryFirstMessageHistoryIndices((prev) => {
+                        const base = prev.length ? [...prev] : [0];
+                        base.push(0);
+                        return base;
+                      });
+                    }}
+                  >
+                    <Plus className="h-4 w-4" /> New
+                  </Button>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    disabled={(activeStory.selectedFirstMessageIndex || 0) <= 0}
+                    onClick={() => {
+                      if (!activeStory) return;
+                      const versions = activeStory.firstMessageVersions?.length ? activeStory.firstMessageVersions : [activeStory.firstMessage || ""];
+                      const idx = clampIndex((activeStory.selectedFirstMessageIndex || 0) - 1, versions.length);
+                      updateStory(activeStory.id, { selectedFirstMessageIndex: idx, firstMessage: versions[idx] || "" });
+                      setStoryFirstMessageInput(versions[idx] || "");
+                      setStoryFirstMessageRevisionPrompt(`Current first message context:\n${versions[idx] || "(empty)"}\n\nRevision instructions:\n`);
+                    }}
+                  >
+                    <ChevronLeft className="h-4 w-4" /> Prev message
+                  </Button>
+                  <div className="text-sm">
+                    Message <span className="font-semibold">{(activeStory.selectedFirstMessageIndex || 0) + 1}</span> / {Math.max(1, activeStory.firstMessageVersions?.length || 1)}
+                  </div>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    disabled={(activeStory.selectedFirstMessageIndex || 0) >= Math.max(1, activeStory.firstMessageVersions?.length || 1) - 1}
+                    onClick={() => {
+                      if (!activeStory) return;
+                      const versions = activeStory.firstMessageVersions?.length ? activeStory.firstMessageVersions : [activeStory.firstMessage || ""];
+                      const idx = clampIndex((activeStory.selectedFirstMessageIndex || 0) + 1, versions.length);
+                      updateStory(activeStory.id, { selectedFirstMessageIndex: idx, firstMessage: versions[idx] || "" });
+                      setStoryFirstMessageInput(versions[idx] || "");
+                      setStoryFirstMessageRevisionPrompt(`Current first message context:\n${versions[idx] || "(empty)"}\n\nRevision instructions:\n`);
+                    }}
+                  >
+                    Next message <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    disabled={(() => {
+                      const i = clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1));
+                      const history = storyFirstMessageHistories[i] || [storyFirstMessageInput || ""];
+                      const current = clampIndex(storyFirstMessageHistoryIndices[i] || 0, history.length);
+                      return current <= 0;
+                    })()}
+                    onClick={() => {
+                      const i = clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1));
+                      const history = storyFirstMessageHistories[i] || [storyFirstMessageInput || ""];
+                      const current = clampIndex(storyFirstMessageHistoryIndices[i] || 0, history.length);
+                      const nextIdx = clampIndex(current - 1, history.length);
+                      const nextText = history[nextIdx] || "";
+                      setStoryFirstMessageHistoryIndices((prev) => {
+                        const base = prev.length ? [...prev] : [0];
+                        while (base.length <= i) base.push(0);
+                        base[i] = nextIdx;
+                        return base;
+                      });
+                      setStoryFirstMessageInput(nextText);
+                      const versions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
+                      versions[i] = nextText;
+                      updateStory(activeStory.id, { firstMessage: nextText, firstMessageVersions: versions, selectedFirstMessageIndex: i });
+                    }}
+                  >
+                    <ChevronLeft className="h-4 w-4" /> Roll back
+                  </Button>
+                  <div className="text-sm text-[hsl(var(--muted-foreground))]">
+                    Iteration {(storyFirstMessageHistoryIndices[clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1))] || 0) + 1} / {Math.max(1, storyFirstMessageHistories[clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1))]?.length || 1)}
+                  </div>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    disabled={(() => {
+                      const i = clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1));
+                      const history = storyFirstMessageHistories[i] || [storyFirstMessageInput || ""];
+                      const current = clampIndex(storyFirstMessageHistoryIndices[i] || 0, history.length);
+                      return current >= history.length - 1;
+                    })()}
+                    onClick={() => {
+                      const i = clampIndex(activeStory.selectedFirstMessageIndex || 0, Math.max(1, activeStory.firstMessageVersions?.length || 1));
+                      const history = storyFirstMessageHistories[i] || [storyFirstMessageInput || ""];
+                      const current = clampIndex(storyFirstMessageHistoryIndices[i] || 0, history.length);
+                      const nextIdx = clampIndex(current + 1, history.length);
+                      const nextText = history[nextIdx] || "";
+                      setStoryFirstMessageHistoryIndices((prev) => {
+                        const base = prev.length ? [...prev] : [0];
+                        while (base.length <= i) base.push(0);
+                        base[i] = nextIdx;
+                        return base;
+                      });
+                      setStoryFirstMessageInput(nextText);
+                      const versions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
+                      versions[i] = nextText;
+                      updateStory(activeStory.id, { firstMessage: nextText, firstMessageVersions: versions, selectedFirstMessageIndex: i });
+                    }}
+                  >
+                    Roll forward <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
                     <div className="mb-1 text-sm font-medium">Style preset</div>
@@ -4300,27 +4937,104 @@ Return only the revised synopsis.`;
                   </div>
                 </div>
                 <Button variant="secondary" onClick={generateStoryFirstMessage} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate first message</Button>
-                {renderGeneratedTextarea({
-                  fieldKey: `story-first-message:${activeStory.id}`,
-                  value: storyFirstMessageInput,
-                  onChange: (next) => {
+
+                <Textarea
+                  value={storyFirstMessageInput}
+                  onChange={(e) => {
+                    const next = e.target.value;
                     setStoryFirstMessageInput(next);
-                    if (activeStory) updateStory(activeStory.id, { firstMessage: next, firstMessageStyle: storyFirstMessageStyle });
-                  },
-                  rows: 10,
-                })}
+                    if (!activeStory) return;
+                    const versions = activeStory.firstMessageVersions?.length ? [...activeStory.firstMessageVersions] : [activeStory.firstMessage || ""];
+                    const idx = clampIndex(activeStory.selectedFirstMessageIndex || 0, versions.length);
+                    versions[idx] = next;
+                    setStoryFirstMessageHistories((prev) => {
+                      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+                      while (base.length <= idx) base.push([""]);
+                      const history = base[idx];
+                      const iterIdx = clampIndex(storyFirstMessageHistoryIndices[idx] || 0, history.length);
+                      history[iterIdx] = next;
+                      return base;
+                    });
+                    updateStory(activeStory.id, { firstMessage: next, firstMessageStyle: storyFirstMessageStyle, firstMessageVersions: versions, selectedFirstMessageIndex: idx });
+                  }}
+                  rows={10}
+                />
+
+                <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
+                  <div className="text-sm font-medium">Revise selected first message</div>
+                  <Textarea
+                    value={storyFirstMessageRevisionPrompt}
+                    onChange={(e) => setStoryFirstMessageRevisionPrompt(e.target.value)}
+                    rows={6}
+                    placeholder="Revision prompt for this first message..."
+                  />
+                  <Button variant="secondary" onClick={reviseStoryFirstMessage} disabled={genLoading || !collapseWhitespace(storyFirstMessageRevisionPrompt)}>
+                    <Sparkles className="h-4 w-4" /> Revise first message
+                  </Button>
+                </div>
               </div>
             ) : storyTab === "system_rules" ? (
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-2">
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-4">
                 <div className="text-sm font-medium">System rules</div>
-                <Textarea value={storySystemRulesInput} onChange={(e) => { setStorySystemRulesInput(e.target.value); if (activeStory) updateStory(activeStory.id, { systemRules: e.target.value }); }} rows={10} />
+                <div className="grid gap-2 md:grid-cols-2">
+                  {STORY_SYSTEM_RULE_CARDS.map((rule) => {
+                    const selected = !!activeStory.selectedSystemRuleIds?.includes(rule.id);
+                    return (
+                      <button
+                        key={rule.id}
+                        type="button"
+                        className={cn(
+                          "rounded-xl border px-3 py-3 text-left text-sm transition-colors",
+                          selected
+                            ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]"
+                            : "border-[hsl(var(--border))] bg-[hsl(var(--background))]"
+                        )}
+                        onClick={() => {
+                          if (!activeStory) return;
+                          const selectedSet = new Set(activeStory.selectedSystemRuleIds || []);
+                          if (selectedSet.has(rule.id)) selectedSet.delete(rule.id);
+                          else selectedSet.add(rule.id);
+                          updateStory(activeStory.id, { selectedSystemRuleIds: Array.from(selectedSet) });
+                        }}
+                      >
+                        <div className="font-medium">{rule.label}</div>
+                        <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">{rule.text}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
+                  <div className="text-sm font-medium">Selected rule list</div>
+                  {(activeStory.selectedSystemRuleIds || []).length ? (
+                    <ul className="list-disc space-y-1 pl-5 text-sm">
+                      {STORY_SYSTEM_RULE_CARDS.filter((rule) => activeStory.selectedSystemRuleIds.includes(rule.id)).map((rule) => (
+                        <li key={rule.id}>{rule.text}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="text-xs text-[hsl(var(--muted-foreground))]">No rule cards selected yet.</div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs font-medium text-[hsl(var(--muted-foreground))]">Additional custom system rules</div>
+                  <Textarea value={storySystemRulesInput} onChange={(e) => { setStorySystemRulesInput(e.target.value); if (activeStory) updateStory(activeStory.id, { systemRules: e.target.value }); }} rows={8} />
+                </div>
               </div>
             ) : storyTab === "relationships" ? (
               <div className="space-y-3">
-                <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                  <div className="mb-3 text-sm text-[hsl(var(--muted-foreground))]">Build one-way visual links between cast cards in the full relationship board.</div>
-                  <Button variant="secondary" onClick={() => navigateTo("story_relationship_board")}>Open Relationship Builder</Button>
-                </div>
+                {!isMobile ? (
+                  <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                    <div className="mb-3 text-sm text-[hsl(var(--muted-foreground))]">Build relationship links on the full relationship board.</div>
+                    <Button variant="secondary" onClick={() => navigateTo("story_relationship_board")}>Open Relationship Builder</Button>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                    <div className="mb-3 text-sm text-[hsl(var(--muted-foreground))]">Mobile mode: create relationships directly from cards using the editor below.</div>
+                    <Button variant="secondary" onClick={() => { setSelectedRelationshipId(null); setStoryRelFromId(activeStory.characterIds[0] || ""); setStoryRelToId(activeStory.characterIds[1] || ""); setStoryRelAlignment("Neutral"); setStoryRelType("Platonic"); setStoryRelDetails(""); setStoryRelationshipEditorOpen(true); }}>Create new relationship</Button>
+                  </div>
+                )}
                 <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                   <div className="mb-2 text-sm font-medium">Relationships</div>
                   {activeStory.relationships.length ? (
@@ -4346,7 +5060,7 @@ Return only the revised synopsis.`;
                               selectedRelationshipId === r.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--background))]" : "border-[hsl(var(--border))] bg-[hsl(var(--background))]"
                             )}
                           >
-                            <div className="font-medium">{a} → {b}</div>
+                            <div className="font-medium">{a} ↔ {b}</div>
                             <div className="text-[hsl(var(--muted-foreground))]">{r.alignment}</div>
                           </button>
                         );
@@ -4357,7 +5071,7 @@ Return only the revised synopsis.`;
                   )}
                 </div>
                 {storyRelationshipEditorOpen ? (
-                <div className="fixed right-0 top-0 z-40 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <div className="fixed right-0 top-0 z-40 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 anim-slide-in-right">
                   <div className="text-sm font-semibold">Relationship Editor</div>
                   <div className="mt-3 space-y-3">
                     <div>
@@ -4396,8 +5110,17 @@ Return only the revised synopsis.`;
                       <div className="text-xs">Details</div>
                       <Textarea value={storyRelDetails} onChange={(e) => setStoryRelDetails(e.target.value)} rows={4} />
                     </div>
+                    <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                      <div className="text-xs font-medium">Details prompt</div>
+                      <Textarea value={relationshipDetailsPrompt} onChange={(e) => setRelationshipDetailsPrompt(e.target.value)} rows={3} placeholder="Generate or revise relationship details..." />
+                      <div className="flex gap-2">
+                        <Button variant="secondary" onClick={() => improveSelectedRelationshipDetails("generate")} disabled={genLoading || !selectedRelationshipId}><Sparkles className="h-4 w-4" /> Generate</Button>
+                        <Button variant="secondary" onClick={() => improveSelectedRelationshipDetails("revise")} disabled={genLoading || !selectedRelationshipId}><Sparkles className="h-4 w-4" /> Revise</Button>
+                      </div>
+                    </div>
                     <div className="flex gap-2">
                       <Button variant="primary" onClick={saveRelationshipEdge}>Save relation</Button>
+                      {selectedRelationshipId ? <Button variant="secondary" onClick={deleteSelectedRelationship}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
                       <Button variant="secondary" onClick={closeRelationshipEditor}>Close</Button>
                     </div>
                   </div>
@@ -4449,14 +5172,15 @@ Return only the revised synopsis.`;
             )}
 
             {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
+            </div>
           </div>
         ) : page === "story_relationship_board" ? (
           !activeStory ? (
-            <div className="mt-6 text-sm text-[hsl(var(--muted-foreground))]">Select a story first.</div>
+            <div className="anim-page mt-6 text-sm text-[hsl(var(--muted-foreground))]">Select a story first.</div>
           ) : (
-            <div className="fixed inset-0 z-30 bg-[hsl(var(--background))] p-3 md:p-6">
+            <div className="fixed inset-0 z-[70] bg-[hsl(var(--background))] p-3 md:p-6">
               <div className="mb-2 flex items-center justify-between">
-                <div className="text-sm text-[hsl(var(--muted-foreground))]">Drag picture cards and connect To → From dots</div>
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">Drag picture cards and connect top dots to create two-way links</div>
                 <Button variant="secondary" onClick={closeRelationshipBoard}>Close full board</Button>
               </div>
               <div className="relative h-[calc(100vh-86px)] w-full overflow-hidden rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-0">
@@ -4489,7 +5213,7 @@ Return only the revised synopsis.`;
                     connectionSnapTargetIdRef.current = snapTargetId;
                     setConnectionSnapTargetId(snapTargetId);
                     if (snapTargetId) {
-                      const snapPoint = getBoardNodeCenter(snapTargetId, "from");
+                      const snapPoint = getBoardNodeCenter(snapTargetId);
                       if (snapPoint) {
                         setConnectingPointer(snapPoint);
                         return;
@@ -4525,72 +5249,39 @@ Return only the revised synopsis.`;
                         const fromName = r.fromCharacterId === USER_NODE_ID ? "USER" : (characters.find((c) => c.id === r.fromCharacterId)?.name || "?");
                         const toName = r.toCharacterId === USER_NODE_ID ? "USER" : (characters.find((c) => c.id === r.toCharacterId)?.name || "?");
                         return (
-                          <button
+                          <div
                             key={r.id}
-                            type="button"
-                            onClick={() => selectExistingRelationship(r)}
                             className={cn(
-                              "w-full rounded-lg border px-2 py-2 text-left text-xs",
+                              "flex items-center gap-2 rounded-lg border px-2 py-2 text-xs",
                               selectedRelationshipId === r.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))] bg-[hsl(var(--background))]"
                             )}
                           >
-                            <div className="font-medium">{fromName} → {toName}</div>
-                            <div className="text-[hsl(var(--muted-foreground))]">{r.relationType} · {r.alignment}</div>
-                          </button>
+                            <button type="button" onClick={() => selectExistingRelationship(r)} className="flex-1 text-left">
+                              <div className="font-medium">{fromName} ↔ {toName}</div>
+                              <div className="text-[hsl(var(--muted-foreground))]">{r.relationType} · {r.alignment}</div>
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded border border-[hsl(var(--border))] p-1"
+                              onClick={() => {
+                                updateStory(activeStory.id, { relationships: activeStory.relationships.filter((x) => x.id !== r.id) });
+                                if (selectedRelationshipId === r.id) {
+                                  setSelectedRelationshipId(null);
+                                  setStoryRelationshipEditorOpen(false);
+                                  setPendingRelationshipEdge(null);
+                                }
+                              }}
+                              aria-label="Delete relationship"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         );
                       })}
                       {!activeStory.relationships.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No relationships yet.</div> : null}
                     </div>
                   </div>
                   <div className="absolute inset-0" style={{ transform: `translate(${boardPan.x}px, ${boardPan.y}px)` }}>
-                  <svg className="absolute inset-0 h-full w-full">
-                    {activeStory.relationships.map((r, idx) => {
-                      const from = getBoardNodeCenter(r.fromCharacterId, "to");
-                      const to = getBoardNodeCenter(r.toCharacterId, "from");
-                      if (!from || !to) return null;
-                      const selected = selectedRelationshipId === r.id;
-                      return (
-                        <path
-                          key={r.id}
-                          d={getFlowPath(from, to, idx % 6)}
-                          stroke={selected ? "hsl(var(--hover-accent))" : "hsl(var(--muted-foreground))"}
-                          strokeWidth={selected ? 4 : 2}
-                          fill="none"
-                          strokeLinecap="round"
-                          style={{ pointerEvents: "stroke", cursor: "pointer" }}
-                          onMouseEnter={() => setSelectedRelationshipId(r.id)}
-                          onClick={() => selectExistingRelationship(r)}
-                        />
-                      );
-                    })}
-                    {pendingRelationshipEdge ? (() => {
-                      const from = getBoardNodeCenter(pendingRelationshipEdge.fromCharacterId, "to");
-                      const to = getBoardNodeCenter(pendingRelationshipEdge.toCharacterId, "from");
-                      if (!from || !to) return null;
-                      return (
-                        <path
-                          d={getFlowPath(from, to, 0)}
-                          stroke="hsl(var(--hover-accent))"
-                          strokeWidth={3}
-                          fill="none"
-                          strokeDasharray="8 5"
-                        />
-                      );
-                    })() : null}
-                    {connectingFromId && connectingPointer ? (() => {
-                      const from = getBoardNodeCenter(connectingFromId, "to");
-                      if (!from) return null;
-                      return (
-                        <path
-                          d={getFlowPath(from, connectingPointer, 0)}
-                          stroke="hsl(var(--hover-accent))"
-                          strokeWidth={2}
-                          fill="none"
-                          strokeDasharray="6 4"
-                        />
-                      );
-                    })() : null}
-                  </svg>
                   {[...activeStory.boardNodes, ...(activeStory.boardNodes.some((bn) => bn.characterId === USER_NODE_ID) ? [] : [{ characterId: USER_NODE_ID, x: 40, y: 120 }])].map((n) => {
                     const c = n.characterId === USER_NODE_ID ? ({ id: USER_NODE_ID, name: "USER", imageDataUrl: "" } as any) : characters.find((x) => x.id === n.characterId);
                     if (!c) return null;
@@ -4603,7 +5294,7 @@ Return only the revised synopsis.`;
                           beginRelationshipCardDrag(n.characterId, "board", e, n.x, n.y);
                         }}
                         className={cn(
-                          "absolute w-64 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow transition-all duration-200",
+                          "absolute z-10 w-64 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow transition-all duration-200",
                           storyDragCharacterId === n.characterId && "scale-95 opacity-70"
                         )}
                         style={{ left: n.x, top: n.y }}
@@ -4617,23 +5308,9 @@ Return only the revised synopsis.`;
                           <button
                             type="button"
                             className={cn(
-                              "absolute left-1 top-1 h-3 w-3 rounded-full bg-[hsl(var(--ring))] transition-all",
+                              "absolute left-1/2 top-1 h-3 w-3 -translate-x-1/2 rounded-full bg-[hsl(var(--ring))] transition-all",
                               connectionSnapTargetId === n.characterId && "ring-2 ring-[hsl(var(--hover-accent))]"
                             )}
-                            onMouseDown={() => {
-                              dotPointerDownRef.current = true;
-                            }}
-                            onMouseUp={(e) => {
-                              dotPointerDownRef.current = false;
-                              if (connectingFromIdRef.current && connectingFromIdRef.current !== n.characterId) {
-                                finishConnectionDrag(n.characterId, e);
-                              }
-                            }}
-                            aria-label="from-dot"
-                          />
-                          <button
-                            type="button"
-                            className="absolute right-1 top-1 h-3 w-3 rounded-full bg-[hsl(var(--hover-accent))]"
                             onMouseDown={(e) => {
                               dotPointerDownRef.current = true;
                               beginConnectionDrag(n.characterId, e);
@@ -4644,13 +5321,61 @@ Return only the revised synopsis.`;
                                 finishConnectionDrag(n.characterId, e);
                               }
                             }}
-                            aria-label="to-dot"
+                            aria-label="from-dot"
                           />
-                          <div className="absolute inset-x-0 top-4 bg-black/45 px-1 py-0.5 text-center text-[11px] font-semibold text-white">{c.name}</div>
+                          <div className="absolute inset-x-0 top-6 bg-black/45 px-1 py-0.5 text-center text-[11px] font-semibold text-white">{c.name}</div>
                         </div>
                       </div>
                     );
                   })}
+                  <svg className="pointer-events-none absolute left-[-6000px] top-[-6000px] z-20 h-[12000px] w-[12000px]" style={{ overflow: "visible" }}>
+                    {activeStory.relationships.map((r) => {
+                      const from = getBoardNodeCenter(r.fromCharacterId);
+                      const to = getBoardNodeCenter(r.toCharacterId);
+                      if (!from || !to) return null;
+                      const selected = selectedRelationshipId === r.id;
+                      const shiftedFrom = { x: from.x + 6000, y: from.y + 6000 };
+                      const shiftedTo = { x: to.x + 6000, y: to.y + 6000 };
+                      return (
+                        <path
+                          key={r.id}
+                          d={getFlowPath(shiftedFrom, shiftedTo)}
+                          stroke={selected ? "hsl(var(--hover-accent))" : "hsl(var(--muted-foreground))"}
+                          strokeWidth={selected ? 4 : 2}
+                          fill="none"
+                          strokeLinecap="round"
+
+                        />
+                      );
+                    })}
+                    {pendingRelationshipEdge ? (() => {
+                      const from = getBoardNodeCenter(pendingRelationshipEdge.fromCharacterId);
+                      const to = getBoardNodeCenter(pendingRelationshipEdge.toCharacterId);
+                      if (!from || !to) return null;
+                      return (
+                        <path
+                          d={getFlowPath({ x: from.x + 6000, y: from.y + 6000 }, { x: to.x + 6000, y: to.y + 6000 })}
+                          stroke="hsl(var(--hover-accent))"
+                          strokeWidth={3}
+                          fill="none"
+                          strokeDasharray="8 5"
+                        />
+                      );
+                    })() : null}
+                    {connectingFromId && connectingPointer ? (() => {
+                      const from = getBoardNodeCenter(connectingFromId);
+                      if (!from) return null;
+                      return (
+                        <path
+                          d={getFlowPath({ x: from.x + 6000, y: from.y + 6000 }, { x: connectingPointer.x + 6000, y: connectingPointer.y + 6000 })}
+                          stroke="hsl(var(--hover-accent))"
+                          strokeWidth={2}
+                          fill="none"
+                          strokeDasharray="6 4"
+                        />
+                      );
+                    })() : null}
+                  </svg>
                   {relationshipDrag ? (() => {
                     const c = characters.find((x) => x.id === relationshipDrag.id);
                     if (!c) return null;
@@ -4665,7 +5390,7 @@ Return only the revised synopsis.`;
                           ) : (
                             <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
                           )}
-                          <div className="absolute inset-x-0 top-4 bg-black/45 px-1 py-0.5 text-center text-[11px] font-semibold text-white">{c.name}</div>
+                          <div className="absolute inset-x-0 top-6 bg-black/45 px-1 py-0.5 text-center text-[11px] font-semibold text-white">{c.name}</div>
                         </div>
                       </div>
                     );
@@ -4718,7 +5443,7 @@ Return only the revised synopsis.`;
                 </div>
 
                 {storyRelationshipEditorOpen ? (
-                  <div className="fixed right-0 top-0 z-40 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                  <div className="fixed right-0 top-0 z-40 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 anim-slide-in-right">
                     <div className="text-sm font-semibold">Relationship Editor</div>
                     <div className="mt-3 space-y-3">
                       <div>
@@ -4759,8 +5484,17 @@ Return only the revised synopsis.`;
                         <div className="text-xs">Details</div>
                         <Textarea value={storyRelDetails} onChange={(e) => setStoryRelDetails(e.target.value)} rows={4} />
                       </div>
+                      <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                        <div className="text-xs font-medium">Details prompt</div>
+                        <Textarea value={relationshipDetailsPrompt} onChange={(e) => setRelationshipDetailsPrompt(e.target.value)} rows={3} placeholder="Generate or revise relationship details..." />
+                        <div className="flex gap-2">
+                          <Button variant="secondary" onClick={() => improveSelectedRelationshipDetails("generate")} disabled={genLoading || !selectedRelationshipId}><Sparkles className="h-4 w-4" /> Generate</Button>
+                          <Button variant="secondary" onClick={() => improveSelectedRelationshipDetails("revise")} disabled={genLoading || !selectedRelationshipId}><Sparkles className="h-4 w-4" /> Revise</Button>
+                        </div>
+                      </div>
                       <div className="flex gap-2">
                         <Button variant="primary" onClick={saveRelationshipEdge}>Save relation</Button>
+                        {selectedRelationshipId ? <Button variant="secondary" onClick={deleteSelectedRelationship}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
                         <Button variant="secondary" onClick={closeRelationshipEditor}>Close</Button>
                       </div>
                     </div>
@@ -4770,25 +5504,34 @@ Return only the revised synopsis.`;
             </div>
           )
         ) : page === "library" ? (
-          <div className="mt-6 space-y-6">
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="anim-page mt-6 space-y-6">
+            <div className="anim-stagger grid gap-4 md:grid-cols-3">
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <div className="mb-3 text-sm font-semibold">Characters</div>
                 <Button variant="primary" className="w-full justify-center py-3" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}>
-                  <Plus className="h-4 w-4" /> Create a new character
+                  <Plus className="h-4 w-4" /> Create new character
                 </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("characters")}>View characters</Button>
+                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("characters")}>
+                  <Library className="h-4 w-4" /> View character gallery
+                </Button>
               </div>
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <div className="mb-3 text-sm font-semibold">Stories</div>
                 <Button variant="primary" className="w-full justify-center py-3" onClick={() => navigateTo("storywriting")}>
-                  <Plus className="h-4 w-4" /> Create a new story
+                  <Plus className="h-4 w-4" /> Create new story
                 </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("my_stories")}>View stories</Button>
+                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("my_stories")}>
+                  <Library className="h-4 w-4" /> View stories
+                </Button>
               </div>
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                <Button variant="primary" className="w-full justify-center py-3" onClick={() => navigateTo("lorebooks")}>
-                  <Plus className="h-4 w-4" /> Lorebook creation
+                <div className="mb-3 text-sm font-semibold">Lorebooks</div>
+                <Button variant="primary" className="w-full justify-center py-3" onClick={createLorebook}>
+                  <Plus className="h-4 w-4" /> Create new lorebook
                 </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("lorebooks")}>View lorebooks</Button>
+                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("lorebooks")}>
+                  <BookOpen className="h-4 w-4" /> View lorebooks
+                </Button>
               </div>
             </div>
 
@@ -4845,7 +5588,7 @@ Return only the revised synopsis.`;
             </div>
           </div>
         ) : page === "characters" ? (
-          <div className="mt-6 space-y-4">
+          <div className="anim-page mt-6 space-y-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="relative w-full md:max-w-xl">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-[hsl(var(--muted-foreground))]" />
@@ -4903,7 +5646,7 @@ Return only the revised synopsis.`;
             )}
           </div>
         ) : (
-          <div className="mt-6 space-y-4">
+          <div className="anim-page mt-6 space-y-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-2">
                 <Button variant="secondary" onClick={() => navigateTo("library")}>
@@ -4984,7 +5727,7 @@ Return only the revised synopsis.`;
               ))}
             </div>
 
-            <div className="grid gap-6 lg:grid-cols-5">
+            <div key={tab} className="anim-tab-switch grid gap-6 lg:grid-cols-5">
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-sm lg:col-span-3">
                 <div className="space-y-6 p-5 md:p-6">
                   {tab === "overview" ? (
@@ -5103,8 +5846,8 @@ Return only the revised synopsis.`;
                             Create multiple intros and switch between them.
                           </div>
                         </div>
-                        <Button variant="secondary" type="button" onClick={addNewIntro}>
-                          <Plus className="h-4 w-4" /> New
+                        <Button variant="primary" type="button" onClick={addNewIntro}>
+                          <Plus className="h-4 w-4" /> Create
                         </Button>
                       </div>
 
@@ -5118,7 +5861,7 @@ Return only the revised synopsis.`;
                             )
                           }
                         >
-                          <ChevronLeft className="h-4 w-4" />
+                          <ChevronLeft className="h-4 w-4" /> Prev intro
                         </Button>
                         <div className="text-sm">
                           Intro <span className="font-semibold">{introIndex + 1}</span> / {Math.max(1, introMessages.length)}
@@ -5132,7 +5875,59 @@ Return only the revised synopsis.`;
                             )
                           }
                         >
-                          <ChevronRight className="h-4 w-4" />
+                          Next intro <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          onClick={() => {
+                            const i = clampIndex(introIndex, Math.max(1, introMessages.length));
+                            const history = introVersionHistories[i] || [introMessages[i] || ""];
+                            const current = clampIndex(introVersionIndices[i] || 0, history.length);
+                            const nextIdx = clampIndex(current - 1, history.length);
+                            setIntroVersionIndices((prev) => {
+                              const base = prev.length ? [...prev] : [0];
+                              while (base.length <= i) base.push(0);
+                              base[i] = nextIdx;
+                              return base;
+                            });
+                            setIntroMessages((prev) => {
+                              const base = prev.length ? [...prev] : [""];
+                              base[i] = history[nextIdx] || "";
+                              return base;
+                            });
+                          }}
+                        >
+                          <ChevronLeft className="h-4 w-4" /> Roll back
+                        </Button>
+                        <div className="text-sm text-[hsl(var(--muted-foreground))]">
+                          Version {(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) + 1} / {Math.max(1, introVersionHistories[clampIndex(introIndex, Math.max(1, introMessages.length))]?.length || 1)}
+                        </div>
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          onClick={() => {
+                            const i = clampIndex(introIndex, Math.max(1, introMessages.length));
+                            const history = introVersionHistories[i] || [introMessages[i] || ""];
+                            const current = clampIndex(introVersionIndices[i] || 0, history.length);
+                            const nextIdx = clampIndex(current + 1, history.length);
+                            setIntroVersionIndices((prev) => {
+                              const base = prev.length ? [...prev] : [0];
+                              while (base.length <= i) base.push(0);
+                              base[i] = nextIdx;
+                              return base;
+                            });
+                            setIntroMessages((prev) => {
+                              const base = prev.length ? [...prev] : [""];
+                              base[i] = history[nextIdx] || "";
+                              return base;
+                            });
+                          }}
+                        >
+                          Roll forward <ChevronRight className="h-4 w-4" />
                         </Button>
                       </div>
 
@@ -5150,14 +5945,18 @@ Return only the revised synopsis.`;
                             base[i] = v;
                             return base;
                           });
+                          setIntroVersionHistories((prev) => {
+                            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+                            const i = clampIndex(introIndex, Math.max(1, base.length));
+                            while (base.length <= i) base.push([""]);
+                            const history = base[i];
+                            const versionIdx = clampIndex(introVersionIndices[i] || 0, history.length);
+                            history[versionIdx] = v;
+                            return base;
+                          });
                         }}
                         rows={9}
                         placeholder="Write the opening message…"
-                        className={cn(
-                          generatedTextStates[`character:intro:${clampIndex(introIndex, Math.max(1, introMessages.length))}`]?.pages[
-                            generatedTextStates[`character:intro:${clampIndex(introIndex, Math.max(1, introMessages.length))}`]?.activeIndex || 0
-                          ]?.isFinal === false && "opacity-60"
-                        )}
                       />
 
                       <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
@@ -5182,18 +5981,18 @@ Return only the revised synopsis.`;
                           </div>
                         </div>
                         <div className="space-y-2">
-                          <div className="text-sm font-medium">Revise selected intro with feedback</div>
+                          <div className="text-sm font-medium">Revise selected intro</div>
                           <Textarea
-                            value={introRevisionFeedback}
-                            onChange={(e) => setIntroRevisionFeedback(e.target.value)}
-                            rows={3}
-                            placeholder="Feedback for this intro only (e.g., make it longer and add more descriptive dialogue)…"
+                            value={introRevisionPrompt}
+                            onChange={(e) => setIntroRevisionPrompt(e.target.value)}
+                            rows={6}
+                            placeholder="Revision prompt for this intro..."
                           />
                           <Button
                             variant="secondary"
                             type="button"
                             onClick={reviseSelectedIntro}
-                            disabled={!collapseWhitespace(introRevisionFeedback) || genLoading}
+                            disabled={!collapseWhitespace(introRevisionPrompt) || genLoading}
                           >
                             <Sparkles className="h-4 w-4" /> Revise this intro
                           </Button>
@@ -5452,7 +6251,7 @@ Return only the revised synopsis.`;
 
 
         <Modal open={characterLorebookPickerOpen} onClose={() => setCharacterLorebookPickerOpen(false)} title="Assign Lorebooks to Character" widthClass="max-w-4xl">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="anim-stagger grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {lorebooks.map((book) => {
               const selected = previewChar ? (previewChar.assignedLorebookIds || []).includes(book.id) : characterAssignedLorebookIds.includes(book.id);
               return (
@@ -5605,11 +6404,10 @@ Return only the revised synopsis.`;
                 onChange={(e) => setProxyContextSize(Number(e.target.value))}
                 className="w-full"
               />
-              <div className="flex justify-between text-[11px] text-[hsl(var(--muted-foreground))]">
-                <span>16k</span>
-                <span>32k</span>
-                <span>64k</span>
-                <span>128k</span>
+              <div className="grid grid-cols-8 text-[11px] text-[hsl(var(--muted-foreground))]">
+                {[16, 32, 48, 64, 80, 96, 112, 128].map((k) => (
+                  <span key={k} className="text-center">{k}k</span>
+                ))}
               </div>
               <div className="text-xs text-[hsl(var(--muted-foreground))]">Current: {Math.round(proxyContextSize / 1000)}k tokens.</div>
             </div>

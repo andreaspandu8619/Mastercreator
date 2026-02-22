@@ -1,3 +1,98 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer utilities {
+  @keyframes fade-slide-zoom-in {
+    0% {
+      opacity: 0;
+      transform: translateY(10px) scale(0.985);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes fade-in-soft {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slide-in-right-soft {
+    0% {
+      opacity: 0;
+      transform: translateX(24px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes tab-slide-fade {
+    0% {
+      opacity: 0;
+      transform: translateX(10px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes dropdown-reveal-down {
+    0% {
+      opacity: 0;
+      transform: translateY(-8px) scale(0.98);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .anim-page {
+    animation: fade-slide-zoom-in 280ms ease-out;
+    transform-origin: 50% 24px;
+  }
+
+  .anim-fade {
+    animation: fade-in-soft 220ms ease-out;
+  }
+
+  .anim-stagger > * {
+    animation: fade-slide-zoom-in 300ms ease-out both;
+  }
+
+  .anim-stagger > *:nth-child(2) { animation-delay: 40ms; }
+  .anim-stagger > *:nth-child(3) { animation-delay: 80ms; }
+  .anim-stagger > *:nth-child(4) { animation-delay: 120ms; }
+
+  .anim-slide-in-right {
+    animation: slide-in-right-soft 260ms ease-out;
+  }
+
+  .anim-tab-switch {
+    animation: tab-slide-fade 220ms ease-out;
+  }
+
+  .anim-dropdown-down {
+    animation: dropdown-reveal-down 180ms ease-out;
+    transform-origin: top right;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-page,
+  .anim-fade,
+  .anim-stagger > * {
+    animation: none !important;
+  }
+
+  .anim-slide-in-right,
+  .anim-tab-switch,
+  .anim-dropdown-down {
+    animation: none !important;
+  }
+}
