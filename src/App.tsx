@@ -2283,7 +2283,7 @@ ${entry.content || "(empty)"}
 
 User prompt for improvements:
 ${prompt}`,
-        maxTokens: Math.max(2000, proxyMaxTokens),
+        maxTokens: proxyMaxTokens,
         temperature: 0.8,
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => onPatch({ content: next })),
@@ -2327,7 +2327,7 @@ New prompt:
 ${prompt}
 
 Return only the revised world entry content.`,
-        maxTokens: Math.max(2500, proxyMaxTokens),
+        maxTokens: proxyMaxTokens,
         temperature: 0.85,
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) =>
@@ -2798,8 +2798,8 @@ ${rel.details || "(empty)"}
 
 Prompt:
 ${prompt}`,
-        maxTokens: Math.max(300, proxyMaxTokens),
-        lorebookIds: activeStory.assignedLorebookIds,
+        maxTokens: Math.min(150, proxyMaxTokens),
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => {
           commitGeneratedText(fieldKey, partial, (next) => {
@@ -2933,7 +2933,7 @@ ${backstoryText || "(empty)"}
 
 Instruction:
 ${prompt}`,
-        maxTokens: Math.max(1000, proxyMaxTokens),
+        maxTokens: proxyMaxTokens,
         lorebookIds: characterAssignedLorebookIds,
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setBackstoryText),
@@ -3025,8 +3025,8 @@ ${activeStory.plotPoints.join("\n")}
 
 Prompt:
 ${prompt}`,
-        lorebookIds: activeStory.assignedLorebookIds,
-        maxTokens: Math.max(400, proxyMaxTokens),
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
+        maxTokens: proxyMaxTokens,
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => {
           setStoryFirstMessageInput(partial);
@@ -3110,8 +3110,8 @@ ${prompt}`,
       const out = await callProxyChatCompletion({
         system: "Revise the first message while preserving continuity with story context and character details. Return only the revised first message text.",
         user: `Scenario:\n${activeStory.scenario}\n\nSystem rules:\n${storySystemRulesInput || activeStory.systemRules || ""}\n\nSelected system rules:\n${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}\n\nCharacters:\n${cast}\n\nCharacter context:\n${storyCharacterContext}\n\nRelationships:\n${relationshipContext}\n\nCurrent first message:\n${currentMessage}\n\nRevision instructions:\n${feedback}`,
-        lorebookIds: activeStory.assignedLorebookIds,
-        maxTokens: Math.max(400, proxyMaxTokens),
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
+        maxTokens: proxyMaxTokens,
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => {
           setStoryFirstMessageInput(partial);
@@ -3237,6 +3237,10 @@ ${lorebookContext}` : "",
         ],
         temperature: args.temperature ?? proxyTemperature,
         max_tokens: args.maxTokens ?? proxyMaxTokens,
+        max_completion_tokens: args.maxTokens ?? proxyMaxTokens,
+        context_size: proxyContextSize,
+        max_context_tokens: proxyContextSize,
+        num_ctx: proxyContextSize,
         stream: !!args.stream,
       }),
     });
@@ -3341,6 +3345,10 @@ ${lorebookContext}` : "",
           ],
           temperature: args.temperature ?? proxyTemperature,
           max_tokens: args.maxTokens ?? proxyMaxTokens,
+          max_completion_tokens: args.maxTokens ?? proxyMaxTokens,
+          context_size: proxyContextSize,
+          max_context_tokens: proxyContextSize,
+          num_ctx: proxyContextSize,
           stream: false,
         }),
       });
@@ -3453,7 +3461,7 @@ ${more}`.trim();
       const text = await callProxyChatCompletion({
         system,
         user,
-        maxTokens: Math.min(220, Math.max(64, proxyMaxTokens)),
+        maxTokens: proxyMaxTokens,
         temperature: 0.9,
         stream: proxyStreamingEnabled,
         lorebookIds: characterAssignedLorebookIds,
@@ -3591,7 +3599,7 @@ Return only the revised synopsis.`;
       const text = await callProxyChatCompletion({
         system,
         user,
-        maxTokens: Math.min(280, Math.max(80, proxyMaxTokens)),
+        maxTokens: proxyMaxTokens,
         temperature: 0.9,
         lorebookIds: characterAssignedLorebookIds,
         stream: proxyStreamingEnabled,
@@ -3679,6 +3687,15 @@ Revision instructions:
     return STORY_SYSTEM_RULE_CARDS.filter((rule) => selected.has(rule.id)).map((rule) => rule.text);
   }
 
+  function getStoryGenerationLorebookIds(story: StoryProject) {
+    const ids = new Set<string>(story.assignedLorebookIds || []);
+    for (const characterId of story.characterIds || []) {
+      const c = characters.find((ch) => ch.id === characterId);
+      for (const lorebookId of c?.assignedLorebookIds || []) ids.add(lorebookId);
+    }
+    return Array.from(ids);
+  }
+
   async function generateStoryScenario() {
     if (!activeStory) return;
     const prompt = collapseWhitespace(storyScenarioPrompt);
@@ -3708,8 +3725,8 @@ Selected system rules:
 ${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
 
 Prompt: ${prompt}`,
-        maxTokens: Math.min(400, Math.max(120, proxyMaxTokens)),
-        lorebookIds: activeStory.assignedLorebookIds,
+        maxTokens: proxyMaxTokens,
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => updateStory(activeStory.id, { scenario: next })),
       });
@@ -3748,8 +3765,8 @@ ${activeStory.scenario}
 
 Feedback:
 ${feedback}`,
-        maxTokens: Math.min(450, Math.max(140, proxyMaxTokens)),
-        lorebookIds: activeStory.assignedLorebookIds,
+        maxTokens: proxyMaxTokens,
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => updateStory(activeStory.id, { scenario: next })),
       });
@@ -3787,8 +3804,8 @@ ${relationshipContext}
 
 Current plot points:
 ${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}`,
-        maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
-        lorebookIds: activeStory.assignedLorebookIds,
+        maxTokens: proxyMaxTokens,
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
       });
       const items = parseGeneratedBackstoryEntries(out);
@@ -3833,8 +3850,8 @@ ${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}
 
 Feedback:
 ${feedback}`,
-        maxTokens: Math.min(900, Math.max(250, proxyMaxTokens * 2)),
-        lorebookIds: activeStory.assignedLorebookIds,
+        maxTokens: proxyMaxTokens,
+        lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
       });
       const items = parseGeneratedBackstoryEntries(out);
@@ -4454,6 +4471,7 @@ ${feedback}`,
                   ))}
                 </div>
 
+                <div key={lorebookTab} className="anim-tab-switch">
                 {lorebookTab === "overview" ? (
                   <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                     <div>
@@ -4559,7 +4577,7 @@ ${feedback}`,
                     </div>
 
                     {factionEditorOpen ? (
-                      <div className="fixed right-0 top-0 z-50 h-screen w-full max-w-[34vw] min-w-[320px] overflow-y-auto border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 shadow-2xl">
+                      <div className="fixed right-0 top-0 z-50 h-screen w-full max-w-[34vw] min-w-[320px] overflow-y-auto border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 shadow-2xl anim-slide-in-right">
                         <div className="mb-3 flex items-center justify-between">
                           <div className="text-lg font-semibold">{editingFactionId ? "Edit faction" : "Create faction"}</div>
                           <Button variant="secondary" onClick={() => setFactionEditorOpen(false)}><X className="h-4 w-4" /></Button>
@@ -4665,6 +4683,7 @@ ${feedback}`,
                     </div>
                   </div>
                 ) : null}
+                </div>
               </>
             )}
           </div>
@@ -4715,6 +4734,7 @@ ${feedback}`,
               ))}
             </div>
 
+            <div key={storyTab} className="anim-tab-switch">
             {!activeStory ? (
               <div className="text-sm text-[hsl(var(--muted-foreground))]">Select a story first.</div>
             ) : storyTab === "scenario" ? (
@@ -5051,7 +5071,7 @@ ${feedback}`,
                   )}
                 </div>
                 {storyRelationshipEditorOpen ? (
-                <div className="fixed right-0 top-0 z-40 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <div className="fixed right-0 top-0 z-40 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 anim-slide-in-right">
                   <div className="text-sm font-semibold">Relationship Editor</div>
                   <div className="mt-3 space-y-3">
                     <div>
@@ -5152,6 +5172,7 @@ ${feedback}`,
             )}
 
             {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
+            </div>
           </div>
         ) : page === "story_relationship_board" ? (
           !activeStory ? (
@@ -5422,7 +5443,7 @@ ${feedback}`,
                 </div>
 
                 {storyRelationshipEditorOpen ? (
-                  <div className="fixed right-0 top-0 z-40 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                  <div className="fixed right-0 top-0 z-40 h-full w-[min(92vw,360px)] border-l border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 anim-slide-in-right">
                     <div className="text-sm font-semibold">Relationship Editor</div>
                     <div className="mt-3 space-y-3">
                       <div>
@@ -5706,7 +5727,7 @@ ${feedback}`,
               ))}
             </div>
 
-            <div className="grid gap-6 lg:grid-cols-5">
+            <div key={tab} className="anim-tab-switch grid gap-6 lg:grid-cols-5">
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-sm lg:col-span-3">
                 <div className="space-y-6 p-5 md:p-6">
                   {tab === "overview" ? (
@@ -6383,11 +6404,10 @@ ${feedback}`,
                 onChange={(e) => setProxyContextSize(Number(e.target.value))}
                 className="w-full"
               />
-              <div className="flex justify-between text-[11px] text-[hsl(var(--muted-foreground))]">
-                <span>16k</span>
-                <span>32k</span>
-                <span>64k</span>
-                <span>128k</span>
+              <div className="grid grid-cols-8 text-[11px] text-[hsl(var(--muted-foreground))]">
+                {[16, 32, 48, 64, 80, 96, 112, 128].map((k) => (
+                  <span key={k} className="text-center">{k}k</span>
+                ))}
               </div>
               <div className="text-xs text-[hsl(var(--muted-foreground))]">Current: {Math.round(proxyContextSize / 1000)}k tokens.</div>
             </div>
