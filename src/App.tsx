@@ -22,7 +22,7 @@ import {
 type ThemeMode = "light" | "dark";
 type Gender = "Male" | "Female" | "";
 type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board" | "lorebooks" | "lorebook_create";
-type CreateTab = "overview" | "personality" | "behavior" | "definition" | "system" | "intro" | "synopsis";
+type CreateTab = "overview" | "personality" | "behavior" | "definition" | "system" | "intro" | "synopsis" | "relationships";
 type StoryTab = "scenario" | "first_message" | "system_rules" | "relationships" | "synopsis";
 type LorebookTab = "overview" | "world" | "locations" | "factions" | "rules" | "items" | "specials";
 
@@ -196,6 +196,7 @@ type CharacterCard = {
   id: string;
   name: string;
   characterIds: string[];
+  relationshipStoryId?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -841,6 +842,7 @@ export default function CharacterCreatorApp() {
   const [chatInput, setChatInput] = useState("");
 
   const [query, setQuery] = useState("");
+  const [dragCharacterId, setDragCharacterId] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
 
   const [stories, setStories] = useState<StoryProject[]>([]);
@@ -1404,6 +1406,7 @@ export default function CharacterCreatorApp() {
             id: typeof card.id === "string" ? card.id : uid(),
             name: collapseWhitespace(card.name || "Character Card"),
             characterIds: normalizeStringArray(card.characterIds),
+            relationshipStoryId: typeof card.relationshipStoryId === "string" ? card.relationshipStoryId : undefined,
             createdAt: typeof card.createdAt === "string" ? card.createdAt : now,
             updatedAt: typeof card.updatedAt === "string" ? card.updatedAt : now,
           } as CharacterCard;
@@ -1847,6 +1850,89 @@ export default function CharacterCreatorApp() {
     introIndex,
     characterAssignedLorebookIds,
   ]);
+
+
+  function createCharacterEntryInActiveCard() {
+    const now = new Date().toISOString();
+    const entry: Character = {
+      id: uid(),
+      name: "",
+      gender: "",
+      imageDataUrl: "",
+      age: "",
+      height: "",
+      origins: "",
+      racePreset: "",
+      race: "",
+      personalities: [],
+      uniqueTraits: [],
+      physicalAppearance: [],
+      respondToProblems: [],
+      sexualBehavior: [],
+      backstory: [],
+      selectedBackstoryIndex: 0,
+      systemRules: "",
+      selectedSystemRuleIds: [],
+      synopsis: "",
+      introMessages: [""],
+      selectedIntroIndex: 0,
+      assignedLorebookIds: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    setCharacters((prev) => [entry, ...prev]);
+    if (activeCharacterCardId) {
+      setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, characterIds: [entry.id, ...card.characterIds.filter((id) => id !== entry.id)], updatedAt: now } : card));
+    }
+    loadCharacterIntoForm(entry);
+    setTab("definition");
+    navigateTo("create");
+  }
+
+  function updateWholeCharacterCard() {
+    saveCharacter();
+    if (activeCharacterCardId) {
+      setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, name: collapseWhitespace(characterCardNameInput) || "Character Card", updatedAt: new Date().toISOString() } : card));
+    }
+    setSaveToastOpen(true);
+    window.setTimeout(() => setSaveToastOpen(false), 1400);
+  }
+
+  function openCardRelationshipBoard() {
+    if (!activeCharacterCardId) return;
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId);
+    if (!activeCard) return;
+    const now = new Date().toISOString();
+    const existingStory = activeCard.relationshipStoryId ? stories.find((s) => s.id === activeCard.relationshipStoryId) : null;
+    const story: StoryProject = existingStory || {
+      id: uid(),
+      title: `${activeCard.name || "Character Card"} Relationships`,
+      characterIds: [...activeCard.characterIds],
+      imageDataUrl: "",
+      scenario: "",
+      firstMessage: "",
+      firstMessageVersions: [""],
+      selectedFirstMessageIndex: 0,
+      firstMessageStyle: "realistic",
+      systemRules: "",
+      selectedSystemRuleIds: [],
+      synopsis: "",
+      synopsisStyle: "realistic",
+      relationships: [],
+      boardNodes: [],
+      assignedLorebookIds: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    story.characterIds = [...activeCard.characterIds];
+    setStories((prev) => {
+      const has = prev.some((s) => s.id === story.id);
+      return has ? prev.map((s) => (s.id === story.id ? { ...s, ...story, updatedAt: now } : s)) : [story, ...prev];
+    });
+    setCharacterCards((prev) => prev.map((c) => c.id === activeCharacterCardId ? { ...c, relationshipStoryId: story.id, updatedAt: now } : c));
+    setActiveStoryId(story.id);
+    navigateTo("story_relationship_board");
+  }
 
   function saveCharacter() {
     const err = validate();
@@ -4101,7 +4187,8 @@ ${feedback}`,
   const draft = getDraftCharacter();
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
-    { id: "definition", label: "Definition" },
+    { id: "definition", label: "Characters" },
+    { id: "relationships", label: "Relationships" },
     { id: "system", label: "System Rules" },
     { id: "intro", label: "First Message" },
   ];
@@ -4388,7 +4475,7 @@ ${feedback}`,
             </div>
             )}
 
-            <div className="fixed bottom-4 right-4">
+            <div className="fixed bottom-4 left-4">
               <Button variant="primary" className="rounded-full px-6 py-3" onClick={proceedStoryDraft}>
                 Proceed
               </Button>
@@ -5666,115 +5753,94 @@ ${feedback}`,
             </div>
           </div>
         ) : page === "create" ? (
-          <div className="anim-page mt-6 grid gap-4 lg:grid-cols-[280px,1fr]">
-            <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-              <div className="relative">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-[hsl(var(--muted-foreground))]" />
-                <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search character entries…" className="pl-9" />
-              </div>
-              <Button variant="primary" className="w-full" onClick={() => { resetForm(); setSelectedId(null); setTab("definition"); }}><Plus className="h-4 w-4" /> New character entry</Button>
-              <div className="max-h-[65vh] space-y-2 overflow-auto">
-                {filteredCharacters.map((c) => (
-                  <button key={c.id} type="button" onClick={() => loadCharacterIntoForm(c)} className={cn("w-full rounded-xl border px-3 py-2 text-left text-sm", selectedId===c.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))]")}>
-                    <div className="font-medium">{c.name || "(unnamed)"}</div>
-                    <div className="text-xs text-[hsl(var(--muted-foreground))]">{c.gender || "—"}</div>
-                  </button>
-                ))}
-                {!filteredCharacters.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No entries.</div> : null}
-              </div>
+          <div className="anim-page mt-6 space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {tabs.map((t) => (
+                <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
+              ))}
             </div>
 
-            <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex-1"><div className="text-lg font-semibold">Character Dashboard</div><div className="mt-2"><Input value={characterCardNameInput} onChange={(e) => { const v = e.target.value; setCharacterCardNameInput(v); if (activeCharacterCardId) setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, name: v, updatedAt: new Date().toISOString() } : card)); }} placeholder="Character card name" /></div></div>
-                <div className="flex gap-2">
-                  <Button variant="secondary" onClick={saveCharacter}><Pencil className="h-4 w-4" /> Save</Button>
-                  {selectedId ? <Button variant="secondary" onClick={() => deleteCharacter(selectedId)}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
-                </div>
+            {tab === "relationships" ? (
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">Use the exact drag-and-drop relationship board.</div>
+                <Button variant="secondary" onClick={openCardRelationshipBoard}>Open Relationship Board</Button>
               </div>
-
-              <div className="flex flex-wrap gap-2">
-                {tabs.map((t) => (
-                  <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab===t.id?"border-[hsl(var(--hover-accent))]":"border-[hsl(var(--border))]")}>{t.label}</button>
-                ))}
-              </div>
-
-              {tab === "definition" ? (
-                <div className="space-y-4">
-                  <div className="grid gap-3 md:grid-cols-[160px,1fr]">
-                    <div className="space-y-2">
-                      <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-[hsl(var(--border))]">
-                        {imageDataUrl ? <img src={imageDataUrl} alt="Character" className="absolute inset-0 h-full w-full object-cover object-top" /> : <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>}
-                      </div>
-                      <Button variant="secondary" className="w-full" onClick={() => imageFileRef.current?.click()}><Upload className="h-4 w-4" /> Upload</Button>
-                      <input ref={imageFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePickImage(f); e.currentTarget.value = ""; }} />
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div><div className="mb-1 text-sm">Name</div><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
-                      <div><div className="mb-1 text-sm">Gender</div><Select value={gender} onChange={(e) => setGender(e.target.value as any)}><option value="">—</option><option value="Male">Male</option><option value="Female">Female</option></Select></div>
-                      <div><div className="mb-1 text-sm">Age</div><Input type="number" value={age === "" ? "" : String(age)} onChange={(e) => setAge(e.target.value === "" ? "" : Number(e.target.value))} /></div>
-                      <div><div className="mb-1 text-sm">Race</div><Input value={racePreset === "Other" ? customRace : racePreset} onChange={(e) => { setRacePreset("Other"); setCustomRace(e.target.value); }} placeholder="Race" /></div>
-                    </div>
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-[280px,1fr]">
+                <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-[hsl(var(--muted-foreground))]" />
+                    <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search character entries…" className="pl-9" />
                   </div>
-
-                  <div className="space-y-2"><div className="text-sm font-medium">Personality</div>
-                    <Input value={personalitySearch} onChange={(e) => setPersonalitySearch(e.target.value)} placeholder="Type to filter personalities" />
-                    <div className="flex max-h-36 flex-wrap gap-2 overflow-auto">
-                      {PERSONALITIES.filter((x) => !personalitySearch || x.toLowerCase().includes(personalitySearch.toLowerCase())).map((x) => {
-                        const active = personalities.includes(x);
-                        return <button key={x} type="button" className={cn("rounded-lg border px-2 py-1 text-xs", active ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))]")} onClick={() => setPersonalities((prev) => active ? prev.filter((p) => p !== x) : [...prev, x])}>{x}</button>;
-                      })}
-                    </div>
-                  </div>
-
-                  <div><div className="mb-1 text-sm font-medium">Physical appearance</div><div className="flex gap-2"><Input value={appearanceInput} onChange={(e) => setAppearanceInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, () => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput("")))} /><Button variant="secondary" onClick={() => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{physicalAppearance.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setPhysicalAppearance)}>{x} ×</button>)}</div></div>
-                  <div><div className="mb-1 text-sm font-medium">Unique traits</div><div className="flex gap-2"><Input value={traitInput} onChange={(e)=>setTraitInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput("")))} /><Button variant="secondary" onClick={()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{traits.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setTraits)}>{x} ×</button>)}</div></div>
-
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">Backstory</div>
-                    {renderGeneratedTextarea({ fieldKey: "character:backstory", value: backstoryText, onChange: setBackstoryText, rows: 8, placeholder: "Write backstory here..." })}
-                    <Textarea value={backstoryPrompt} onChange={(e) => setBackstoryPrompt(e.target.value)} rows={3} placeholder="Prompt for generate/revise" />
-                    <div className="flex gap-2">
-                      <Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button>
-                      <Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button>
-                    </div>
+                  <Button variant="primary" className="w-full" onClick={createCharacterEntryInActiveCard}><Plus className="h-4 w-4" /> New character entry</Button>
+                  <div className="max-h-[65vh] space-y-2 overflow-auto">
+                    {filteredCharacters.map((c) => (
+                      <button key={c.id} type="button" draggable onDragStart={() => setDragCharacterId(c.id)} onDragOver={(e) => e.preventDefault()} onDrop={() => {
+                        if (!activeCharacterCardId || !dragCharacterId || dragCharacterId === c.id) return;
+                        setCharacterCards((prev) => prev.map((card) => {
+                          if (card.id !== activeCharacterCardId) return card;
+                          const ids = card.characterIds.filter((id) => id !== dragCharacterId);
+                          const idx = ids.indexOf(c.id);
+                          if (idx < 0) return card;
+                          ids.splice(idx, 0, dragCharacterId);
+                          return { ...card, characterIds: ids, updatedAt: new Date().toISOString() };
+                        }));
+                        setDragCharacterId(null);
+                      }} onClick={() => loadCharacterIntoForm(c)} className={cn("w-full rounded-xl border px-3 py-2 text-left text-sm", selectedId === c.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))]")}>
+                        <div className="font-medium">{c.name || "(no name)"}</div>
+                        <div className="text-xs text-[hsl(var(--muted-foreground))]">{c.gender || "—"}</div>
+                      </button>
+                    ))}
+                    {!filteredCharacters.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No entries.</div> : null}
                   </div>
                 </div>
-              ) : null}
 
-              {tab === "system" ? (
-                <div className="space-y-3">
-                  <div className="grid gap-2">
-                    {STORY_SYSTEM_RULE_CARDS.map((rule) => {
-                      const selected = characterSelectedSystemRuleIds.includes(rule.id);
-                      return (
-                        <button key={rule.id} type="button" className={cn("rounded-xl border p-3 text-left", selected ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))]")} onClick={() => setCharacterSelectedSystemRuleIds((prev) => prev.includes(rule.id) ? prev.filter((id) => id !== rule.id) : [...prev, rule.id])}>
-                          <div className="text-sm font-medium">{rule.label}</div>
-                          <div className="text-xs text-[hsl(var(--muted-foreground))]">{rule.text}</div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div><div className="mb-1 text-xs font-medium text-[hsl(var(--muted-foreground))]">Additional custom system rules</div><Textarea value={systemRules} onChange={(e) => setSystemRules(e.target.value)} rows={8} /></div>
-                </div>
-              ) : null}
-
-              {tab === "intro" ? (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between"><div className="text-sm">Message {introIndex + 1} / {Math.max(1, introMessages.length)}</div><Button variant="secondary" onClick={() => { setIntroMessages((prev)=>[...prev, ""]); setIntroVersionHistories((prev)=>[...prev,[""]]); setIntroVersionIndices((prev)=>[...prev,0]); setIntroIndex(introMessages.length); }}><Plus className="h-4 w-4" /> New</Button></div>
+                <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                   <div className="flex items-center justify-between gap-2">
-                    <Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.max(0,i-1))} disabled={introIndex<=0}><ChevronLeft className="h-4 w-4" /> Prev</Button>
-                    <Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.min(introMessages.length-1,i+1))} disabled={introIndex>=introMessages.length-1}>Next <ChevronRight className="h-4 w-4" /></Button>
+                    <div className="flex-1 space-y-2">
+                      <div className="text-lg font-semibold">Character Dashboard</div>
+                      <Input value={characterCardNameInput} onChange={(e) => { const v = e.target.value; setCharacterCardNameInput(v); if (activeCharacterCardId) setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, name: v, updatedAt: new Date().toISOString() } : card)); }} placeholder="Character card name" />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="secondary" onClick={updateWholeCharacterCard}><Pencil className="h-4 w-4" /> Update</Button>
+                      {selectedId ? <Button variant="secondary" onClick={() => deleteCharacter(selectedId)}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
+                    </div>
                   </div>
-                  <Textarea value={introMessages[clampIndex(introIndex, Math.max(1,introMessages.length))] || ""} onChange={(e) => { const v=e.target.value; setIntroMessages((prev)=>{const b=[...prev]; b[clampIndex(introIndex,b.length)] = v; return b;}); setIntroVersionHistories((prev)=>{const base = prev.length ? prev.map((h)=> (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]]; const i = clampIndex(introIndex, Math.max(1, base.length)); while (base.length <= i) base.push([""]); const history = base[i]; const vi = clampIndex(introVersionIndices[i] || 0, history.length); history[vi] = v; return base;}); }} rows={9} placeholder="Write first message..." />
-                  <Textarea value={introPrompt} onChange={(e)=>setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" />
-                  <div className="flex gap-2"><Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div>
-                  <Textarea value={introRevisionPrompt} onChange={(e)=>setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" />
-                </div>
-              ) : null}
 
-              {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
-            </div>
+                  {tab === "definition" ? (
+                    <div className="space-y-3">
+                      <div className="grid gap-3 md:grid-cols-[160px,1fr]">
+                        <div className="space-y-2">
+                          <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-[hsl(var(--border))]">{imageDataUrl ? <img src={imageDataUrl} alt="Character" className="absolute inset-0 h-full w-full object-cover object-top" /> : <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>}</div>
+                          <Button variant="secondary" className="w-full" onClick={() => imageFileRef.current?.click()}><Upload className="h-4 w-4" /> Upload</Button>
+                          <input ref={imageFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePickImage(f); e.currentTarget.value = ""; }} />
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div><div className="mb-1 text-sm">Name</div><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
+                          <div><div className="mb-1 text-sm">Gender</div><Select value={gender} onChange={(e) => setGender(e.target.value as any)}><option value="">—</option><option value="Male">Male</option><option value="Female">Female</option></Select></div>
+                          <div><div className="mb-1 text-sm">Age</div><Input type="number" value={age === "" ? "" : String(age)} onChange={(e) => setAge(e.target.value === "" ? "" : Number(e.target.value))} /></div>
+                          <div><div className="mb-1 text-sm">Race</div><Input value={racePreset === "Other" ? customRace : racePreset} onChange={(e) => { setRacePreset("Other"); setCustomRace(e.target.value); }} /></div>
+                        </div>
+                      </div>
+                      <div className="space-y-2"><div className="text-sm font-medium">Personality</div><Input value={personalitySearch} onChange={(e) => setPersonalitySearch(e.target.value)} placeholder="Type to filter personalities" /><div className="flex max-h-36 flex-wrap gap-2 overflow-auto">{PERSONALITIES.filter((x) => !personalitySearch || x.toLowerCase().includes(personalitySearch.toLowerCase())).map((x) => { const active = personalities.includes(x); return <button key={x} type="button" className={cn("rounded-lg border px-2 py-1 text-xs", active ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))]")} onClick={() => setPersonalities((prev) => active ? prev.filter((p) => p !== x) : [...prev, x])}>{x}</button>; })}</div></div>
+                      <div><div className="mb-1 text-sm font-medium">Physical appearance</div><div className="flex gap-2"><Input value={appearanceInput} onChange={(e) => setAppearanceInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, () => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput("")))} /><Button variant="secondary" onClick={() => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{physicalAppearance.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setPhysicalAppearance)}>{x} ×</button>)}</div></div>
+                      <div><div className="mb-1 text-sm font-medium">Unique traits</div><div className="flex gap-2"><Input value={traitInput} onChange={(e)=>setTraitInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput("")))} /><Button variant="secondary" onClick={()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{traits.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setTraits)}>{x} ×</button>)}</div></div>
+                      <div className="space-y-2"><div className="text-sm font-medium">Backstory</div>{renderGeneratedTextarea({ fieldKey: "character:backstory", value: backstoryText, onChange: setBackstoryText, rows: 8, placeholder: "Write backstory here..." })}<Textarea value={backstoryPrompt} onChange={(e) => setBackstoryPrompt(e.target.value)} rows={3} placeholder="Prompt for generate/revise" /><div className="flex gap-2"><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div></div>
+                    </div>
+                  ) : null}
+
+                  {tab === "system" ? (
+                    <div className="space-y-3"><div className="grid gap-2">{STORY_SYSTEM_RULE_CARDS.map((rule) => { const selected = characterSelectedSystemRuleIds.includes(rule.id); return <button key={rule.id} type="button" className={cn("rounded-xl border p-3 text-left", selected ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))]")} onClick={() => setCharacterSelectedSystemRuleIds((prev) => prev.includes(rule.id) ? prev.filter((id) => id !== rule.id) : [...prev, rule.id])}><div className="text-sm font-medium">{rule.label}</div><div className="text-xs text-[hsl(var(--muted-foreground))]">{rule.text}</div></button>; })}</div><div><div className="mb-1 text-xs font-medium text-[hsl(var(--muted-foreground))]">Additional custom system rules</div><Textarea value={systemRules} onChange={(e) => setSystemRules(e.target.value)} rows={8} /></div></div>
+                  ) : null}
+
+                  {tab === "intro" ? (
+                    <div className="space-y-3"><div className="flex items-center justify-between"><div className="text-sm">Message {introIndex + 1} / {Math.max(1, introMessages.length)}</div><Button variant="secondary" onClick={() => { setIntroMessages((prev)=>[...prev, ""]); setIntroVersionHistories((prev)=>[...prev,[""]]); setIntroVersionIndices((prev)=>[...prev,0]); setIntroIndex(introMessages.length); }}><Plus className="h-4 w-4" /> New</Button></div><div className="flex items-center justify-between gap-2"><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.max(0,i-1))} disabled={introIndex<=0}><ChevronLeft className="h-4 w-4" /> Prev</Button><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.min(introMessages.length-1,i+1))} disabled={introIndex>=introMessages.length-1}>Next <ChevronRight className="h-4 w-4" /></Button></div><Textarea value={introMessages[clampIndex(introIndex, Math.max(1,introMessages.length))] || ""} onChange={(e) => { const v=e.target.value; setIntroMessages((prev)=>{const b=[...prev]; b[clampIndex(introIndex,b.length)] = v; return b;}); setIntroVersionHistories((prev)=>{const base = prev.length ? prev.map((h)=> (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]]; const i = clampIndex(introIndex, Math.max(1, base.length)); while (base.length <= i) base.push([""]); const history = base[i]; const vi = clampIndex(introVersionIndices[i] || 0, history.length); history[vi] = v; return base;}); }} rows={9} placeholder="Write first message..." /><Textarea value={introPrompt} onChange={(e)=>setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" /><div className="flex gap-2"><Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div><Textarea value={introRevisionPrompt} onChange={(e)=>setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" /></div>
+                  ) : null}
+
+                  {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="anim-page mt-6 space-y-4">
@@ -6662,7 +6728,7 @@ ${feedback}`,
         </div>
 
         {saveToastOpen ? (
-          <div className="fixed bottom-4 right-4 z-[70] rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-4 py-2 text-sm shadow-lg">
+          <div className="fixed bottom-4 left-4 z-[70] rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-4 py-2 text-sm shadow-lg">
             Saved.
           </div>
         ) : null}
