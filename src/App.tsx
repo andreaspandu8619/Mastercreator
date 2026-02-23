@@ -179,6 +179,7 @@ type Character = {
   physicalAppearance: string[];
   respondToProblems: string[];
   sexualBehavior: string[];
+  speechPatterns: string[];
   backstory: string[];
   selectedBackstoryIndex: number;
   systemRules: string;
@@ -401,6 +402,8 @@ function themeVars(mode: ThemeMode): React.CSSProperties {
       ["--hover-accent-foreground" as any]: "0 0% 0%",
       ["--male" as any]: "205 95% 55%",
       ["--female" as any]: "330 85% 70%",
+      ["--scrollbar-thumb" as any]: "222 8% 56%",
+      ["--scrollbar-thumb-hover" as any]: "222 10% 44%",
     };
   }
   return {
@@ -416,6 +419,8 @@ function themeVars(mode: ThemeMode): React.CSSProperties {
     ["--hover-accent-foreground" as any]: "40 33% 96%",
     ["--male" as any]: "205 95% 65%",
     ["--female" as any]: "330 85% 78%",
+    ["--scrollbar-thumb" as any]: "220 8% 46%",
+    ["--scrollbar-thumb-hover" as any]: "220 8% 62%",
   };
 }
 
@@ -536,6 +541,7 @@ function characterToTxt(c: Character) {
     `Personality: ${(c.personalities || []).join(", ")}`,
     `Physical appearance: ${(c.physicalAppearance || []).join(", ")}`,
     `Behavior: ${[...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", ")}`,
+    `Speech patterns: ${(c.speechPatterns || []).join(", ")}`,
     "",
     "## Backstory",
     selectedBackstory,
@@ -595,6 +601,7 @@ function normalizeCharacter(x: any): Character | null {
     physicalAppearance: normalizeStringArray(x.physicalAppearance),
     respondToProblems: normalizeStringArray(x.respondToProblems),
     sexualBehavior: normalizeStringArray(x.sexualBehavior),
+    speechPatterns: normalizeStringArray((x as any).speechPatterns),
     backstory: normalizeStringArray(x.backstory),
     selectedBackstoryIndex: Number.isFinite(Number(x.selectedBackstoryIndex)) ? Math.max(0, Number(x.selectedBackstoryIndex)) : 0,
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
@@ -797,6 +804,7 @@ function runTests() {
     physicalAppearance: ["Tall"],
     respondToProblems: ["Logical"],
     sexualBehavior: ["Reserved"],
+    speechPatterns: ["Formal and clipped"],
     backstory: ["Born in the rain"],
     selectedBackstoryIndex: 0,
     systemRules: "No OOC",
@@ -952,6 +960,8 @@ export default function CharacterCreatorApp() {
   const [problemBehavior, setProblemBehavior] = useState<string[]>([]);
   const [sexualBehaviorInput, setSexualBehaviorInput] = useState("");
   const [sexualBehavior, setSexualBehavior] = useState<string[]>([]);
+  const [speechPatternInput, setSpeechPatternInput] = useState("");
+  const [speechPatterns, setSpeechPatterns] = useState<string[]>([]);
 
   const [backstoryText, setBackstoryText] = useState("");
   const [backstoryPrompt, setBackstoryPrompt] = useState("");
@@ -1659,7 +1669,9 @@ export default function CharacterCreatorApp() {
     setPhysicalAppearance([]);
     setProblemBehavior([]);
     setSexualBehaviorInput("");
+    setSpeechPatternInput("");
     setSexualBehavior([]);
+    setSpeechPatterns([]);
 
     setBackstoryText("");
     setBackstoryPrompt("");
@@ -1771,6 +1783,7 @@ export default function CharacterCreatorApp() {
       physicalAppearance: Array.isArray(physicalAppearance) ? physicalAppearance : [],
       respondToProblems: Array.isArray(problemBehavior) ? problemBehavior : [],
       sexualBehavior: Array.isArray(sexualBehavior) ? sexualBehavior : [],
+      speechPatterns: Array.isArray(speechPatterns) ? speechPatterns : [],
       backstory: backstoryVersions,
       selectedBackstoryIndex,
       systemRules,
@@ -1823,6 +1836,7 @@ export default function CharacterCreatorApp() {
         physicalAppearance: existing.physicalAppearance,
         respondToProblems: existing.respondToProblems,
         sexualBehavior: existing.sexualBehavior,
+        speechPatterns: existing.speechPatterns,
         backstory: existing.backstory,
         selectedBackstoryIndex: existing.selectedBackstoryIndex,
         systemRules: existing.systemRules,
@@ -1845,6 +1859,7 @@ export default function CharacterCreatorApp() {
         physicalAppearance: nextCandidate.physicalAppearance,
         respondToProblems: nextCandidate.respondToProblems,
         sexualBehavior: nextCandidate.sexualBehavior,
+        speechPatterns: nextCandidate.speechPatterns,
         backstory: nextCandidate.backstory,
         selectedBackstoryIndex: nextCandidate.selectedBackstoryIndex,
         systemRules: nextCandidate.systemRules,
@@ -1875,6 +1890,7 @@ export default function CharacterCreatorApp() {
     physicalAppearance,
     problemBehavior,
     sexualBehavior,
+    speechPatterns,
     backstoryText,
     generatedTextStates,
     iterationSelections,
@@ -1904,6 +1920,7 @@ export default function CharacterCreatorApp() {
       physicalAppearance: [],
       respondToProblems: [],
       sexualBehavior: [],
+      speechPatterns: [],
       backstory: [],
       selectedBackstoryIndex: 0,
       systemRules: "",
@@ -2073,10 +2090,12 @@ export default function CharacterCreatorApp() {
     setPhysicalAppearance(Array.isArray(c.physicalAppearance) ? [...c.physicalAppearance] : []);
     setProblemBehavior(Array.isArray(c.respondToProblems) ? [...c.respondToProblems] : []);
     setSexualBehavior(Array.isArray(c.sexualBehavior) ? [...c.sexualBehavior] : []);
+    setSpeechPatterns(Array.isArray(c.speechPatterns) ? [...c.speechPatterns] : []);
     setBackstory(Array.isArray(c.backstory) ? [...c.backstory] : []);
     setTraitInput("");
     setAppearanceInput("");
     setSexualBehaviorInput("");
+    setSpeechPatternInput("");
 
     setSystemRules(c.systemRules || "");
     setCharacterSelectedSystemRuleIds(Array.isArray(c.selectedSystemRuleIds) ? [...c.selectedSystemRuleIds] : []);
@@ -3185,6 +3204,7 @@ Write the character's next reply to the latest user message.`;
         `Race: ${collapseWhitespace(c.race) || collapseWhitespace(c.racePreset) || ""}`,
         `Personality: ${(c.personalities || []).join(", ")}`,
         `Traits: ${(c.uniqueTraits || []).join(", ")}`,
+        `Speech patterns: ${(c.speechPatterns || []).join(", ")}`,
         `Backstory: ${(c.backstory || []).join(" | ")}`,
       ].join("\n"))
       .join("\n\n");
@@ -3200,6 +3220,7 @@ Write the character's next reply to the latest user message.`;
       `Race: ${getFinalRace()}`,
       `Personalities: ${(personalities || []).join(", ")}`,
       `Unique traits: ${(traits || []).join(", ")}`,
+      `Speech patterns: ${(speechPatterns || []).join(", ")}`,
       `Backstory: ${(backstory || []).join(" | ")}`,
       `System rules: ${collapseWhitespace(cardSystemRules)}`,
       `Synopsis: ${collapseWhitespace(synopsis)}`,
@@ -4270,6 +4291,29 @@ ${feedback}`,
         }
         body {
           margin: 0;
+          scrollbar-gutter: stable;
+        }
+        * {
+          scrollbar-width: thin;
+          scrollbar-color: hsl(var(--scrollbar-thumb)) transparent;
+        }
+        ::-webkit-scrollbar {
+          width: 10px;
+          height: 10px;
+          background: transparent;
+        }
+        ::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+          background: hsl(var(--scrollbar-thumb));
+          border-radius: 9999px;
+          border: 2px solid transparent;
+          background-clip: padding-box;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+          background: hsl(var(--scrollbar-thumb-hover));
+          background-clip: padding-box;
         }
         .clickable:hover {
           background-color: hsl(var(--hover-accent)) !important;
@@ -5889,11 +5933,14 @@ ${feedback}`,
                           <div><div className="mb-1 text-sm">Gender</div><Select value={gender} onChange={(e) => setGender(e.target.value as any)}><option value="">—</option><option value="Male">Male</option><option value="Female">Female</option></Select></div>
                           <div><div className="mb-1 text-sm">Age</div><Input type="number" value={age === "" ? "" : String(age)} onChange={(e) => setAge(e.target.value === "" ? "" : Number(e.target.value))} /></div>
                           <div><div className="mb-1 text-sm">Race</div><Input value={racePreset === "Other" ? customRace : racePreset} onChange={(e) => { setRacePreset("Other"); setCustomRace(e.target.value); }} /></div>
+                          <div><div className="mb-1 text-sm">Height</div><Input value={height} onChange={(e) => setHeight(e.target.value)} /></div>
+                          <div><div className="mb-1 text-sm">Origin</div><Input value={origins} onChange={(e) => setOrigins(e.target.value)} /></div>
                         </div>
                       </div>
                       <div className="space-y-2"><div className="text-sm font-medium">Personality</div><Input value={personalitySearch} onChange={(e) => setPersonalitySearch(e.target.value)} placeholder="Type to filter personalities" /><div className="flex max-h-36 flex-wrap gap-2 overflow-auto">{PERSONALITIES.filter((x) => !personalitySearch || x.toLowerCase().includes(personalitySearch.toLowerCase())).map((x) => { const active = personalities.includes(x); return <button key={x} type="button" className={cn("rounded-lg border px-2 py-1 text-xs", active ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))]")} onClick={() => setPersonalities((prev) => active ? prev.filter((p) => p !== x) : [...prev, x])}>{x}</button>; })}</div></div>
                       <div><div className="mb-1 text-sm font-medium">Physical appearance</div><div className="flex gap-2"><Input value={appearanceInput} onChange={(e) => setAppearanceInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, () => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput("")))} /><Button variant="secondary" onClick={() => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{physicalAppearance.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setPhysicalAppearance)}>{x} ×</button>)}</div></div>
                       <div><div className="mb-1 text-sm font-medium">Unique traits</div><div className="flex gap-2"><Input value={traitInput} onChange={(e)=>setTraitInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput("")))} /><Button variant="secondary" onClick={()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{traits.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setTraits)}>{x} ×</button>)}</div></div>
+                      <div><div className="mb-1 text-sm font-medium">Speech patterns</div><div className="flex gap-2"><Input value={speechPatternInput} onChange={(e)=>setSpeechPatternInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(speechPatternInput, speechPatterns, setSpeechPatterns, ()=>setSpeechPatternInput("")))} /><Button variant="secondary" onClick={()=>addToList(speechPatternInput, speechPatterns, setSpeechPatterns, ()=>setSpeechPatternInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{speechPatterns.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setSpeechPatterns)}>{x} ×</button>)}</div></div>
                       <div className="space-y-2"><div className="text-sm font-medium">Backstory</div>{renderGeneratedTextarea({ fieldKey: "character:backstory", value: backstoryText, onChange: setBackstoryText, rows: 8, placeholder: "Write backstory here..." })}<Textarea value={backstoryPrompt} onChange={(e) => setBackstoryPrompt(e.target.value)} rows={3} placeholder="Prompt for generate/revise" /><div className="flex gap-2"><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div></div>
                     </div>
                   ) : null}
