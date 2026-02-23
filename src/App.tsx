@@ -191,6 +191,15 @@ type Character = {
   updatedAt: string;
 };
 
+
+type CharacterCard = {
+  id: string;
+  name: string;
+  characterIds: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 const STORAGE_KEY = "mastercreator_characters_v5";
 const IDB_NAME = "mastercreator_db";
 const IDB_STORE = "characters";
@@ -200,6 +209,7 @@ const PERSONA_KEY = "mastercreator_persona";
 const CHAT_SESSIONS_KEY = "mastercreator_chat_sessions_v1";
 const STORIES_KEY = "mastercreator_stories_v1";
 const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
+const CHARACTER_CARDS_KEY = "mastercreator_character_cards_v1";
 
 const DEFAULT_PROXY: ProxyConfig = {
   chatUrl: "https://llm.chutes.ai/v1/chat/completions",
@@ -804,6 +814,9 @@ export default function CharacterCreatorApp() {
   const [tab, setTab] = useState<CreateTab>("definition");
 
   const [characters, setCharacters] = useState<Character[]>([]);
+  const [characterCards, setCharacterCards] = useState<CharacterCard[]>([]);
+  const [activeCharacterCardId, setActiveCharacterCardId] = useState<string | null>(null);
+  const [characterCardNameInput, setCharacterCardNameInput] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1041,7 +1054,7 @@ export default function CharacterCreatorApp() {
   }, []);
 
   useEffect(() => {
-    if (page !== "characters" && page !== "lorebooks" && page !== "lorebook_create") {
+    if (page !== "characters" && page !== "create" && page !== "lorebooks" && page !== "lorebook_create") {
       setPage("characters");
     }
   }, [page]);
@@ -1381,6 +1394,29 @@ export default function CharacterCreatorApp() {
       setLorebooks(normalizedLorebooks);
     }
 
+    const savedCharacterCards = safeParseJSON(localStorage.getItem(CHARACTER_CARDS_KEY) || "");
+    if (Array.isArray(savedCharacterCards)) {
+      const normalizedCards = savedCharacterCards
+        .map((card: any) => {
+          if (!card || typeof card !== "object") return null;
+          const now = new Date().toISOString();
+          return {
+            id: typeof card.id === "string" ? card.id : uid(),
+            name: collapseWhitespace(card.name || "Character Card"),
+            characterIds: normalizeStringArray(card.characterIds),
+            createdAt: typeof card.createdAt === "string" ? card.createdAt : now,
+            updatedAt: typeof card.updatedAt === "string" ? card.updatedAt : now,
+          } as CharacterCard;
+        })
+        .filter((x): x is CharacterCard => !!x)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      setCharacterCards(normalizedCards);
+      if (normalizedCards.length && !activeCharacterCardId) {
+        setActiveCharacterCardId(normalizedCards[0].id);
+        setCharacterCardNameInput(normalizedCards[0].name);
+      }
+    }
+
     (async () => {
       try {
         const fromIdb = await idbGetAllCharacters();
@@ -1487,6 +1523,10 @@ export default function CharacterCreatorApp() {
   }, [lorebooks]);
 
   useEffect(() => {
+    localStorage.setItem(CHARACTER_CARDS_KEY, JSON.stringify(characterCards));
+  }, [characterCards]);
+
+  useEffect(() => {
     if (!hydrated) return;
     (async () => {
       try {
@@ -1498,6 +1538,21 @@ export default function CharacterCreatorApp() {
     })();
   }, [characters, hydrated]);
 
+  useEffect(() => {
+    if (!hydrated) return;
+    if (!characterCards.length) {
+      const now = new Date().toISOString();
+      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], createdAt: now, updatedAt: now };
+      setCharacterCards([card]);
+      setActiveCharacterCardId(card.id);
+      setCharacterCardNameInput(card.name);
+      return;
+    }
+    if (!activeCharacterCardId || !characterCards.some((c) => c.id === activeCharacterCardId)) {
+      setActiveCharacterCardId(characterCards[0].id);
+      setCharacterCardNameInput(characterCards[0].name);
+    }
+  }, [hydrated, characterCards, activeCharacterCardId]);
   const selected = useMemo(
     () => characters.find((c) => c.id === selectedId) || null,
     [characters, selectedId]
@@ -1509,9 +1564,11 @@ export default function CharacterCreatorApp() {
   );
 
   const filteredCharacters = useMemo(() => {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId);
+    const scoped = activeCard ? characters.filter((c) => activeCard.characterIds.includes(c.id)) : [];
     const q = collapseWhitespace(query).toLowerCase();
-    if (!q) return characters;
-    return characters.filter((c) => {
+    if (!q) return scoped;
+    return scoped.filter((c) => {
       const blob = [
         c.name,
         c.gender,
@@ -1528,7 +1585,7 @@ export default function CharacterCreatorApp() {
         .toLowerCase();
       return blob.includes(q);
     });
-  }, [characters, query]);
+  }, [characters, query, characterCards, activeCharacterCardId]);
 
 
 
@@ -1804,7 +1861,10 @@ export default function CharacterCreatorApp() {
     });
 
     setSelectedId(draft.id);
-    navigateTo("characters");
+    if (activeCharacterCardId) {
+      setCharacterCards((prev) => prev.map((card) => card.id !== activeCharacterCardId ? card : { ...card, characterIds: card.characterIds.includes(draft.id) ? card.characterIds : [...card.characterIds, draft.id], updatedAt: new Date().toISOString() }));
+    }
+    navigateTo("create");
   }
 
   function deleteCharacter(id: string) {
@@ -5565,6 +5625,47 @@ ${feedback}`,
             </div>
           </div>
         ) : page === "characters" ? (
+          <div className="anim-page mt-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="text-xl font-semibold">Character Dashboard</div>
+              <Button variant="primary" onClick={() => {
+                const now = new Date().toISOString();
+                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], createdAt: now, updatedAt: now };
+                setCharacterCards((prev) => [newCard, ...prev]);
+                setActiveCharacterCardId(newCard.id);
+                setCharacterCardNameInput(newCard.name);
+                setSelectedId(null);
+                resetForm();
+                navigateTo("create");
+              }}><Plus className="h-4 w-4" /> New</Button>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {characterCards.map((card) => {
+                const firstCharacter = characters.find((c) => c.id === (card.characterIds[0] || "")) || null;
+                return (
+                  <button key={card.id} type="button" onClick={() => {
+                    setActiveCharacterCardId(card.id);
+                    setCharacterCardNameInput(card.name);
+                    setSelectedId(card.characterIds[0] || null);
+                    if (card.characterIds[0]) {
+                      const c = characters.find((x) => x.id === card.characterIds[0]);
+                      if (c) loadCharacterIntoForm(c);
+                    } else {
+                      resetForm();
+                    }
+                    navigateTo("create");
+                  }} className="text-left rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                    <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-[hsl(var(--border))]">
+                      {firstCharacter?.imageDataUrl ? <img src={firstCharacter.imageDataUrl} alt={card.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>}
+                    </div>
+                    <div className="mt-2 font-semibold">{card.name || "Character Card"}</div>
+                    <div className="text-xs text-[hsl(var(--muted-foreground))]">{card.characterIds.length} character entries</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : page === "create" ? (
           <div className="anim-page mt-6 grid gap-4 lg:grid-cols-[280px,1fr]">
             <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
               <div className="relative">
@@ -5585,7 +5686,7 @@ ${feedback}`,
 
             <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-lg font-semibold">Character Dashboard</div>
+                <div className="flex-1"><div className="text-lg font-semibold">Character Dashboard</div><div className="mt-2"><Input value={characterCardNameInput} onChange={(e) => { const v = e.target.value; setCharacterCardNameInput(v); if (activeCharacterCardId) setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, name: v, updatedAt: new Date().toISOString() } : card)); }} placeholder="Character card name" /></div></div>
                 <div className="flex gap-2">
                   <Button variant="secondary" onClick={saveCharacter}><Pencil className="h-4 w-4" /> Save</Button>
                   {selectedId ? <Button variant="secondary" onClick={() => deleteCharacter(selectedId)}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
