@@ -3069,7 +3069,7 @@ Alignment: ${rel.alignment}
 Current details:
 ${rel.details || "(empty)"}
 
-Character card context:
+Character card context (ONLY entries in the current card):
 ${getActiveCardCharactersContext()}
 
 Prompt:
@@ -3158,13 +3158,26 @@ Write the character's next reply to the latest user message.`;
     }
   }
 
-  function getActiveCardCharactersContext() {
+  function getActiveCardCharacters() {
     const activeCard = characterCards.find((c) => c.id === activeCharacterCardId);
-    if (!activeCard) return "(no card)";
-    const chars = activeCard.characterIds
+    if (!activeCard) return [] as Character[];
+    const ids = new Set(activeCard.characterIds || []);
+    return (activeCard.characterIds || [])
       .map((id) => characters.find((c) => c.id === id))
-      .filter((c): c is Character => !!c);
-    if (!chars.length) return "(no characters)";
+      .filter((c): c is Character => !!c && ids.has(c.id));
+  }
+
+  function getActiveCardLorebookIds() {
+    const ids = new Set<string>();
+    for (const c of getActiveCardCharacters()) {
+      for (const id of c.assignedLorebookIds || []) ids.add(id);
+    }
+    return Array.from(ids);
+  }
+
+  function getActiveCardCharactersContext() {
+    const chars = getActiveCardCharacters();
+    if (!chars.length) return "(no characters in current card)";
     return chars
       .map((c) => [
         `Name: ${collapseWhitespace(c.name) || "(unnamed)"}`,
@@ -3209,7 +3222,7 @@ Write the character's next reply to the latest user message.`;
         user: `Primary character summary (prioritize this):
 ${getCharacterSummaryForLLM()}
 
-Other characters in this card (secondary context):
+Other character entries in THIS SAME card only (secondary context):
 ${getActiveCardCharactersContext()}
 
 Current backstory:
@@ -3218,7 +3231,7 @@ ${backstoryText || "(empty)"}
 Instruction:
 ${prompt}`,
         maxTokens: proxyMaxTokens,
-        lorebookIds: characterAssignedLorebookIds,
+        lorebookIds: Array.from(new Set([...(characterAssignedLorebookIds || []), ...getActiveCardLorebookIds()])),
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setBackstoryText),
       });
@@ -3307,7 +3320,7 @@ ${relationshipContext}
 Story synopsis:
 ${activeStory.synopsis || ""}
 
-Character card context:
+Character card context (ONLY entries in the current card):
 ${getActiveCardCharactersContext()}
 
 Prompt:
@@ -3651,7 +3664,7 @@ ${more}`.trim();
         user,
         temperature: 0.95,
         stream: proxyStreamingEnabled,
-        lorebookIds: characterAssignedLorebookIds,
+        lorebookIds: Array.from(new Set([...(characterAssignedLorebookIds || []), ...getActiveCardLorebookIds()])),
         onStreamUpdate: (partial) => {
           setIntroVersionHistories((prev) => {
             const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
@@ -3708,7 +3721,7 @@ ${more}`.trim();
         maxTokens: proxyMaxTokens,
         temperature: 0.9,
         stream: proxyStreamingEnabled,
-        lorebookIds: characterAssignedLorebookIds,
+        lorebookIds: Array.from(new Set([...(characterAssignedLorebookIds || []), ...getActiveCardLorebookIds()])),
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setSynopsis),
       });
       commitGeneratedText(fieldKey, text, setSynopsis, true);
@@ -3773,7 +3786,7 @@ Return only the revised intro message.`;
         system,
         user,
         temperature: 0.9,
-        lorebookIds: characterAssignedLorebookIds,
+        lorebookIds: Array.from(new Set([...(characterAssignedLorebookIds || []), ...getActiveCardLorebookIds()])),
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => {
           setIntroVersionHistories((prev) => {
@@ -3851,7 +3864,7 @@ Return only the revised synopsis.`;
         user,
         maxTokens: proxyMaxTokens,
         temperature: 0.9,
-        lorebookIds: characterAssignedLorebookIds,
+        lorebookIds: Array.from(new Set([...(characterAssignedLorebookIds || []), ...getActiveCardLorebookIds()])),
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setSynopsis),
       });
