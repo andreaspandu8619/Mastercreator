@@ -197,6 +197,10 @@ type CharacterCard = {
   name: string;
   characterIds: string[];
   relationshipStoryId?: string;
+  systemRules: string;
+  selectedSystemRuleIds: string[];
+  firstMessageMessages: string[];
+  selectedFirstMessageIndex: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -967,6 +971,8 @@ export default function CharacterCreatorApp() {
 
   const [introMessages, setIntroMessages] = useState<string[]>([""]);
   const [introIndex, setIntroIndex] = useState(0);
+  const [cardSystemRules, setCardSystemRules] = useState("");
+  const [cardSelectedSystemRuleIds, setCardSelectedSystemRuleIds] = useState<string[]>([]);
   const [introVersionHistories, setIntroVersionHistories] = useState<string[][]>([[""]]);
   const [introVersionIndices, setIntroVersionIndices] = useState<number[]>([0]);
   const [introPrompt, setIntroPrompt] = useState("");
@@ -1407,6 +1413,10 @@ export default function CharacterCreatorApp() {
             name: collapseWhitespace(card.name || "Character Card"),
             characterIds: normalizeStringArray(card.characterIds),
             relationshipStoryId: typeof card.relationshipStoryId === "string" ? card.relationshipStoryId : undefined,
+            systemRules: typeof card.systemRules === "string" ? card.systemRules : "",
+            selectedSystemRuleIds: normalizeStringArray(card.selectedSystemRuleIds),
+            firstMessageMessages: normalizeStringArray(card.firstMessageMessages).length ? normalizeStringArray(card.firstMessageMessages) : [""],
+            selectedFirstMessageIndex: Number.isFinite(Number(card.selectedFirstMessageIndex)) ? Math.max(0, Number(card.selectedFirstMessageIndex)) : 0,
             createdAt: typeof card.createdAt === "string" ? card.createdAt : now,
             updatedAt: typeof card.updatedAt === "string" ? card.updatedAt : now,
           } as CharacterCard;
@@ -1541,11 +1551,36 @@ export default function CharacterCreatorApp() {
     })();
   }, [characters, hydrated]);
 
+
+  useEffect(() => {
+    const card = characterCards.find((c) => c.id === activeCharacterCardId);
+    if (!card) return;
+    setCardSystemRules(card.systemRules || "");
+    setCardSelectedSystemRuleIds(card.selectedSystemRuleIds || []);
+    const msgs = card.firstMessageMessages?.length ? [...card.firstMessageMessages] : [""];
+    setIntroMessages(msgs);
+    setIntroIndex(clampIndex(card.selectedFirstMessageIndex || 0, msgs.length));
+    setIntroVersionHistories(msgs.map((m) => [m || ""]));
+    setIntroVersionIndices(msgs.map(() => 0));
+  }, [activeCharacterCardId]);
+
+  useEffect(() => {
+    if (!activeCharacterCardId) return;
+    setCharacterCards((prev) => prev.map((card) => card.id !== activeCharacterCardId ? card : {
+      ...card,
+      systemRules: cardSystemRules,
+      selectedSystemRuleIds: cardSelectedSystemRuleIds,
+      firstMessageMessages: introMessages,
+      selectedFirstMessageIndex: introIndex,
+      updatedAt: new Date().toISOString(),
+    }));
+  }, [activeCharacterCardId, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex]);
+
   useEffect(() => {
     if (!hydrated) return;
     if (!characterCards.length) {
       const now = new Date().toISOString();
-      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], createdAt: now, updatedAt: now };
+      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
       setCharacterCards([card]);
       setActiveCharacterCardId(card.id);
       setCharacterCardNameInput(card.name);
@@ -1885,7 +1920,6 @@ export default function CharacterCreatorApp() {
       setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, characterIds: [entry.id, ...card.characterIds.filter((id) => id !== entry.id)], updatedAt: now } : card));
     }
     loadCharacterIntoForm(entry);
-    setTab("definition");
     navigateTo("create");
   }
 
@@ -2634,7 +2668,7 @@ Return only the revised world entry content.`,
     setActiveStoryId(story.id);
     setStoryDraftCharacterIds([]);
     setStoryImageDataUrl("");
-    navigateTo("story_editor");
+    navigateTo("create");
     setStoryTab("scenario");
   }
 
@@ -2793,10 +2827,11 @@ Return only the revised world entry content.`,
     setDeckDropHover(false);
     setBoardPanning(false);
     boardPanStartRef.current = null;
-    navigateTo("story_editor");
+    navigateTo("create");
   }
 
   function openRelationshipEditor(fromId: string, toId: string) {
+    setSelectedRelationshipId(null);
     setStoryRelFromId(fromId);
     setStoryRelToId(toId);
     setStoryRelAlignment("Neutral");
@@ -2986,16 +3021,12 @@ Return only the revised world entry content.`,
       details: storyRelDetails,
       createdAt: new Date().toISOString(),
     };
-    const others = activeStory.relationships.filter(
-      (r) =>
-        r.id !== relId &&
-        !(
-          (r.fromCharacterId === aId && r.toCharacterId === bId) ||
-          (r.fromCharacterId === bId && r.toCharacterId === aId)
-        )
-    );
+    const isEditingExisting = !!selectedRelationshipId;
+    const nextRelationships = isEditingExisting
+      ? activeStory.relationships.map((r) => (r.id === relId ? rel : r))
+      : [rel, ...activeStory.relationships];
     updateStory(activeStory.id, {
-      relationships: [rel, ...others],
+      relationships: nextRelationships,
     });
     setSelectedRelationshipId(relId);
     setPendingRelationshipEdge(null);
@@ -3037,6 +3068,9 @@ Type: ${rel.relationType}
 Alignment: ${rel.alignment}
 Current details:
 ${rel.details || "(empty)"}
+
+Character card context:
+${getActiveCardCharactersContext()}
 
 Prompt:
 ${prompt}`,
@@ -3124,6 +3158,25 @@ Write the character's next reply to the latest user message.`;
     }
   }
 
+  function getActiveCardCharactersContext() {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId);
+    if (!activeCard) return "(no card)";
+    const chars = activeCard.characterIds
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c);
+    if (!chars.length) return "(no characters)";
+    return chars
+      .map((c) => [
+        `Name: ${collapseWhitespace(c.name) || "(unnamed)"}`,
+        `Gender: ${c.gender || ""}`,
+        `Race: ${collapseWhitespace(c.race) || collapseWhitespace(c.racePreset) || ""}`,
+        `Personality: ${(c.personalities || []).join(", ")}`,
+        `Traits: ${(c.uniqueTraits || []).join(", ")}`,
+        `Backstory: ${(c.backstory || []).join(" | ")}`,
+      ].join("\n"))
+      .join("\n\n");
+  }
+
   function getCharacterSummaryForLLM() {
     return [
       `Name: ${collapseWhitespace(name) || "(unnamed)"}`,
@@ -3135,22 +3188,8 @@ Write the character's next reply to the latest user message.`;
       `Personalities: ${(personalities || []).join(", ")}`,
       `Unique traits: ${(traits || []).join(", ")}`,
       `Backstory: ${(backstory || []).join(" | ")}`,
-      `System rules: ${collapseWhitespace(systemRules)}`,
+      `System rules: ${collapseWhitespace(cardSystemRules)}`,
       `Synopsis: ${collapseWhitespace(synopsis)}`,
-    ].join("\n");
-  }
-
-  function getOverviewAndSystemContextForRevision() {
-    return [
-      `Name: ${collapseWhitespace(name) || "(unnamed)"}`,
-      `Gender: ${gender || ""}`,
-      `Age: ${age === "" ? "" : String(age)}`,
-      `Height: ${collapseWhitespace(height)}`,
-      `Origins: ${collapseWhitespace(origins)}`,
-      `Race: ${getFinalRace()}`,
-      `Personalities: ${(personalities || []).join(", ")}`,
-      `Unique traits: ${(traits || []).join(", ")}`,
-      `System rules: ${collapseWhitespace(systemRules)}`,
     ].join("\n");
   }
 
@@ -3167,8 +3206,11 @@ Write the character's next reply to the latest user message.`;
     try {
       const text = await callProxyChatCompletion({
         system: "Revise and improve the character backstory based on user instruction while preserving continuity. Return only the revised backstory text.",
-        user: `Character summary:
+        user: `Primary character summary (prioritize this):
 ${getCharacterSummaryForLLM()}
+
+Other characters in this card (secondary context):
+${getActiveCardCharactersContext()}
 
 Current backstory:
 ${backstoryText || "(empty)"}
@@ -3264,6 +3306,9 @@ ${relationshipContext}
 
 Story synopsis:
 ${activeStory.synopsis || ""}
+
+Character card context:
+${getActiveCardCharactersContext()}
 
 Prompt:
 ${prompt}`,
@@ -3695,7 +3740,10 @@ ${more}`.trim();
       "You revise exactly ONE roleplay intro message based on feedback. Only use overview/system context and the provided current intro. Do not use other intros. Keep it in-character and ready to use. Return ONLY the revised intro text.";
 
     const user = `Overview and system context:
-${getOverviewAndSystemContextForRevision()}
+${getActiveCardCharactersContext()}
+
+Card system rules:
+${cardSystemRules || "(none)"}
 
 Current intro message (only this one should be revised):
 ${currentIntro}
@@ -3782,7 +3830,10 @@ Return only the revised intro message.`;
       "You revise a roleplay character synopsis based on user feedback. Only use the provided overview/system context and current synopsis. Keep it cohesive, vivid, and roleplay-oriented. Return ONLY the revised synopsis text.";
 
     const user = `Overview and system context:
-${getOverviewAndSystemContextForRevision()}
+${getActiveCardCharactersContext()}
+
+Card system rules:
+${cardSystemRules || "(none)"}
 
 Current synopsis:
 ${synopsis}
@@ -4219,6 +4270,9 @@ ${feedback}`,
           background: hsl(var(--background)) !important;
           color: hsl(var(--foreground)) !important;
           border-color: hsl(var(--border)) !important;
+        }
+        * {
+          transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, transform 180ms ease, opacity 180ms ease;
         }
       `}</style>
 
@@ -5717,7 +5771,7 @@ ${feedback}`,
               <div className="text-xl font-semibold">Character Dashboard</div>
               <Button variant="primary" onClick={() => {
                 const now = new Date().toISOString();
-                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], createdAt: now, updatedAt: now };
+                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
                 setCharacterCards((prev) => [newCard, ...prev]);
                 setActiveCharacterCardId(newCard.id);
                 setCharacterCardNameInput(newCard.name);
@@ -5766,7 +5820,8 @@ ${feedback}`,
                 <Button variant="secondary" onClick={openCardRelationshipBoard}>Open Relationship Board</Button>
               </div>
             ) : (
-              <div className="grid gap-4 lg:grid-cols-[280px,1fr]">
+              <div className={cn("grid gap-4", tab === "definition" ? "lg:grid-cols-[280px,1fr]" : "lg:grid-cols-1")}>
+                {tab === "definition" ? (
                 <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
                   <div className="relative">
                     <Search className="absolute left-3 top-2.5 h-4 w-4 text-[hsl(var(--muted-foreground))]" />
@@ -5794,6 +5849,7 @@ ${feedback}`,
                     {!filteredCharacters.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No entries.</div> : null}
                   </div>
                 </div>
+                ) : null}
 
                 <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
                   <div className="flex items-center justify-between gap-2">
@@ -5830,7 +5886,7 @@ ${feedback}`,
                   ) : null}
 
                   {tab === "system" ? (
-                    <div className="space-y-3"><div className="grid gap-2">{STORY_SYSTEM_RULE_CARDS.map((rule) => { const selected = characterSelectedSystemRuleIds.includes(rule.id); return <button key={rule.id} type="button" className={cn("rounded-xl border p-3 text-left", selected ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))]")} onClick={() => setCharacterSelectedSystemRuleIds((prev) => prev.includes(rule.id) ? prev.filter((id) => id !== rule.id) : [...prev, rule.id])}><div className="text-sm font-medium">{rule.label}</div><div className="text-xs text-[hsl(var(--muted-foreground))]">{rule.text}</div></button>; })}</div><div><div className="mb-1 text-xs font-medium text-[hsl(var(--muted-foreground))]">Additional custom system rules</div><Textarea value={systemRules} onChange={(e) => setSystemRules(e.target.value)} rows={8} /></div></div>
+                    <div className="space-y-3"><div className="grid gap-2">{STORY_SYSTEM_RULE_CARDS.map((rule) => { const selected = cardSelectedSystemRuleIds.includes(rule.id); return <button key={rule.id} type="button" className={cn("rounded-xl border p-3 text-left", selected ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))]")} onClick={() => setCardSelectedSystemRuleIds((prev) => prev.includes(rule.id) ? prev.filter((id) => id !== rule.id) : [...prev, rule.id])}><div className="text-sm font-medium">{rule.label}</div><div className="text-xs text-[hsl(var(--muted-foreground))]">{rule.text}</div></button>; })}</div><div><div className="mb-1 text-xs font-medium text-[hsl(var(--muted-foreground))]">Additional custom system rules</div><Textarea value={cardSystemRules} onChange={(e) => setCardSystemRules(e.target.value)} rows={8} /></div></div>
                   ) : null}
 
                   {tab === "intro" ? (
