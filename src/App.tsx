@@ -521,36 +521,36 @@ async function idbDeleteCharacter(id: string): Promise<void> {
 }
 
 
+function xmlEscape(input: string) {
+  return String(input || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 function characterToTxt(c: Character) {
   const selectedBackstory = (c.backstory || []).length
     ? (c.backstory || [])[Math.max(0, Math.min((c.backstory || []).length - 1, (c as any).selectedBackstoryIndex || 0))] || ""
     : "";
-  const selectedIntro = (c.introMessages || []).length
-    ? (c.introMessages || [])[Math.max(0, Math.min((c.introMessages || []).length - 1, c.selectedIntroIndex || 0))] || ""
-    : "";
 
-  const lines = [
-    `# ${c.name || "Character"}`,
-    "",
-    "## Character Information",
-    `Name: ${c.name || ""}`,
-    `Age: ${c.age === "" ? "" : String(c.age)}`,
-    `Height: ${c.height || ""}`,
-    `Origins: ${c.origins || ""}`,
-    `Race: ${c.race || ""}`,
-    `Personality: ${(c.personalities || []).join(", ")}`,
-    `Physical appearance: ${(c.physicalAppearance || []).join(", ")}`,
-    `Behavior: ${[...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", ")}`,
-    `Speech patterns: ${(c.speechPatterns || []).join(", ")}`,
-    "",
-    "## Backstory",
-    selectedBackstory,
-    "",
-    "## Intro Message (Selected Iteration)",
-    selectedIntro,
-    "",
-  ];
-  return lines.join("\n");
+  return [
+    `  <character id="${xmlEscape(c.id || "")}">`,
+    `    <name>${xmlEscape(c.name || "")}</name>`,
+    `    <gender>${xmlEscape(c.gender || "")}</gender>`,
+    `    <age>${xmlEscape(c.age === "" ? "" : String(c.age))}</age>`,
+    `    <height>${xmlEscape(c.height || "")}</height>`,
+    `    <origin>${xmlEscape(c.origins || "")}</origin>`,
+    `    <race>${xmlEscape(c.race || "")}</race>`,
+    `    <personality>${xmlEscape((c.personalities || []).join(", "))}</personality>`,
+    `    <physical_appearance>${xmlEscape((c.physicalAppearance || []).join(", "))}</physical_appearance>`,
+    `    <unique_traits>${xmlEscape((c.uniqueTraits || []).join(", "))}</unique_traits>`,
+    `    <behavior>${xmlEscape([...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", "))}</behavior>`,
+    `    <speech_patterns>${xmlEscape((c.speechPatterns || []).join(", "))}</speech_patterns>`,
+    `    <backstory>${xmlEscape(selectedBackstory)}</backstory>`,
+    `  </character>`,
+  ].join("\n");
 }
 
 function normalizeCharacter(x: any): Character | null {
@@ -4269,6 +4269,48 @@ ${feedback}`,
   }
 
 
+  function exportCurrentCardTxt(fallbackCharacter?: Character) {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
+    const cardChars = activeCard
+      ? (activeCard.characterIds || []).map((id) => characters.find((c) => c.id === id)).filter((c): c is Character => !!c)
+      : fallbackCharacter ? [fallbackCharacter] : [];
+
+    const cardStory = activeCard?.relationshipStoryId
+      ? stories.find((s) => s.id === activeCard.relationshipStoryId) || null
+      : null;
+
+    const relationships = (cardStory?.relationships || []).map((r) => {
+      const from = cardChars.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
+      const to = cardChars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
+      return `    <relationship from="${xmlEscape(from)}" to="${xmlEscape(to)}" alignment="${xmlEscape(r.alignment)}" type="${xmlEscape(r.relationType)}">${xmlEscape(r.details || "")}</relationship>`;
+    });
+
+    const selectedRuleTexts = STORY_SYSTEM_RULE_CARDS
+      .filter((r) => cardSelectedSystemRuleIds.includes(r.id))
+      .map((r) => r.text);
+
+    const xml = [
+      `<character_card name="${xmlEscape(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card")}">`,
+      `  <individual_character_info>`,
+      ...(cardChars.length ? cardChars.map((c) => characterToTxt(c)) : ["    <character />"]),
+      `  </individual_character_info>`,
+      `  <relationships>`,
+      ...(relationships.length ? relationships : ["    <relationship />"]),
+      `  </relationships>`,
+      `  <system_rules>`,
+      `    <selected_rule_cards>${xmlEscape(selectedRuleTexts.join(" | "))}</selected_rule_cards>`,
+      `    <custom_rules>${xmlEscape(cardSystemRules || "")}</custom_rules>`,
+      `  </system_rules>`,
+      `</character_card>`,
+      "",
+    ].join("\n");
+
+    const exportName = filenameSafe(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "character_card") || "character_card";
+    downloadText(`${exportName}.txt`, xml);
+  }
+
+
+
   const draft = getDraftCharacter();
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
@@ -5981,10 +6023,7 @@ ${feedback}`,
                   variant="secondary"
                   onClick={() => {
                     if (!draft) return alert("Please enter a character name before exporting.");
-                    downloadText(
-                      (filenameSafe(draft.name) || "character") + ".txt",
-                      characterToTxt(draft)
-                    );
+                    exportCurrentCardTxt(draft);
                   }}
                 >
                   <Download className="h-4 w-4" /> Export TXT
@@ -6445,10 +6484,7 @@ ${feedback}`,
                         type="button"
                         onClick={() => {
                           if (!draft) return alert("Enter a character name first.");
-                          downloadText(
-                            (filenameSafe(draft.name) || "character") + ".txt",
-                            characterToTxt(draft)
-                          );
+                          exportCurrentCardTxt(draft);
                         }}
                       >
                         <Download className="h-4 w-4" /> Export TXT
@@ -6516,7 +6552,7 @@ ${feedback}`,
                 type="button"
                 onClick={() => {
                   if (!draft) return alert("Enter a character name first.");
-                  downloadText((filenameSafe(draft.name) || "character") + ".txt", characterToTxt(draft));
+                  exportCurrentCardTxt(draft);
                 }}
               >
                 <Download className="h-4 w-4" /> Export TXT
@@ -6801,10 +6837,7 @@ ${feedback}`,
                   <Button
                     variant="secondary"
                     onClick={() => {
-                      downloadText(
-                        (filenameSafe(previewChar.name) || "character") + ".txt",
-                        characterToTxt(previewChar)
-                      );
+                      exportCurrentCardTxt(previewChar);
                     }}
                   >
                     <Download className="h-4 w-4" /> TXT
