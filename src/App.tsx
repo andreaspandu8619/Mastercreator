@@ -1698,6 +1698,99 @@ export default function CharacterCreatorApp() {
     };
   }
 
+
+  useEffect(() => {
+    if (!hydrated || !selectedId) return;
+    const draft = getDraftCharacter();
+    if (!draft) return;
+    setCharacters((prev) => {
+      const idx = prev.findIndex((c) => c.id === selectedId);
+      if (idx < 0) return prev;
+      const existing = prev[idx];
+      const nextCandidate: Character = {
+        ...existing,
+        ...draft,
+        id: existing.id,
+        createdAt: existing.createdAt,
+        updatedAt: new Date().toISOString(),
+      };
+      const same = JSON.stringify({
+        name: existing.name,
+        gender: existing.gender,
+        imageDataUrl: existing.imageDataUrl,
+        age: existing.age,
+        height: existing.height,
+        origins: existing.origins,
+        racePreset: existing.racePreset,
+        race: existing.race,
+        personalities: existing.personalities,
+        uniqueTraits: existing.uniqueTraits,
+        physicalAppearance: existing.physicalAppearance,
+        respondToProblems: existing.respondToProblems,
+        sexualBehavior: existing.sexualBehavior,
+        backstory: existing.backstory,
+        selectedBackstoryIndex: existing.selectedBackstoryIndex,
+        systemRules: existing.systemRules,
+        selectedSystemRuleIds: existing.selectedSystemRuleIds,
+        synopsis: existing.synopsis,
+        introMessages: existing.introMessages,
+        selectedIntroIndex: existing.selectedIntroIndex,
+        assignedLorebookIds: existing.assignedLorebookIds,
+      }) === JSON.stringify({
+        name: nextCandidate.name,
+        gender: nextCandidate.gender,
+        imageDataUrl: nextCandidate.imageDataUrl,
+        age: nextCandidate.age,
+        height: nextCandidate.height,
+        origins: nextCandidate.origins,
+        racePreset: nextCandidate.racePreset,
+        race: nextCandidate.race,
+        personalities: nextCandidate.personalities,
+        uniqueTraits: nextCandidate.uniqueTraits,
+        physicalAppearance: nextCandidate.physicalAppearance,
+        respondToProblems: nextCandidate.respondToProblems,
+        sexualBehavior: nextCandidate.sexualBehavior,
+        backstory: nextCandidate.backstory,
+        selectedBackstoryIndex: nextCandidate.selectedBackstoryIndex,
+        systemRules: nextCandidate.systemRules,
+        selectedSystemRuleIds: nextCandidate.selectedSystemRuleIds,
+        synopsis: nextCandidate.synopsis,
+        introMessages: nextCandidate.introMessages,
+        selectedIntroIndex: nextCandidate.selectedIntroIndex,
+        assignedLorebookIds: nextCandidate.assignedLorebookIds,
+      });
+      if (same) return prev;
+      const next = [...prev];
+      next[idx] = nextCandidate;
+      return next;
+    });
+  }, [
+    hydrated,
+    selectedId,
+    name,
+    gender,
+    imageDataUrl,
+    age,
+    height,
+    origins,
+    racePreset,
+    customRace,
+    personalities,
+    traits,
+    physicalAppearance,
+    problemBehavior,
+    sexualBehavior,
+    backstoryText,
+    generatedTextStates,
+    iterationSelections,
+    systemRules,
+    characterSelectedSystemRuleIds,
+    synopsis,
+    introMessages,
+    introIndex,
+    characterAssignedLorebookIds,
+  ]);
+
   function saveCharacter() {
     const err = validate();
     if (err) return alert(err);
@@ -1711,7 +1804,7 @@ export default function CharacterCreatorApp() {
     });
 
     setSelectedId(draft.id);
-    navigateTo("library");
+    navigateTo("characters");
   }
 
   function deleteCharacter(id: string) {
@@ -5572,7 +5665,7 @@ ${feedback}`,
                     <Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.max(0,i-1))} disabled={introIndex<=0}><ChevronLeft className="h-4 w-4" /> Prev</Button>
                     <Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.min(introMessages.length-1,i+1))} disabled={introIndex>=introMessages.length-1}>Next <ChevronRight className="h-4 w-4" /></Button>
                   </div>
-                  <Textarea value={introMessages[clampIndex(introIndex, Math.max(1,introMessages.length))] || ""} onChange={(e) => { const v=e.target.value; setIntroMessages((prev)=>{const b=[...prev]; b[clampIndex(introIndex,b.length)] = v; return b;}); }} rows={9} placeholder="Write first message..." />
+                  <Textarea value={introMessages[clampIndex(introIndex, Math.max(1,introMessages.length))] || ""} onChange={(e) => { const v=e.target.value; setIntroMessages((prev)=>{const b=[...prev]; b[clampIndex(introIndex,b.length)] = v; return b;}); setIntroVersionHistories((prev)=>{const base = prev.length ? prev.map((h)=> (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]]; const i = clampIndex(introIndex, Math.max(1, base.length)); while (base.length <= i) base.push([""]); const history = base[i]; const vi = clampIndex(introVersionIndices[i] || 0, history.length); history[vi] = v; return base;}); }} rows={9} placeholder="Write first message..." />
                   <Textarea value={introPrompt} onChange={(e)=>setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" />
                   <div className="flex gap-2"><Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div>
                   <Textarea value={introRevisionPrompt} onChange={(e)=>setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" />
