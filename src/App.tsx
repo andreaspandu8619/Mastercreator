@@ -1056,7 +1056,7 @@ export default function CharacterCreatorApp() {
   }, []);
 
   useEffect(() => {
-    if (page !== "characters" && page !== "create" && page !== "lorebooks" && page !== "lorebook_create") {
+    if (page !== "characters" && page !== "create" && page !== "story_relationship_board" && page !== "lorebooks" && page !== "lorebook_create") {
       setPage("characters");
     }
   }, [page]);
