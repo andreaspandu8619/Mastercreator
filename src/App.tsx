@@ -9,13 +9,11 @@ import {
   Plus,
   Search,
   SlidersHorizontal,
-  Settings,
   Sun,
   Trash2,
   MessageCircle,
   BookOpen,
   Library,
-  UserRound,
   Upload,
   X,
   Sparkles,
@@ -184,6 +182,7 @@ type Character = {
   backstory: string[];
   selectedBackstoryIndex: number;
   systemRules: string;
+  selectedSystemRuleIds: string[];
   synopsis: string;
   introMessages: string[];
   selectedIntroIndex: number;
@@ -584,6 +583,7 @@ function normalizeCharacter(x: any): Character | null {
     backstory: normalizeStringArray(x.backstory),
     selectedBackstoryIndex: Number.isFinite(Number(x.selectedBackstoryIndex)) ? Math.max(0, Number(x.selectedBackstoryIndex)) : 0,
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
+    selectedSystemRuleIds: normalizeStringArray(x.selectedSystemRuleIds),
     synopsis: typeof x.synopsis === "string" ? x.synopsis : "",
     introMessages: introMessages.length ? introMessages : [""],
     selectedIntroIndex,
@@ -785,6 +785,7 @@ function runTests() {
     backstory: ["Born in the rain"],
     selectedBackstoryIndex: 0,
     systemRules: "No OOC",
+    selectedSystemRuleIds: [],
     synopsis: "A hunter.",
     introMessages: ["Hello", "Hi"],
     selectedIntroIndex: 1,
@@ -799,8 +800,8 @@ function runTests() {
 
 export default function CharacterCreatorApp() {
   const [theme, setTheme] = useState<ThemeMode>("light");
-  const [page, setPage] = useState<Page>("library");
-  const [tab, setTab] = useState<CreateTab>("overview");
+  const [page, setPage] = useState<Page>("characters");
+  const [tab, setTab] = useState<CreateTab>("definition");
 
   const [characters, setCharacters] = useState<Character[]>([]);
   const [hydrated, setHydrated] = useState(false);
@@ -938,6 +939,7 @@ export default function CharacterCreatorApp() {
   const [backstory, setBackstory] = useState<string[]>([]);
 
   const [systemRules, setSystemRules] = useState("");
+  const [characterSelectedSystemRuleIds, setCharacterSelectedSystemRuleIds] = useState<string[]>([]);
   const [synopsis, setSynopsis] = useState("");
 
   const [storyFirstMessageInput, setStoryFirstMessageInput] = useState("");
@@ -1030,8 +1032,6 @@ export default function CharacterCreatorApp() {
   const [genError, setGenError] = useState<string | null>(null);
   const [proxyProgress, setProxyProgress] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
-  const [navMenuOpen, setNavMenuOpen] = useState<null | "characters" | "stories" | "lorebooks" | "settings">(null);
-  const navMenusRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const sync = () => setIsMobile(window.innerWidth < 768);
@@ -1041,15 +1041,11 @@ export default function CharacterCreatorApp() {
   }, []);
 
   useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      if (!navMenusRef.current) return;
-      const target = event.target as Node | null;
-      if (target && navMenusRef.current.contains(target)) return;
-      setNavMenuOpen(null);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, []);
+    if (page !== "characters" && page !== "lorebooks" && page !== "lorebook_create") {
+      setPage("characters");
+    }
+  }, [page]);
+
 
   function startGeneratedTextPage(fieldKey: string) {
     const pageId = uid();
@@ -1168,7 +1164,6 @@ export default function CharacterCreatorApp() {
   const lorebookCoverFileRef = useRef<HTMLInputElement | null>(null);
   const factionImageFileRef = useRef<HTMLInputElement | null>(null);
   const sexualBehaviorImportRef = useRef<HTMLInputElement | null>(null);
-  const [historyStack, setHistoryStack] = useState<Page[]>([]);
 
   useEffect(() => {
     if (import.meta.env.MODE === "test") runTests();
@@ -1576,6 +1571,7 @@ export default function CharacterCreatorApp() {
     setBackstory([]);
 
     setSystemRules("");
+    setCharacterSelectedSystemRuleIds([]);
     setSynopsis("");
 
     setIntroMessages([""]);
@@ -1683,6 +1679,7 @@ export default function CharacterCreatorApp() {
       backstory: backstoryVersions,
       selectedBackstoryIndex,
       systemRules,
+      selectedSystemRuleIds: characterSelectedSystemRuleIds,
       synopsis,
       introMessages: baseIntro,
       selectedIntroIndex: safeIntroIndex,
@@ -1779,25 +1776,8 @@ export default function CharacterCreatorApp() {
   }
 
   function navigateTo(next: Page) {
-    setHistoryStack((prev) => {
-      if (prev[prev.length - 1] === page) return prev;
-      return [...prev, page];
-    });
     setPage(next);
   }
-
-  function goBack() {
-    setHistoryStack((prev) => {
-      if (!prev.length) {
-        setPage("library");
-        return prev;
-      }
-      const next = prev[prev.length - 1];
-      setPage(next);
-      return prev.slice(0, -1);
-    });
-  }
-
 
   function loadCharacterIntoForm(c: Character) {
     setSelectedId(c.id);
@@ -1826,6 +1806,7 @@ export default function CharacterCreatorApp() {
     setSexualBehaviorInput("");
 
     setSystemRules(c.systemRules || "");
+    setCharacterSelectedSystemRuleIds(Array.isArray(c.selectedSystemRuleIds) ? [...c.selectedSystemRuleIds] : []);
     setSynopsis(c.synopsis || "");
 
     const im =
@@ -1845,11 +1826,7 @@ export default function CharacterCreatorApp() {
     setGenError(null);
     setGenLoading(false);
 
-    navigateTo("create");
-    setTab("overview");
-    requestAnimationFrame(() =>
-      window.scrollTo({ top: 0, behavior: "smooth" })
-    );
+    setTab("definition");
   }
 
   function upsertChatSession(session: ChatSession) {
@@ -1988,7 +1965,6 @@ export default function CharacterCreatorApp() {
     }
   }, [activeLorebook?.id, activeLorebook?.locationEntries.length, activeLorebook?.rulesEntries.length, activeLorebook?.itemEntries.length, activeLorebook?.specialsEntries.length]);
 
-  const canGoBack = historyStack.length > 0;
 
   function updateStory(id: string, patch: Partial<StoryProject>) {
     setStories((prev) =>
@@ -3972,10 +3948,9 @@ ${feedback}`,
   const draft = getDraftCharacter();
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
-    { id: "overview", label: "Overview" },
-    { id: "personality", label: "Personality & Traits" },
-    { id: "behavior", label: "Behavior" },
-    { id: "definition", label: "Backstory" },
+    { id: "definition", label: "Definition" },
+    { id: "system", label: "System Rules" },
+    { id: "intro", label: "First Message" },
   ];
 
   return (
@@ -4017,68 +3992,27 @@ ${feedback}`,
         <header className="fixed inset-x-0 top-0 z-50 border-b border-[hsl(var(--border))] bg-[hsl(var(--background))/0.95] backdrop-blur">
           <div className="mx-auto flex w-full max-w-7xl flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:justify-between md:px-8">
           <div className="flex items-center gap-2">
-            {page !== "library" && canGoBack ? (
-              <Button variant="secondary" onClick={goBack}>
-                <ArrowLeft className="h-4 w-4" /> Back
-              </Button>
-            ) : null}
+            {null}
             <button
               type="button"
               className="text-2xl font-semibold tracking-tight md:text-3xl"
-              onClick={() => navigateTo("library")}
+              onClick={() => navigateTo("characters")}
             >
               Mastercreator
             </button>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-            <div ref={navMenusRef} className="flex flex-wrap items-center gap-2">
-              <div className="relative">
-                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "characters" ? null : "characters"))}>Characters</Button>
-                {navMenuOpen === "characters" ? (
-                  <div className="anim-dropdown-down absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
-                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); resetForm(); navigateTo("create"); setTab("overview"); }}><Plus className="h-4 w-4" /> Create new character</Button>
-                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("characters"); }}><Library className="h-4 w-4" /> View character gallery</Button>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="relative">
-                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "stories" ? null : "stories"))}>Stories</Button>
-                {navMenuOpen === "stories" ? (
-                  <div className="anim-dropdown-down absolute right-0 z-50 mt-2 w-52 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
-                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("storywriting"); }}><Plus className="h-4 w-4" /> Create new story</Button>
-                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("my_stories"); }}><Library className="h-4 w-4" /> View stories</Button>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="relative">
-                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "lorebooks" ? null : "lorebooks"))}>Lorebooks</Button>
-                {navMenuOpen === "lorebooks" ? (
-                  <div className="anim-dropdown-down absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
-                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); createLorebook(); }}><Plus className="h-4 w-4" /> Create new lorebook</Button>
-                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("lorebooks"); }}><BookOpen className="h-4 w-4" /> View lorebooks</Button>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="relative">
-                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "settings" ? null : "settings"))}><Settings className="h-4 w-4" /> Settings</Button>
-                {navMenuOpen === "settings" ? (
-                  <div className="anim-dropdown-down absolute right-0 z-50 mt-2 w-48 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
-                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); setProxyOpen(true); }}><SlidersHorizontal className="h-4 w-4" /> Proxy</Button>
-                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); setTheme((t) => (t === "light" ? "dark" : "light")); }}>
-                      {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-            <Button variant="secondary" onClick={() => { setNavMenuOpen(null); setPersonaOpen(true); }}>
-              <UserRound className="h-4 w-4" /> Persona
+            <Button variant="secondary" onClick={() => navigateTo("characters")}>
+              <Library className="h-4 w-4" /> Character List
             </Button>
-            <Button variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("chat"); }}>
-              <MessageCircle className="h-4 w-4" /> Chats
+            <Button variant="secondary" onClick={() => navigateTo("lorebooks")}>
+              <BookOpen className="h-4 w-4" /> Lorebook List
+            </Button>
+            <Button variant="secondary" onClick={() => setProxyOpen(true)}>
+              <SlidersHorizontal className="h-4 w-4" /> Proxy Settings
+            </Button>
+            <Button variant="secondary" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}>
+              {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
             </Button>
           </div>
           </div>
@@ -5538,62 +5472,115 @@ ${feedback}`,
             </div>
           </div>
         ) : page === "characters" ? (
-          <div className="anim-page mt-6 space-y-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="relative w-full md:max-w-xl">
+          <div className="anim-page mt-6 grid gap-4 lg:grid-cols-[280px,1fr]">
+            <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+              <div className="relative">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-[hsl(var(--muted-foreground))]" />
-                <Input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search characters…"
-                  className="pl-9"
-                />
+                <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search character entries…" className="pl-9" />
               </div>
-              <div className="flex justify-end">
-                <Button variant="primary" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}>
-                  <Plus className="h-4 w-4" /> Create
-                </Button>
-              </div>
-            </div>
-            {filteredCharacters.length === 0 ? (
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-6 text-sm text-[hsl(var(--muted-foreground))]">
-                {characters.length === 0 ? "No characters yet. Click Create to make your first one." : "No matches for your search."}
-              </div>
-            ) : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <Button variant="primary" className="w-full" onClick={() => { resetForm(); setSelectedId(null); setTab("definition"); }}><Plus className="h-4 w-4" /> New character entry</Button>
+              <div className="max-h-[65vh] space-y-2 overflow-auto">
                 {filteredCharacters.map((c) => (
-                  <button
-                    key={c.id}
-                    className={cn(
-                      "clickable group relative overflow-hidden rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left shadow-sm",
-                      "focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
-                    )}
-                    onClick={() => setPreviewId(c.id)}
-                    type="button"
-                  >
-                    <div className="relative aspect-[3/4] w-full">
-                      {c.imageDataUrl ? (
-                        <img src={c.imageDataUrl} alt={c.name} className="absolute inset-0 h-full w-full object-cover object-top" />
-                      ) : (
-                        <div className="absolute inset-0 flex items-center justify-center bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))]">
-                          <span className="text-sm">No image</span>
-                        </div>
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[hsl(var(--card))]" />
-                      <div className="absolute bottom-0 left-0 right-0 p-4">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="truncate text-base font-semibold text-[hsl(var(--foreground))]">{c.name}</div>
-                            <div className={cn("text-sm", genderColorClass(c.gender))}>{c.gender || "—"}</div>
-                          </div>
-                          {c.race ? <Badge className="shrink-0">{c.race}</Badge> : null}
-                        </div>
-                      </div>
-                    </div>
+                  <button key={c.id} type="button" onClick={() => loadCharacterIntoForm(c)} className={cn("w-full rounded-xl border px-3 py-2 text-left text-sm", selectedId===c.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))]")}>
+                    <div className="font-medium">{c.name || "(unnamed)"}</div>
+                    <div className="text-xs text-[hsl(var(--muted-foreground))]">{c.gender || "—"}</div>
                   </button>
                 ))}
+                {!filteredCharacters.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No entries.</div> : null}
               </div>
-            )}
+            </div>
+
+            <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-lg font-semibold">Character Dashboard</div>
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={saveCharacter}><Pencil className="h-4 w-4" /> Save</Button>
+                  {selectedId ? <Button variant="secondary" onClick={() => deleteCharacter(selectedId)}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {tabs.map((t) => (
+                  <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab===t.id?"border-[hsl(var(--hover-accent))]":"border-[hsl(var(--border))]")}>{t.label}</button>
+                ))}
+              </div>
+
+              {tab === "definition" ? (
+                <div className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-[160px,1fr]">
+                    <div className="space-y-2">
+                      <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-[hsl(var(--border))]">
+                        {imageDataUrl ? <img src={imageDataUrl} alt="Character" className="absolute inset-0 h-full w-full object-cover object-top" /> : <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>}
+                      </div>
+                      <Button variant="secondary" className="w-full" onClick={() => imageFileRef.current?.click()}><Upload className="h-4 w-4" /> Upload</Button>
+                      <input ref={imageFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePickImage(f); e.currentTarget.value = ""; }} />
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div><div className="mb-1 text-sm">Name</div><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
+                      <div><div className="mb-1 text-sm">Gender</div><Select value={gender} onChange={(e) => setGender(e.target.value as any)}><option value="">—</option><option value="Male">Male</option><option value="Female">Female</option></Select></div>
+                      <div><div className="mb-1 text-sm">Age</div><Input type="number" value={age === "" ? "" : String(age)} onChange={(e) => setAge(e.target.value === "" ? "" : Number(e.target.value))} /></div>
+                      <div><div className="mb-1 text-sm">Race</div><Input value={racePreset === "Other" ? customRace : racePreset} onChange={(e) => { setRacePreset("Other"); setCustomRace(e.target.value); }} placeholder="Race" /></div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2"><div className="text-sm font-medium">Personality</div>
+                    <Input value={personalitySearch} onChange={(e) => setPersonalitySearch(e.target.value)} placeholder="Type to filter personalities" />
+                    <div className="flex max-h-36 flex-wrap gap-2 overflow-auto">
+                      {PERSONALITIES.filter((x) => !personalitySearch || x.toLowerCase().includes(personalitySearch.toLowerCase())).map((x) => {
+                        const active = personalities.includes(x);
+                        return <button key={x} type="button" className={cn("rounded-lg border px-2 py-1 text-xs", active ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))]")} onClick={() => setPersonalities((prev) => active ? prev.filter((p) => p !== x) : [...prev, x])}>{x}</button>;
+                      })}
+                    </div>
+                  </div>
+
+                  <div><div className="mb-1 text-sm font-medium">Physical appearance</div><div className="flex gap-2"><Input value={appearanceInput} onChange={(e) => setAppearanceInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, () => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput("")))} /><Button variant="secondary" onClick={() => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{physicalAppearance.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setPhysicalAppearance)}>{x} ×</button>)}</div></div>
+                  <div><div className="mb-1 text-sm font-medium">Unique traits</div><div className="flex gap-2"><Input value={traitInput} onChange={(e)=>setTraitInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput("")))} /><Button variant="secondary" onClick={()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{traits.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setTraits)}>{x} ×</button>)}</div></div>
+
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium">Backstory</div>
+                    {renderGeneratedTextarea({ fieldKey: "character:backstory", value: backstoryText, onChange: setBackstoryText, rows: 8, placeholder: "Write backstory here..." })}
+                    <Textarea value={backstoryPrompt} onChange={(e) => setBackstoryPrompt(e.target.value)} rows={3} placeholder="Prompt for generate/revise" />
+                    <div className="flex gap-2">
+                      <Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button>
+                      <Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {tab === "system" ? (
+                <div className="space-y-3">
+                  <div className="grid gap-2">
+                    {STORY_SYSTEM_RULE_CARDS.map((rule) => {
+                      const selected = characterSelectedSystemRuleIds.includes(rule.id);
+                      return (
+                        <button key={rule.id} type="button" className={cn("rounded-xl border p-3 text-left", selected ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))]")} onClick={() => setCharacterSelectedSystemRuleIds((prev) => prev.includes(rule.id) ? prev.filter((id) => id !== rule.id) : [...prev, rule.id])}>
+                          <div className="text-sm font-medium">{rule.label}</div>
+                          <div className="text-xs text-[hsl(var(--muted-foreground))]">{rule.text}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div><div className="mb-1 text-xs font-medium text-[hsl(var(--muted-foreground))]">Additional custom system rules</div><Textarea value={systemRules} onChange={(e) => setSystemRules(e.target.value)} rows={8} /></div>
+                </div>
+              ) : null}
+
+              {tab === "intro" ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between"><div className="text-sm">Message {introIndex + 1} / {Math.max(1, introMessages.length)}</div><Button variant="secondary" onClick={() => { setIntroMessages((prev)=>[...prev, ""]); setIntroVersionHistories((prev)=>[...prev,[""]]); setIntroVersionIndices((prev)=>[...prev,0]); setIntroIndex(introMessages.length); }}><Plus className="h-4 w-4" /> New</Button></div>
+                  <div className="flex items-center justify-between gap-2">
+                    <Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.max(0,i-1))} disabled={introIndex<=0}><ChevronLeft className="h-4 w-4" /> Prev</Button>
+                    <Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.min(introMessages.length-1,i+1))} disabled={introIndex>=introMessages.length-1}>Next <ChevronRight className="h-4 w-4" /></Button>
+                  </div>
+                  <Textarea value={introMessages[clampIndex(introIndex, Math.max(1,introMessages.length))] || ""} onChange={(e) => { const v=e.target.value; setIntroMessages((prev)=>{const b=[...prev]; b[clampIndex(introIndex,b.length)] = v; return b;}); }} rows={9} placeholder="Write first message..." />
+                  <Textarea value={introPrompt} onChange={(e)=>setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" />
+                  <div className="flex gap-2"><Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div>
+                  <Textarea value={introRevisionPrompt} onChange={(e)=>setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" />
+                </div>
+              ) : null}
+
+              {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
+            </div>
           </div>
         ) : (
           <div className="anim-page mt-6 space-y-4">
