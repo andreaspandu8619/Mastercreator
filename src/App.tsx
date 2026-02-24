@@ -2098,7 +2098,33 @@ export default function CharacterCreatorApp() {
     setProblemBehavior(Array.isArray(c.respondToProblems) ? [...c.respondToProblems] : []);
     setSexualBehavior(Array.isArray(c.sexualBehavior) ? [...c.sexualBehavior] : []);
     setSpeechPatterns(Array.isArray(c.speechPatterns) ? [...c.speechPatterns] : []);
-    setBackstory(Array.isArray(c.backstory) ? [...c.backstory] : []);
+    const loadedBackstory = Array.isArray(c.backstory) ? [...c.backstory] : [];
+    const loadedBackstoryIndex = loadedBackstory.length
+      ? clampIndex(c.selectedBackstoryIndex ?? loadedBackstory.length - 1, loadedBackstory.length)
+      : 0;
+    const loadedBackstoryText = loadedBackstory[loadedBackstoryIndex] || "";
+    setBackstory(loadedBackstory);
+    setBackstoryText(loadedBackstoryText);
+    setGeneratedTextStates((prev) => {
+      const next = { ...prev };
+      if (loadedBackstory.length) {
+        next["character:backstory"] = {
+          pages: loadedBackstory.map((text, idx) => ({
+            id: `character-backstory:${c.id}:${idx}`,
+            text,
+            isFinal: true,
+          })),
+          activeIndex: loadedBackstoryIndex,
+        };
+      } else {
+        delete next["character:backstory"];
+      }
+      return next;
+    });
+    setIterationSelections((prev) => ({
+      ...prev,
+      "character:backstory": loadedBackstory.length ? `character-backstory:${c.id}:${loadedBackstoryIndex}` : "",
+    }));
     setTraitInput("");
     setAppearanceInput("");
     setSexualBehaviorInput("");
