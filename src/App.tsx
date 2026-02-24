@@ -9,13 +9,11 @@ import {
   Plus,
   Search,
   SlidersHorizontal,
-  Settings,
   Sun,
   Trash2,
   MessageCircle,
   BookOpen,
   Library,
-  UserRound,
   Upload,
   X,
   Sparkles,
@@ -24,8 +22,8 @@ import {
 type ThemeMode = "light" | "dark";
 type Gender = "Male" | "Female" | "";
 type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board" | "lorebooks" | "lorebook_create";
-type CreateTab = "overview" | "personality" | "behavior" | "definition" | "system" | "intro" | "synopsis";
-type StoryTab = "scenario" | "first_message" | "system_rules" | "relationships" | "plot_points";
+type CreateTab = "overview" | "personality" | "behavior" | "definition" | "system" | "intro" | "synopsis" | "relationships";
+type StoryTab = "scenario" | "first_message" | "system_rules" | "relationships" | "synopsis";
 type LorebookTab = "overview" | "world" | "locations" | "factions" | "rules" | "items" | "specials";
 
 type ProxyConfig = {
@@ -93,7 +91,8 @@ type StoryProject = {
   firstMessageStyle: "realistic" | "dramatic" | "melancholic";
   systemRules: string;
   selectedSystemRuleIds: string[];
-  plotPoints: string[];
+  synopsis: string;
+  synopsisStyle: "realistic" | "dramatic" | "melancholic";
   relationships: StoryRelationship[];
   boardNodes: StoryBoardNode[];
   assignedLorebookIds: string[];
@@ -180,12 +179,29 @@ type Character = {
   physicalAppearance: string[];
   respondToProblems: string[];
   sexualBehavior: string[];
+  speechPatterns: string[];
   backstory: string[];
+  selectedBackstoryIndex: number;
   systemRules: string;
+  selectedSystemRuleIds: string[];
   synopsis: string;
   introMessages: string[];
   selectedIntroIndex: number;
   assignedLorebookIds: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+
+type CharacterCard = {
+  id: string;
+  name: string;
+  characterIds: string[];
+  relationshipStoryId?: string;
+  systemRules: string;
+  selectedSystemRuleIds: string[];
+  firstMessageMessages: string[];
+  selectedFirstMessageIndex: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -199,6 +215,7 @@ const PERSONA_KEY = "mastercreator_persona";
 const CHAT_SESSIONS_KEY = "mastercreator_chat_sessions_v1";
 const STORIES_KEY = "mastercreator_stories_v1";
 const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
+const CHARACTER_CARDS_KEY = "mastercreator_character_cards_v1";
 
 const DEFAULT_PROXY: ProxyConfig = {
   chatUrl: "https://llm.chutes.ai/v1/chat/completions",
@@ -385,6 +402,8 @@ function themeVars(mode: ThemeMode): React.CSSProperties {
       ["--hover-accent-foreground" as any]: "0 0% 0%",
       ["--male" as any]: "205 95% 55%",
       ["--female" as any]: "330 85% 70%",
+      ["--scrollbar-thumb" as any]: "222 8% 56%",
+      ["--scrollbar-thumb-hover" as any]: "222 10% 44%",
     };
   }
   return {
@@ -400,6 +419,8 @@ function themeVars(mode: ThemeMode): React.CSSProperties {
     ["--hover-accent-foreground" as any]: "40 33% 96%",
     ["--male" as any]: "205 95% 65%",
     ["--female" as any]: "330 85% 78%",
+    ["--scrollbar-thumb" as any]: "220 8% 46%",
+    ["--scrollbar-thumb-hover" as any]: "220 8% 62%",
   };
 }
 
@@ -500,39 +521,36 @@ async function idbDeleteCharacter(id: string): Promise<void> {
 }
 
 
+function xmlEscape(input: string) {
+  return String(input || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 function characterToTxt(c: Character) {
-  const lines = [
-    `# ${c.name || "Character"}`,
-    "",
-    "## Details",
-    `Name: ${c.name || ""}`,
-    `Age: ${c.age === "" ? "" : String(c.age)}`,
-    `Height: ${c.height || ""}`,
-    `Origins: ${c.origins || ""}`,
-    `Race: ${c.race || ""}`,
-    `Personality: ${(c.personalities || []).join(", ")}`,
-    `Unique traits: ${(c.uniqueTraits || []).join(", ")}`,
-    "",
-    "## Synopsis",
-    c.synopsis || "",
-    "",
-    "## Backstory",
-    ...(c.backstory || []).map((b) => `- ${b}`),
-    "",
-    "## System Rules",
-    c.systemRules || "",
-    "",
-    "## Assigned Lorebooks",
-    (c.assignedLorebookIds || []).join(", "),
-    "",
-    "## Intro Messages",
-    ...(c.introMessages || []).map((m, i) => {
-      const mark = i === c.selectedIntroIndex ? "*" : "-";
-      return `${mark} Intro ${i + 1}:\n${m || ""}`;
-    }),
-    "",
-  ];
-  return lines.join("\n");
+  const selectedBackstory = (c.backstory || []).length
+    ? (c.backstory || [])[Math.max(0, Math.min((c.backstory || []).length - 1, (c as any).selectedBackstoryIndex || 0))] || ""
+    : "";
+
+  return [
+    `  <character id="${xmlEscape(c.id || "")}">`,
+    `    <name>${xmlEscape(c.name || "")}</name>`,
+    `    <gender>${xmlEscape(c.gender || "")}</gender>`,
+    `    <age>${xmlEscape(c.age === "" ? "" : String(c.age))}</age>`,
+    `    <height>${xmlEscape(c.height || "")}</height>`,
+    `    <origin>${xmlEscape(c.origins || "")}</origin>`,
+    `    <race>${xmlEscape(c.race || "")}</race>`,
+    `    <personality>${xmlEscape((c.personalities || []).join(", "))}</personality>`,
+    `    <physical_appearance>${xmlEscape((c.physicalAppearance || []).join(", "))}</physical_appearance>`,
+    `    <unique_traits>${xmlEscape((c.uniqueTraits || []).join(", "))}</unique_traits>`,
+    `    <behavior>${xmlEscape([...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", "))}</behavior>`,
+    `    <speech_patterns>${xmlEscape((c.speechPatterns || []).join(", "))}</speech_patterns>`,
+    `    <backstory>${xmlEscape(selectedBackstory)}</backstory>`,
+    `  </character>`,
+  ].join("\n");
 }
 
 function normalizeCharacter(x: any): Character | null {
@@ -583,8 +601,11 @@ function normalizeCharacter(x: any): Character | null {
     physicalAppearance: normalizeStringArray(x.physicalAppearance),
     respondToProblems: normalizeStringArray(x.respondToProblems),
     sexualBehavior: normalizeStringArray(x.sexualBehavior),
+    speechPatterns: normalizeStringArray((x as any).speechPatterns),
     backstory: normalizeStringArray(x.backstory),
+    selectedBackstoryIndex: Number.isFinite(Number(x.selectedBackstoryIndex)) ? Math.max(0, Number(x.selectedBackstoryIndex)) : 0,
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
+    selectedSystemRuleIds: normalizeStringArray(x.selectedSystemRuleIds),
     synopsis: typeof x.synopsis === "string" ? x.synopsis : "",
     introMessages: introMessages.length ? introMessages : [""],
     selectedIntroIndex,
@@ -783,8 +804,11 @@ function runTests() {
     physicalAppearance: ["Tall"],
     respondToProblems: ["Logical"],
     sexualBehavior: ["Reserved"],
+    speechPatterns: ["Formal and clipped"],
     backstory: ["Born in the rain"],
+    selectedBackstoryIndex: 0,
     systemRules: "No OOC",
+    selectedSystemRuleIds: [],
     synopsis: "A hunter.",
     introMessages: ["Hello", "Hi"],
     selectedIntroIndex: 1,
@@ -799,10 +823,13 @@ function runTests() {
 
 export default function CharacterCreatorApp() {
   const [theme, setTheme] = useState<ThemeMode>("light");
-  const [page, setPage] = useState<Page>("library");
-  const [tab, setTab] = useState<CreateTab>("overview");
+  const [page, setPage] = useState<Page>("characters");
+  const [tab, setTab] = useState<CreateTab>("definition");
 
   const [characters, setCharacters] = useState<Character[]>([]);
+  const [characterCards, setCharacterCards] = useState<CharacterCard[]>([]);
+  const [activeCharacterCardId, setActiveCharacterCardId] = useState<string | null>(null);
+  const [characterCardNameInput, setCharacterCardNameInput] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -827,6 +854,7 @@ export default function CharacterCreatorApp() {
   const [chatInput, setChatInput] = useState("");
 
   const [query, setQuery] = useState("");
+  const [dragCharacterId, setDragCharacterId] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
 
   const [stories, setStories] = useState<StoryProject[]>([]);
@@ -864,8 +892,9 @@ export default function CharacterCreatorApp() {
   const [storyScenarioPrompt, setStoryScenarioPrompt] = useState("");
   const [storyScenarioRevision, setStoryScenarioRevision] = useState("");
   const [storyImageDataUrl, setStoryImageDataUrl] = useState("");
-  const [storyPlotPointInput, setStoryPlotPointInput] = useState("");
-  const [storyPlotPointRevision, setStoryPlotPointRevision] = useState("");
+  const [storySynopsisPrompt, setStorySynopsisPrompt] = useState("");
+  const [storySynopsisRevision, setStorySynopsisRevision] = useState("");
+  const [storySynopsisStyle, setStorySynopsisStyle] = useState<"realistic" | "dramatic" | "melancholic">("realistic");
   const [storyRelationshipEditorOpen, setStoryRelationshipEditorOpen] = useState(false);
   const [storyRelFromId, setStoryRelFromId] = useState("");
   const [storyRelToId, setStoryRelToId] = useState("");
@@ -931,12 +960,15 @@ export default function CharacterCreatorApp() {
   const [problemBehavior, setProblemBehavior] = useState<string[]>([]);
   const [sexualBehaviorInput, setSexualBehaviorInput] = useState("");
   const [sexualBehavior, setSexualBehavior] = useState<string[]>([]);
+  const [speechPatternInput, setSpeechPatternInput] = useState("");
+  const [speechPatterns, setSpeechPatterns] = useState<string[]>([]);
 
   const [backstoryText, setBackstoryText] = useState("");
   const [backstoryPrompt, setBackstoryPrompt] = useState("");
   const [backstory, setBackstory] = useState<string[]>([]);
 
   const [systemRules, setSystemRules] = useState("");
+  const [characterSelectedSystemRuleIds, setCharacterSelectedSystemRuleIds] = useState<string[]>([]);
   const [synopsis, setSynopsis] = useState("");
 
   const [storyFirstMessageInput, setStoryFirstMessageInput] = useState("");
@@ -949,6 +981,8 @@ export default function CharacterCreatorApp() {
 
   const [introMessages, setIntroMessages] = useState<string[]>([""]);
   const [introIndex, setIntroIndex] = useState(0);
+  const [cardSystemRules, setCardSystemRules] = useState("");
+  const [cardSelectedSystemRuleIds, setCardSelectedSystemRuleIds] = useState<string[]>([]);
   const [introVersionHistories, setIntroVersionHistories] = useState<string[][]>([[""]]);
   const [introVersionIndices, setIntroVersionIndices] = useState<number[]>([0]);
   const [introPrompt, setIntroPrompt] = useState("");
@@ -1023,13 +1057,12 @@ export default function CharacterCreatorApp() {
   const [relationshipDetailsPrompt, setRelationshipDetailsPrompt] = useState("");
   const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
   const [generatedTextStates, setGeneratedTextStates] = useState<Record<string, GeneratedTextState>>({});
+  const [iterationSelections, setIterationSelections] = useState<Record<string, string>>({});
 
   const [genLoading, setGenLoading] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [proxyProgress, setProxyProgress] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
-  const [navMenuOpen, setNavMenuOpen] = useState<null | "characters" | "stories" | "lorebooks" | "settings">(null);
-  const navMenusRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const sync = () => setIsMobile(window.innerWidth < 768);
@@ -1039,15 +1072,11 @@ export default function CharacterCreatorApp() {
   }, []);
 
   useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      if (!navMenusRef.current) return;
-      const target = event.target as Node | null;
-      if (target && navMenusRef.current.contains(target)) return;
-      setNavMenuOpen(null);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, []);
+    if (page !== "characters" && page !== "create" && page !== "story_relationship_board" && page !== "lorebooks" && page !== "lorebook_create") {
+      setPage("characters");
+    }
+  }, [page]);
+
 
   function startGeneratedTextPage(fieldKey: string) {
     const pageId = uid();
@@ -1135,6 +1164,21 @@ export default function CharacterCreatorApp() {
             </Button>
           </div>
         ) : null}
+        <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
+          <input
+            type="checkbox"
+            checked={pages.length <= 1 || (!!activePage && iterationSelections[args.fieldKey] === activePage.id)}
+            disabled={pages.length <= 1 || !activePage}
+            onChange={(e) => {
+              if (!activePage) return;
+              setIterationSelections((prev) => ({
+                ...prev,
+                [args.fieldKey]: e.target.checked ? activePage.id : "",
+              }));
+            }}
+          />
+          Use this iteration
+        </label>
         <Textarea
           value={effectiveValue}
           onChange={(e) => commitGeneratedText(args.fieldKey, e.target.value, args.onChange, true)}
@@ -1151,7 +1195,6 @@ export default function CharacterCreatorApp() {
   const lorebookCoverFileRef = useRef<HTMLInputElement | null>(null);
   const factionImageFileRef = useRef<HTMLInputElement | null>(null);
   const sexualBehaviorImportRef = useRef<HTMLInputElement | null>(null);
-  const [historyStack, setHistoryStack] = useState<Page[]>([]);
 
   useEffect(() => {
     if (import.meta.env.MODE === "test") runTests();
@@ -1243,7 +1286,8 @@ export default function CharacterCreatorApp() {
             firstMessageStyle: (s as any).firstMessageStyle === "dramatic" || (s as any).firstMessageStyle === "melancholic" ? (s as any).firstMessageStyle : "realistic",
             systemRules: typeof (s as any).systemRules === "string" ? (s as any).systemRules : "",
             selectedSystemRuleIds: normalizeStringArray((s as any).selectedSystemRuleIds),
-            plotPoints: normalizeStringArray((s as any).plotPoints),
+            synopsis: typeof (s as any).synopsis === "string" ? (s as any).synopsis : "",
+            synopsisStyle: (s as any).synopsisStyle === "dramatic" || (s as any).synopsisStyle === "melancholic" ? (s as any).synopsisStyle : "realistic",
             relationships: Array.isArray((s as any).relationships) ? (s as any).relationships : [],
             boardNodes: Array.isArray((s as any).boardNodes) ? (s as any).boardNodes : [],
             assignedLorebookIds: normalizeStringArray((s as any).assignedLorebookIds),
@@ -1368,26 +1412,57 @@ export default function CharacterCreatorApp() {
       setLorebooks(normalizedLorebooks);
     }
 
+    const savedCharacterCards = safeParseJSON(localStorage.getItem(CHARACTER_CARDS_KEY) || "");
+    if (Array.isArray(savedCharacterCards)) {
+      const normalizedCards = savedCharacterCards
+        .map((card: any) => {
+          if (!card || typeof card !== "object") return null;
+          const now = new Date().toISOString();
+          return {
+            id: typeof card.id === "string" ? card.id : uid(),
+            name: collapseWhitespace(card.name || "Character Card"),
+            characterIds: normalizeStringArray(card.characterIds),
+            relationshipStoryId: typeof card.relationshipStoryId === "string" ? card.relationshipStoryId : undefined,
+            systemRules: typeof card.systemRules === "string" ? card.systemRules : "",
+            selectedSystemRuleIds: normalizeStringArray(card.selectedSystemRuleIds),
+            firstMessageMessages: normalizeStringArray(card.firstMessageMessages).length ? normalizeStringArray(card.firstMessageMessages) : [""],
+            selectedFirstMessageIndex: Number.isFinite(Number(card.selectedFirstMessageIndex)) ? Math.max(0, Number(card.selectedFirstMessageIndex)) : 0,
+            createdAt: typeof card.createdAt === "string" ? card.createdAt : now,
+            updatedAt: typeof card.updatedAt === "string" ? card.updatedAt : now,
+          } as CharacterCard;
+        })
+        .filter((x): x is CharacterCard => !!x)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      setCharacterCards(normalizedCards);
+      if (normalizedCards.length && !activeCharacterCardId) {
+        setActiveCharacterCardId(normalizedCards[0].id);
+        setCharacterCardNameInput(normalizedCards[0].name);
+      }
+    }
+
     (async () => {
       try {
-        const fromIdb = await idbGetAllCharacters();
-        if (fromIdb.length) {
-          setCharacters(fromIdb);
-          setHydrated(true);
-          return;
-        }
-
+        const fromIdbRaw = await idbGetAllCharacters();
+        const fromIdb = fromIdbRaw.map(normalizeCharacter).filter(Boolean) as Character[];
         const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const parsed = safeParseJSON(raw);
-          if (Array.isArray(parsed)) {
-            const normalized = parsed.map(normalizeCharacter).filter(Boolean) as Character[];
-            setCharacters(normalized);
-            try {
-              await idbPutManyCharacters(normalized);
-              localStorage.removeItem(STORAGE_KEY);
-            } catch {}
+        const parsedLocal = raw ? safeParseJSON(raw) : null;
+        const fromLocal = Array.isArray(parsedLocal)
+          ? parsedLocal.map(normalizeCharacter).filter(Boolean) as Character[]
+          : [];
+
+        const mergedById = new Map<string, Character>();
+        for (const ch of [...fromIdb, ...fromLocal]) {
+          const existing = mergedById.get(ch.id);
+          if (!existing || (ch.updatedAt || "") > (existing.updatedAt || "")) {
+            mergedById.set(ch.id, ch);
           }
+        }
+        const merged = Array.from(mergedById.values()).sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+        if (merged.length) {
+          setCharacters(merged);
+          try {
+            await idbPutManyCharacters(merged);
+          } catch {}
         }
         setHydrated(true);
       } catch (e: any) {
@@ -1474,6 +1549,15 @@ export default function CharacterCreatorApp() {
   }, [lorebooks]);
 
   useEffect(() => {
+    localStorage.setItem(CHARACTER_CARDS_KEY, JSON.stringify(characterCards));
+  }, [characterCards]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(characters));
+  }, [characters, hydrated]);
+
+  useEffect(() => {
     if (!hydrated) return;
     (async () => {
       try {
@@ -1485,6 +1569,46 @@ export default function CharacterCreatorApp() {
     })();
   }, [characters, hydrated]);
 
+
+  useEffect(() => {
+    const card = characterCards.find((c) => c.id === activeCharacterCardId);
+    if (!card) return;
+    setCardSystemRules(card.systemRules || "");
+    setCardSelectedSystemRuleIds(card.selectedSystemRuleIds || []);
+    const msgs = card.firstMessageMessages?.length ? [...card.firstMessageMessages] : [""];
+    setIntroMessages(msgs);
+    setIntroIndex(clampIndex(card.selectedFirstMessageIndex || 0, msgs.length));
+    setIntroVersionHistories(msgs.map((m) => [m || ""]));
+    setIntroVersionIndices(msgs.map(() => 0));
+  }, [activeCharacterCardId]);
+
+  useEffect(() => {
+    if (!hydrated || !activeCharacterCardId) return;
+    setCharacterCards((prev) => prev.map((card) => card.id !== activeCharacterCardId ? card : {
+      ...card,
+      systemRules: cardSystemRules,
+      selectedSystemRuleIds: cardSelectedSystemRuleIds,
+      firstMessageMessages: introMessages,
+      selectedFirstMessageIndex: introIndex,
+      updatedAt: new Date().toISOString(),
+    }));
+  }, [hydrated, activeCharacterCardId, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (!characterCards.length) {
+      const now = new Date().toISOString();
+      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
+      setCharacterCards([card]);
+      setActiveCharacterCardId(card.id);
+      setCharacterCardNameInput(card.name);
+      return;
+    }
+    if (!activeCharacterCardId || !characterCards.some((c) => c.id === activeCharacterCardId)) {
+      setActiveCharacterCardId(characterCards[0].id);
+      setCharacterCardNameInput(characterCards[0].name);
+    }
+  }, [hydrated, characterCards, activeCharacterCardId]);
   const selected = useMemo(
     () => characters.find((c) => c.id === selectedId) || null,
     [characters, selectedId]
@@ -1496,9 +1620,11 @@ export default function CharacterCreatorApp() {
   );
 
   const filteredCharacters = useMemo(() => {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId);
+    const scoped = activeCard ? characters.filter((c) => activeCard.characterIds.includes(c.id)) : [];
     const q = collapseWhitespace(query).toLowerCase();
-    if (!q) return characters;
-    return characters.filter((c) => {
+    if (!q) return scoped;
+    return scoped.filter((c) => {
       const blob = [
         c.name,
         c.gender,
@@ -1515,7 +1641,7 @@ export default function CharacterCreatorApp() {
         .toLowerCase();
       return blob.includes(q);
     });
-  }, [characters, query]);
+  }, [characters, query, characterCards, activeCharacterCardId]);
 
 
 
@@ -1551,13 +1677,16 @@ export default function CharacterCreatorApp() {
     setPhysicalAppearance([]);
     setProblemBehavior([]);
     setSexualBehaviorInput("");
+    setSpeechPatternInput("");
     setSexualBehavior([]);
+    setSpeechPatterns([]);
 
     setBackstoryText("");
     setBackstoryPrompt("");
     setBackstory([]);
 
     setSystemRules("");
+    setCharacterSelectedSystemRuleIds([]);
     setSynopsis("");
 
     setIntroMessages([""]);
@@ -1621,7 +1750,6 @@ export default function CharacterCreatorApp() {
   }
 
   function validate(): string | null {
-    if (!collapseWhitespace(name)) return "Name is required.";
     if (age !== "" && (Number.isNaN(Number(age)) || Number(age) < 0))
       return "Age must be a positive number.";
     if (racePreset === "Other" && !collapseWhitespace(customRace))
@@ -1631,13 +1759,22 @@ export default function CharacterCreatorApp() {
 
   function getDraftCharacter(): Character | null {
     const cleanName = collapseWhitespace(name);
-    if (!cleanName) return null;
+    if (!cleanName && !selectedId) return null;
 
     const now = new Date().toISOString();
     const finalRace = getFinalRace();
 
     const baseIntro = introMessages.length ? introMessages : [""];
     const safeIntroIndex = clampIndex(introIndex, Math.max(1, baseIntro.length));
+
+    const backstoryPages = generatedTextStates["character:backstory"]?.pages || [];
+    const backstoryVersions = backstoryPages.length
+      ? backstoryPages.map((p) => p.text).filter((x) => collapseWhitespace(x))
+      : (collapseWhitespace(backstoryText) ? [backstoryText] : []);
+    const selectedBackstoryPageId = iterationSelections["character:backstory"];
+    const selectedBackstoryIndex = backstoryPages.length && selectedBackstoryPageId
+      ? Math.max(0, backstoryPages.findIndex((p) => p.id === selectedBackstoryPageId))
+      : Math.max(0, backstoryVersions.length - 1);
 
     const base: Omit<Character, "id" | "createdAt" | "updatedAt"> = {
       name: cleanName,
@@ -1653,8 +1790,11 @@ export default function CharacterCreatorApp() {
       physicalAppearance: Array.isArray(physicalAppearance) ? physicalAppearance : [],
       respondToProblems: Array.isArray(problemBehavior) ? problemBehavior : [],
       sexualBehavior: Array.isArray(sexualBehavior) ? sexualBehavior : [],
-      backstory: collapseWhitespace(backstoryText) ? [backstoryText] : [],
+      speechPatterns: Array.isArray(speechPatterns) ? speechPatterns : [],
+      backstory: backstoryVersions,
+      selectedBackstoryIndex,
       systemRules,
+      selectedSystemRuleIds: characterSelectedSystemRuleIds,
       synopsis,
       introMessages: baseIntro,
       selectedIntroIndex: safeIntroIndex,
@@ -1673,6 +1813,185 @@ export default function CharacterCreatorApp() {
     };
   }
 
+
+  useEffect(() => {
+    if (!hydrated || !selectedId) return;
+    const draft = getDraftCharacter();
+    if (!draft) return;
+    setCharacters((prev) => {
+      const idx = prev.findIndex((c) => c.id === selectedId);
+      if (idx < 0) return prev;
+      const existing = prev[idx];
+      const nextCandidate: Character = {
+        ...existing,
+        ...draft,
+        id: existing.id,
+        createdAt: existing.createdAt,
+        updatedAt: new Date().toISOString(),
+      };
+      const same = JSON.stringify({
+        name: existing.name,
+        gender: existing.gender,
+        imageDataUrl: existing.imageDataUrl,
+        age: existing.age,
+        height: existing.height,
+        origins: existing.origins,
+        racePreset: existing.racePreset,
+        race: existing.race,
+        personalities: existing.personalities,
+        uniqueTraits: existing.uniqueTraits,
+        physicalAppearance: existing.physicalAppearance,
+        respondToProblems: existing.respondToProblems,
+        sexualBehavior: existing.sexualBehavior,
+        speechPatterns: existing.speechPatterns,
+        backstory: existing.backstory,
+        selectedBackstoryIndex: existing.selectedBackstoryIndex,
+        systemRules: existing.systemRules,
+        selectedSystemRuleIds: existing.selectedSystemRuleIds,
+        synopsis: existing.synopsis,
+        introMessages: existing.introMessages,
+        selectedIntroIndex: existing.selectedIntroIndex,
+        assignedLorebookIds: existing.assignedLorebookIds,
+      }) === JSON.stringify({
+        name: nextCandidate.name,
+        gender: nextCandidate.gender,
+        imageDataUrl: nextCandidate.imageDataUrl,
+        age: nextCandidate.age,
+        height: nextCandidate.height,
+        origins: nextCandidate.origins,
+        racePreset: nextCandidate.racePreset,
+        race: nextCandidate.race,
+        personalities: nextCandidate.personalities,
+        uniqueTraits: nextCandidate.uniqueTraits,
+        physicalAppearance: nextCandidate.physicalAppearance,
+        respondToProblems: nextCandidate.respondToProblems,
+        sexualBehavior: nextCandidate.sexualBehavior,
+        speechPatterns: nextCandidate.speechPatterns,
+        backstory: nextCandidate.backstory,
+        selectedBackstoryIndex: nextCandidate.selectedBackstoryIndex,
+        systemRules: nextCandidate.systemRules,
+        selectedSystemRuleIds: nextCandidate.selectedSystemRuleIds,
+        synopsis: nextCandidate.synopsis,
+        introMessages: nextCandidate.introMessages,
+        selectedIntroIndex: nextCandidate.selectedIntroIndex,
+        assignedLorebookIds: nextCandidate.assignedLorebookIds,
+      });
+      if (same) return prev;
+      const next = [...prev];
+      next[idx] = nextCandidate;
+      return next;
+    });
+  }, [
+    hydrated,
+    selectedId,
+    name,
+    gender,
+    imageDataUrl,
+    age,
+    height,
+    origins,
+    racePreset,
+    customRace,
+    personalities,
+    traits,
+    physicalAppearance,
+    problemBehavior,
+    sexualBehavior,
+    speechPatterns,
+    backstoryText,
+    generatedTextStates,
+    iterationSelections,
+    systemRules,
+    characterSelectedSystemRuleIds,
+    synopsis,
+    introMessages,
+    introIndex,
+    characterAssignedLorebookIds,
+  ]);
+
+
+  function createCharacterEntryInActiveCard() {
+    const now = new Date().toISOString();
+    const entry: Character = {
+      id: uid(),
+      name: "",
+      gender: "",
+      imageDataUrl: "",
+      age: "",
+      height: "",
+      origins: "",
+      racePreset: "",
+      race: "",
+      personalities: [],
+      uniqueTraits: [],
+      physicalAppearance: [],
+      respondToProblems: [],
+      sexualBehavior: [],
+      speechPatterns: [],
+      backstory: [],
+      selectedBackstoryIndex: 0,
+      systemRules: "",
+      selectedSystemRuleIds: [],
+      synopsis: "",
+      introMessages: [""],
+      selectedIntroIndex: 0,
+      assignedLorebookIds: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    setCharacters((prev) => [entry, ...prev]);
+    if (activeCharacterCardId) {
+      setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, characterIds: [entry.id, ...card.characterIds.filter((id) => id !== entry.id)], updatedAt: now } : card));
+    }
+    loadCharacterIntoForm(entry);
+    navigateTo("create");
+  }
+
+  function updateWholeCharacterCard() {
+    saveCharacter();
+    if (activeCharacterCardId) {
+      setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, name: collapseWhitespace(characterCardNameInput) || "Character Card", updatedAt: new Date().toISOString() } : card));
+    }
+    setSaveToastOpen(true);
+    window.setTimeout(() => setSaveToastOpen(false), 1400);
+  }
+
+  function openCardRelationshipBoard() {
+    if (!activeCharacterCardId) return;
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId);
+    if (!activeCard) return;
+    const now = new Date().toISOString();
+    const existingStory = activeCard.relationshipStoryId ? stories.find((s) => s.id === activeCard.relationshipStoryId) : null;
+    const story: StoryProject = existingStory || {
+      id: uid(),
+      title: `${activeCard.name || "Character Card"} Relationships`,
+      characterIds: [...activeCard.characterIds],
+      imageDataUrl: "",
+      scenario: "",
+      firstMessage: "",
+      firstMessageVersions: [""],
+      selectedFirstMessageIndex: 0,
+      firstMessageStyle: "realistic",
+      systemRules: "",
+      selectedSystemRuleIds: [],
+      synopsis: "",
+      synopsisStyle: "realistic",
+      relationships: [],
+      boardNodes: [],
+      assignedLorebookIds: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    story.characterIds = [...activeCard.characterIds];
+    setStories((prev) => {
+      const has = prev.some((s) => s.id === story.id);
+      return has ? prev.map((s) => (s.id === story.id ? { ...s, ...story, updatedAt: now } : s)) : [story, ...prev];
+    });
+    setCharacterCards((prev) => prev.map((c) => c.id === activeCharacterCardId ? { ...c, relationshipStoryId: story.id, updatedAt: now } : c));
+    setActiveStoryId(story.id);
+    navigateTo("story_relationship_board");
+  }
+
   function saveCharacter() {
     const err = validate();
     if (err) return alert(err);
@@ -1686,7 +2005,10 @@ export default function CharacterCreatorApp() {
     });
 
     setSelectedId(draft.id);
-    navigateTo("library");
+    if (activeCharacterCardId) {
+      setCharacterCards((prev) => prev.map((card) => card.id !== activeCharacterCardId ? card : { ...card, characterIds: card.characterIds.includes(draft.id) ? card.characterIds : [...card.characterIds, draft.id], updatedAt: new Date().toISOString() }));
+    }
+    navigateTo("create");
   }
 
   function deleteCharacter(id: string) {
@@ -1751,25 +2073,8 @@ export default function CharacterCreatorApp() {
   }
 
   function navigateTo(next: Page) {
-    setHistoryStack((prev) => {
-      if (prev[prev.length - 1] === page) return prev;
-      return [...prev, page];
-    });
     setPage(next);
   }
-
-  function goBack() {
-    setHistoryStack((prev) => {
-      if (!prev.length) {
-        setPage("library");
-        return prev;
-      }
-      const next = prev[prev.length - 1];
-      setPage(next);
-      return prev.slice(0, -1);
-    });
-  }
-
 
   function loadCharacterIntoForm(c: Character) {
     setSelectedId(c.id);
@@ -1787,23 +2092,32 @@ export default function CharacterCreatorApp() {
     setRacePreset(preset);
     setCustomRace(preset === "Other" ? c.race || "" : "");
 
-    setPersonalities(Array.isArray(c.personalities) ? c.personalities : []);
-    setTraits(Array.isArray(c.uniqueTraits) ? c.uniqueTraits : []);
-    setBackstory(Array.isArray(c.backstory) ? c.backstory : []);
+    setPersonalities(Array.isArray(c.personalities) ? [...c.personalities] : []);
+    setTraits(Array.isArray(c.uniqueTraits) ? [...c.uniqueTraits] : []);
+    setPhysicalAppearance(Array.isArray(c.physicalAppearance) ? [...c.physicalAppearance] : []);
+    setProblemBehavior(Array.isArray(c.respondToProblems) ? [...c.respondToProblems] : []);
+    setSexualBehavior(Array.isArray(c.sexualBehavior) ? [...c.sexualBehavior] : []);
+    setSpeechPatterns(Array.isArray(c.speechPatterns) ? [...c.speechPatterns] : []);
+    setBackstory(Array.isArray(c.backstory) ? [...c.backstory] : []);
+    setTraitInput("");
+    setAppearanceInput("");
+    setSexualBehaviorInput("");
+    setSpeechPatternInput("");
 
     setSystemRules(c.systemRules || "");
+    setCharacterSelectedSystemRuleIds(Array.isArray(c.selectedSystemRuleIds) ? [...c.selectedSystemRuleIds] : []);
     setSynopsis(c.synopsis || "");
 
     const im =
       Array.isArray(c.introMessages) && c.introMessages.length
-        ? c.introMessages
+        ? [...c.introMessages]
         : [""];
     setIntroMessages(im);
     setIntroIndex(clampIndex(c.selectedIntroIndex ?? 0, im.length));
     setIntroVersionHistories(im.map((text) => [text || ""]));
     setIntroVersionIndices(im.map(() => 0));
     setIntroPrompt("");
-    setCharacterAssignedLorebookIds(Array.isArray(c.assignedLorebookIds) ? c.assignedLorebookIds : []);
+    setCharacterAssignedLorebookIds(Array.isArray(c.assignedLorebookIds) ? [...c.assignedLorebookIds] : []);
 
     setIntroRevisionPrompt("");
     setSynopsisRevisionFeedback("");
@@ -1811,11 +2125,7 @@ export default function CharacterCreatorApp() {
     setGenError(null);
     setGenLoading(false);
 
-    navigateTo("create");
-    setTab("overview");
-    requestAnimationFrame(() =>
-      window.scrollTo({ top: 0, behavior: "smooth" })
-    );
+    setTab("definition");
   }
 
   function upsertChatSession(session: ChatSession) {
@@ -1954,7 +2264,6 @@ export default function CharacterCreatorApp() {
     }
   }, [activeLorebook?.id, activeLorebook?.locationEntries.length, activeLorebook?.rulesEntries.length, activeLorebook?.itemEntries.length, activeLorebook?.specialsEntries.length]);
 
-  const canGoBack = historyStack.length > 0;
 
   function updateStory(id: string, patch: Partial<StoryProject>) {
     setStories((prev) =>
@@ -2373,7 +2682,8 @@ Return only the revised world entry content.`,
       firstMessageStyle: "realistic",
       systemRules: "",
       selectedSystemRuleIds: [],
-      plotPoints: [],
+      synopsis: "",
+      synopsisStyle: "realistic",
       relationships: [],
       boardNodes: [],
       assignedLorebookIds: [],
@@ -2384,7 +2694,7 @@ Return only the revised world entry content.`,
     setActiveStoryId(story.id);
     setStoryDraftCharacterIds([]);
     setStoryImageDataUrl("");
-    navigateTo("story_editor");
+    navigateTo("create");
     setStoryTab("scenario");
   }
 
@@ -2392,45 +2702,37 @@ Return only the revised world entry content.`,
     const chars = story.characterIds
       .map((id) => characters.find((c) => c.id === id))
       .filter((c): c is Character => !!c);
+    const allCharactersWritten = chars.length > 0 && chars.every((c) => collapseWhitespace(c.name) && (c.backstory || []).length);
     const relLines = story.relationships.map((r) => {
       const a = chars.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
       const b = chars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
       return `- ${a} -> ${b} | ${r.alignment} | ${r.relationType}${r.details ? ` | ${r.details}` : ""}`;
     });
-    const selectedRuleTexts = STORY_SYSTEM_RULE_CARDS
-      .filter((r) => (story.selectedSystemRuleIds || []).includes(r.id))
-      .map((r) => r.text);
     const firstMessages = story.firstMessageVersions?.length
       ? story.firstMessageVersions
       : [story.firstMessage || ""];
+    const selectedIntro = firstMessages[Math.max(0, Math.min(firstMessages.length - 1, story.selectedFirstMessageIndex || 0))] || "";
 
     const text = [
       `# ${story.title}`,
       "",
       "## Characters",
-      ...chars.map((c) => characterToTxt(c)),
+      ...chars.flatMap((c) => [characterToTxt(c), ""]),
+      ...(allCharactersWritten
+        ? [
+            "## Relationships",
+            ...(relLines.length ? relLines : ["- None"]),
+            "",
+            "## System Rules",
+            story.systemRules || "",
+            "",
+          ]
+        : []),
+      "## Intro Messages",
+      selectedIntro,
       "",
-      "## Storywriting",
-      "### Scenario",
-      story.scenario || "",
-      "",
-      "### Intro Messages (Storywriting)",
-      ...firstMessages.map((m, i) => `${i === (story.selectedFirstMessageIndex || 0) ? "*" : "-"} Intro ${i + 1}:\n${m || ""}`),
-      "",
-      "### First Message Style",
-      story.firstMessageStyle || "realistic",
-      "",
-      "### System Rules",
-      story.systemRules || "",
-      "",
-      "### Selected Rule Cards",
-      ...(selectedRuleTexts.length ? selectedRuleTexts.map((x) => `- ${x}`) : ["- None"]),
-      "",
-      "### Relationships",
-      ...(relLines.length ? relLines : ["- None"]),
-      "",
-      "### Plot Points",
-      ...(story.plotPoints.length ? story.plotPoints.map((p) => `- ${p}`) : ["- None"]),
+      "## Story Synopsis",
+      story.synopsis || "",
       "",
     ].join("\n");
     downloadText((filenameSafe(story.title) || "story") + ".txt", text);
@@ -2551,10 +2853,11 @@ Return only the revised world entry content.`,
     setDeckDropHover(false);
     setBoardPanning(false);
     boardPanStartRef.current = null;
-    navigateTo("story_editor");
+    navigateTo("create");
   }
 
   function openRelationshipEditor(fromId: string, toId: string) {
+    setSelectedRelationshipId(null);
     setStoryRelFromId(fromId);
     setStoryRelToId(toId);
     setStoryRelAlignment("Neutral");
@@ -2744,16 +3047,12 @@ Return only the revised world entry content.`,
       details: storyRelDetails,
       createdAt: new Date().toISOString(),
     };
-    const others = activeStory.relationships.filter(
-      (r) =>
-        r.id !== relId &&
-        !(
-          (r.fromCharacterId === aId && r.toCharacterId === bId) ||
-          (r.fromCharacterId === bId && r.toCharacterId === aId)
-        )
-    );
+    const isEditingExisting = !!selectedRelationshipId;
+    const nextRelationships = isEditingExisting
+      ? activeStory.relationships.map((r) => (r.id === relId ? rel : r))
+      : [rel, ...activeStory.relationships];
     updateStory(activeStory.id, {
-      relationships: [rel, ...others],
+      relationships: nextRelationships,
     });
     setSelectedRelationshipId(relId);
     setPendingRelationshipEdge(null);
@@ -2795,6 +3094,9 @@ Type: ${rel.relationType}
 Alignment: ${rel.alignment}
 Current details:
 ${rel.details || "(empty)"}
+
+Character card context (ONLY entries in the current card):
+${getActiveCardCharactersContext()}
 
 Prompt:
 ${prompt}`,
@@ -2882,6 +3184,39 @@ Write the character's next reply to the latest user message.`;
     }
   }
 
+  function getActiveCardCharacters() {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId);
+    if (!activeCard) return [] as Character[];
+    const ids = new Set(activeCard.characterIds || []);
+    return (activeCard.characterIds || [])
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c && ids.has(c.id));
+  }
+
+  function getActiveCardLorebookIds() {
+    const ids = new Set<string>();
+    for (const c of getActiveCardCharacters()) {
+      for (const id of c.assignedLorebookIds || []) ids.add(id);
+    }
+    return Array.from(ids);
+  }
+
+  function getActiveCardCharactersContext() {
+    const chars = getActiveCardCharacters();
+    if (!chars.length) return "(no characters in current card)";
+    return chars
+      .map((c) => [
+        `Name: ${collapseWhitespace(c.name) || "(unnamed)"}`,
+        `Gender: ${c.gender || ""}`,
+        `Race: ${collapseWhitespace(c.race) || collapseWhitespace(c.racePreset) || ""}`,
+        `Personality: ${(c.personalities || []).join(", ")}`,
+        `Traits: ${(c.uniqueTraits || []).join(", ")}`,
+        `Speech patterns: ${(c.speechPatterns || []).join(", ")}`,
+        `Backstory: ${(c.backstory || []).join(" | ")}`,
+      ].join("\n"))
+      .join("\n\n");
+  }
+
   function getCharacterSummaryForLLM() {
     return [
       `Name: ${collapseWhitespace(name) || "(unnamed)"}`,
@@ -2892,23 +3227,10 @@ Write the character's next reply to the latest user message.`;
       `Race: ${getFinalRace()}`,
       `Personalities: ${(personalities || []).join(", ")}`,
       `Unique traits: ${(traits || []).join(", ")}`,
+      `Speech patterns: ${(speechPatterns || []).join(", ")}`,
       `Backstory: ${(backstory || []).join(" | ")}`,
-      `System rules: ${collapseWhitespace(systemRules)}`,
+      `System rules: ${collapseWhitespace(cardSystemRules)}`,
       `Synopsis: ${collapseWhitespace(synopsis)}`,
-    ].join("\n");
-  }
-
-  function getOverviewAndSystemContextForRevision() {
-    return [
-      `Name: ${collapseWhitespace(name) || "(unnamed)"}`,
-      `Gender: ${gender || ""}`,
-      `Age: ${age === "" ? "" : String(age)}`,
-      `Height: ${collapseWhitespace(height)}`,
-      `Origins: ${collapseWhitespace(origins)}`,
-      `Race: ${getFinalRace()}`,
-      `Personalities: ${(personalities || []).join(", ")}`,
-      `Unique traits: ${(traits || []).join(", ")}`,
-      `System rules: ${collapseWhitespace(systemRules)}`,
     ].join("\n");
   }
 
@@ -2925,8 +3247,11 @@ Write the character's next reply to the latest user message.`;
     try {
       const text = await callProxyChatCompletion({
         system: "Revise and improve the character backstory based on user instruction while preserving continuity. Return only the revised backstory text.",
-        user: `Character summary:
+        user: `Primary character summary (prioritize this):
 ${getCharacterSummaryForLLM()}
+
+Other character entries in THIS SAME card only (secondary context):
+${getActiveCardCharactersContext()}
 
 Current backstory:
 ${backstoryText || "(empty)"}
@@ -2934,7 +3259,7 @@ ${backstoryText || "(empty)"}
 Instruction:
 ${prompt}`,
         maxTokens: proxyMaxTokens,
-        lorebookIds: characterAssignedLorebookIds,
+        lorebookIds: Array.from(new Set([...(characterAssignedLorebookIds || []), ...getActiveCardLorebookIds()])),
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setBackstoryText),
       });
@@ -3020,8 +3345,11 @@ ${storyCharacterContext}
 Relationships:
 ${relationshipContext}
 
-Plot points:
-${activeStory.plotPoints.join("\n")}
+Story synopsis:
+${activeStory.synopsis || ""}
+
+Character card context (ONLY entries in the current card):
+${getActiveCardCharactersContext()}
 
 Prompt:
 ${prompt}`,
@@ -3150,49 +3478,6 @@ ${prompt}`,
     } finally {
       setGenLoading(false);
     }
-  }
-
-
-  function parseGeneratedBackstoryEntries(text: string) {
-    const clean = String(text || "").trim();
-    if (!clean) return [] as string[];
-
-    const parseAsArray = (value: any): string[] => {
-      if (!Array.isArray(value)) return [];
-      return value
-        .map((entry) => {
-          if (typeof entry === "string") return collapseWhitespace(entry);
-          if (entry && typeof entry === "object") {
-            return collapseWhitespace(entry.entry ?? entry.text ?? entry.content ?? "");
-          }
-          return "";
-        })
-        .filter(Boolean);
-    };
-
-    const tryParse = (raw: string) => {
-      try {
-        const parsed = JSON.parse(raw);
-        return parseAsArray(parsed);
-      } catch {
-        return [] as string[];
-      }
-    };
-
-    const direct = tryParse(clean);
-    if (direct.length) return direct;
-
-    const fenced = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-    if (fenced?.[1]) {
-      const fromFence = tryParse(fenced[1].trim());
-      if (fromFence.length) return fromFence;
-    }
-
-    return clean
-      .split(/\n+/)
-      .map((line) => line.replace(/^[-*\d.)\s]+/, ""))
-      .map((line) => collapseWhitespace(line))
-      .filter(Boolean);
   }
 
 
@@ -3407,7 +3692,7 @@ ${more}`.trim();
         user,
         temperature: 0.95,
         stream: proxyStreamingEnabled,
-        lorebookIds: characterAssignedLorebookIds,
+        lorebookIds: Array.from(new Set([...(characterAssignedLorebookIds || []), ...getActiveCardLorebookIds()])),
         onStreamUpdate: (partial) => {
           setIntroVersionHistories((prev) => {
             const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
@@ -3464,7 +3749,7 @@ ${more}`.trim();
         maxTokens: proxyMaxTokens,
         temperature: 0.9,
         stream: proxyStreamingEnabled,
-        lorebookIds: characterAssignedLorebookIds,
+        lorebookIds: Array.from(new Set([...(characterAssignedLorebookIds || []), ...getActiveCardLorebookIds()])),
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setSynopsis),
       });
       commitGeneratedText(fieldKey, text, setSynopsis, true);
@@ -3496,7 +3781,10 @@ ${more}`.trim();
       "You revise exactly ONE roleplay intro message based on feedback. Only use overview/system context and the provided current intro. Do not use other intros. Keep it in-character and ready to use. Return ONLY the revised intro text.";
 
     const user = `Overview and system context:
-${getOverviewAndSystemContextForRevision()}
+${getActiveCardCharactersContext()}
+
+Card system rules:
+${cardSystemRules || "(none)"}
 
 Current intro message (only this one should be revised):
 ${currentIntro}
@@ -3526,7 +3814,7 @@ Return only the revised intro message.`;
         system,
         user,
         temperature: 0.9,
-        lorebookIds: characterAssignedLorebookIds,
+        lorebookIds: Array.from(new Set([...(characterAssignedLorebookIds || []), ...getActiveCardLorebookIds()])),
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => {
           setIntroVersionHistories((prev) => {
@@ -3583,7 +3871,10 @@ Return only the revised intro message.`;
       "You revise a roleplay character synopsis based on user feedback. Only use the provided overview/system context and current synopsis. Keep it cohesive, vivid, and roleplay-oriented. Return ONLY the revised synopsis text.";
 
     const user = `Overview and system context:
-${getOverviewAndSystemContextForRevision()}
+${getActiveCardCharactersContext()}
+
+Card system rules:
+${cardSystemRules || "(none)"}
 
 Current synopsis:
 ${synopsis}
@@ -3601,7 +3892,7 @@ Return only the revised synopsis.`;
         user,
         maxTokens: proxyMaxTokens,
         temperature: 0.9,
-        lorebookIds: characterAssignedLorebookIds,
+        lorebookIds: Array.from(new Set([...(characterAssignedLorebookIds || []), ...getActiveCardLorebookIds()])),
         stream: proxyStreamingEnabled,
         onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setSynopsis),
       });
@@ -3778,21 +4069,23 @@ ${feedback}`,
     }
   }
 
-  async function generateStoryPlotPoints() {
+  async function generateStorySynopsis() {
     if (!activeStory) return;
-    if (!activeStory.plotPoints.length) {
-      setGenError("Add at least one plot point first.");
+    const prompt = collapseWhitespace(storySynopsisPrompt);
+    if (!prompt) {
+      setGenError("Write a synopsis prompt first.");
       return;
     }
     const storyCharacterContext = getStoryCharacterContext(activeStory);
     const relationshipContext = getStoryRelationshipContext(activeStory);
     const selectedRules = getStorySelectedSystemRules(activeStory);
+    const fieldKey = `story-synopsis:${activeStory.id}`;
     setGenError(null);
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
-        system:
-          "Expand plot points into more detailed entries, each max 30 words. Return JSON array of strings only.",
+        system: `Write a ${storySynopsisStyle} story synopsis that fits roleplay setup. Return only synopsis text.`,
         user: `Character context:
 ${storyCharacterContext}
 
@@ -3802,66 +4095,47 @@ ${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
 Relationships:
 ${relationshipContext}
 
-Current plot points:
-${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}`,
+Prompt: ${prompt}`,
         maxTokens: proxyMaxTokens,
         lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => updateStory(activeStory.id, { synopsis: next, synopsisStyle: storySynopsisStyle })),
       });
-      const items = parseGeneratedBackstoryEntries(out);
-      if (!items.length) throw new Error("No valid plot points returned.");
-      updateStory(
-        activeStory.id,
-        { plotPoints: items.map((x) => x.split(/\s+/).slice(0, 30).join(" ")) }
-      );
+      commitGeneratedText(fieldKey, out, (next) => updateStory(activeStory.id, { synopsis: next, synopsisStyle: storySynopsisStyle }), true);
     } catch (e: any) {
-      setGenError(e?.message ? String(e.message) : "Plot point generation failed.");
+      setGenError(e?.message ? String(e.message) : "Synopsis generation failed.");
     } finally {
       setGenLoading(false);
     }
   }
 
-  async function reviseStoryPlotPoints() {
+  async function reviseStorySynopsis() {
     if (!activeStory) return;
-    const feedback = collapseWhitespace(storyPlotPointRevision);
+    const feedback = collapseWhitespace(storySynopsisRevision);
     if (!feedback) {
-      setGenError("Write plot point revision feedback first.");
+      setGenError("Write synopsis revision feedback first.");
       return;
     }
-    const storyCharacterContext = getStoryCharacterContext(activeStory);
-    const relationshipContext = getStoryRelationshipContext(activeStory);
-    const selectedRules = getStorySelectedSystemRules(activeStory);
+    const fieldKey = `story-synopsis:${activeStory.id}`;
     setGenError(null);
     setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
-        system: "Revise plot point list with each entry max 30 words. Return JSON array of strings only.",
-        user: `Character context:
-${storyCharacterContext}
-
-Selected system rules:
-${selectedRules.length ? selectedRules.join("\n") : "(none selected)"}
-
-Relationships:
-${relationshipContext}
-
-Current points:
-${activeStory.plotPoints.map((p, i) => `${i + 1}. ${p}`).join("\n")}
+        system: "Revise story synopsis based on user feedback while preserving continuity. Return only revised synopsis text.",
+        user: `Current synopsis:
+${activeStory.synopsis || "(empty)"}
 
 Feedback:
 ${feedback}`,
         maxTokens: proxyMaxTokens,
         lorebookIds: getStoryGenerationLorebookIds(activeStory),
         stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, (next) => updateStory(activeStory.id, { synopsis: next })),
       });
-      const items = parseGeneratedBackstoryEntries(out);
-      if (!items.length) throw new Error("No valid revised plot points returned.");
-      updateStory(
-        activeStory.id,
-        { plotPoints: items.map((x) => x.split(/\s+/).slice(0, 30).join(" ")) }
-      );
+      commitGeneratedText(fieldKey, out, (next) => updateStory(activeStory.id, { synopsis: next }), true);
     } catch (e: any) {
-      setGenError(e?.message ? String(e.message) : "Plot point revision failed.");
+      setGenError(e?.message ? String(e.message) : "Synopsis revision failed.");
     } finally {
       setGenLoading(false);
     }
@@ -4002,13 +4276,55 @@ ${feedback}`,
   }
 
 
+  function exportCurrentCardTxt(fallbackCharacter?: Character) {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
+    const cardChars = activeCard
+      ? (activeCard.characterIds || []).map((id) => characters.find((c) => c.id === id)).filter((c): c is Character => !!c)
+      : fallbackCharacter ? [fallbackCharacter] : [];
+
+    const cardStory = activeCard?.relationshipStoryId
+      ? stories.find((s) => s.id === activeCard.relationshipStoryId) || null
+      : null;
+
+    const relationships = (cardStory?.relationships || []).map((r) => {
+      const from = cardChars.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
+      const to = cardChars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
+      return `    <relationship from="${xmlEscape(from)}" to="${xmlEscape(to)}" alignment="${xmlEscape(r.alignment)}" type="${xmlEscape(r.relationType)}">${xmlEscape(r.details || "")}</relationship>`;
+    });
+
+    const selectedRuleTexts = STORY_SYSTEM_RULE_CARDS
+      .filter((r) => cardSelectedSystemRuleIds.includes(r.id))
+      .map((r) => r.text);
+
+    const xml = [
+      `<character_card name="${xmlEscape(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card")}">`,
+      `  <individual_character_info>`,
+      ...(cardChars.length ? cardChars.map((c) => characterToTxt(c)) : ["    <character />"]),
+      `  </individual_character_info>`,
+      `  <relationships>`,
+      ...(relationships.length ? relationships : ["    <relationship />"]),
+      `  </relationships>`,
+      `  <system_rules>`,
+      `    <selected_rule_cards>${xmlEscape(selectedRuleTexts.join(" | "))}</selected_rule_cards>`,
+      `    <custom_rules>${xmlEscape(cardSystemRules || "")}</custom_rules>`,
+      `  </system_rules>`,
+      `</character_card>`,
+      "",
+    ].join("\n");
+
+    const exportName = filenameSafe(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "character_card") || "character_card";
+    downloadText(`${exportName}.txt`, xml);
+  }
+
+
+
   const draft = getDraftCharacter();
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
-    { id: "overview", label: "Overview" },
-    { id: "personality", label: "Personality & Traits" },
-    { id: "behavior", label: "Behavior" },
-    { id: "definition", label: "Backstory" },
+    { id: "definition", label: "Characters" },
+    { id: "relationships", label: "Relationships" },
+    { id: "system", label: "System Rules" },
+    { id: "intro", label: "First Message" },
   ];
 
   return (
@@ -4024,6 +4340,29 @@ ${feedback}`,
         }
         body {
           margin: 0;
+          scrollbar-gutter: stable;
+        }
+        * {
+          scrollbar-width: thin;
+          scrollbar-color: hsl(var(--scrollbar-thumb)) transparent;
+        }
+        ::-webkit-scrollbar {
+          width: 10px;
+          height: 10px;
+          background: transparent;
+        }
+        ::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+          background: hsl(var(--scrollbar-thumb));
+          border-radius: 9999px;
+          border: 2px solid transparent;
+          background-clip: padding-box;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+          background: hsl(var(--scrollbar-thumb-hover));
+          background-clip: padding-box;
         }
         .clickable:hover {
           background-color: hsl(var(--hover-accent)) !important;
@@ -4038,6 +4377,9 @@ ${feedback}`,
           color: hsl(var(--foreground)) !important;
           border-color: hsl(var(--border)) !important;
         }
+        * {
+          transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, transform 180ms ease, opacity 180ms ease;
+        }
       `}</style>
 
       <div className="mx-auto max-w-7xl pt-28 md:pt-32">
@@ -4050,68 +4392,27 @@ ${feedback}`,
         <header className="fixed inset-x-0 top-0 z-50 border-b border-[hsl(var(--border))] bg-[hsl(var(--background))/0.95] backdrop-blur">
           <div className="mx-auto flex w-full max-w-7xl flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:justify-between md:px-8">
           <div className="flex items-center gap-2">
-            {page !== "library" && canGoBack ? (
-              <Button variant="secondary" onClick={goBack}>
-                <ArrowLeft className="h-4 w-4" /> Back
-              </Button>
-            ) : null}
+            {null}
             <button
               type="button"
               className="text-2xl font-semibold tracking-tight md:text-3xl"
-              onClick={() => navigateTo("library")}
+              onClick={() => navigateTo("characters")}
             >
               Mastercreator
             </button>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-            <div ref={navMenusRef} className="flex flex-wrap items-center gap-2">
-              <div className="relative">
-                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "characters" ? null : "characters"))}>Characters</Button>
-                {navMenuOpen === "characters" ? (
-                  <div className="anim-dropdown-down absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
-                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); resetForm(); navigateTo("create"); setTab("overview"); }}><Plus className="h-4 w-4" /> Create new character</Button>
-                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("characters"); }}><Library className="h-4 w-4" /> View character gallery</Button>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="relative">
-                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "stories" ? null : "stories"))}>Stories</Button>
-                {navMenuOpen === "stories" ? (
-                  <div className="anim-dropdown-down absolute right-0 z-50 mt-2 w-52 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
-                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("storywriting"); }}><Plus className="h-4 w-4" /> Create new story</Button>
-                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("my_stories"); }}><Library className="h-4 w-4" /> View stories</Button>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="relative">
-                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "lorebooks" ? null : "lorebooks"))}>Lorebooks</Button>
-                {navMenuOpen === "lorebooks" ? (
-                  <div className="anim-dropdown-down absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
-                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); createLorebook(); }}><Plus className="h-4 w-4" /> Create new lorebook</Button>
-                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("lorebooks"); }}><BookOpen className="h-4 w-4" /> View lorebooks</Button>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="relative">
-                <Button variant="secondary" onClick={() => setNavMenuOpen((v) => (v === "settings" ? null : "settings"))}><Settings className="h-4 w-4" /> Settings</Button>
-                {navMenuOpen === "settings" ? (
-                  <div className="anim-dropdown-down absolute right-0 z-50 mt-2 w-48 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl">
-                    <Button className="w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); setProxyOpen(true); }}><SlidersHorizontal className="h-4 w-4" /> Proxy</Button>
-                    <Button className="mt-2 w-full justify-start" variant="secondary" onClick={() => { setNavMenuOpen(null); setTheme((t) => (t === "light" ? "dark" : "light")); }}>
-                      {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-            <Button variant="secondary" onClick={() => { setNavMenuOpen(null); setPersonaOpen(true); }}>
-              <UserRound className="h-4 w-4" /> Persona
+            <Button variant="secondary" onClick={() => navigateTo("characters")}>
+              <Library className="h-4 w-4" /> Character List
             </Button>
-            <Button variant="secondary" onClick={() => { setNavMenuOpen(null); navigateTo("chat"); }}>
-              <MessageCircle className="h-4 w-4" /> Chats
+            <Button variant="secondary" onClick={() => navigateTo("lorebooks")}>
+              <BookOpen className="h-4 w-4" /> Lorebook List
+            </Button>
+            <Button variant="secondary" onClick={() => setProxyOpen(true)}>
+              <SlidersHorizontal className="h-4 w-4" /> Proxy Settings
+            </Button>
+            <Button variant="secondary" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}>
+              {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
             </Button>
           </div>
           </div>
@@ -4334,7 +4635,7 @@ ${feedback}`,
             </div>
             )}
 
-            <div className="fixed bottom-4 right-4">
+            <div className="fixed bottom-4 left-4">
               <Button variant="primary" className="rounded-full px-6 py-3" onClick={proceedStoryDraft}>
                 Proceed
               </Button>
@@ -4692,7 +4993,7 @@ ${feedback}`,
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xl font-semibold">{activeStory?.title || "Story Editor"}</div>
-                <div className="text-sm text-[hsl(var(--muted-foreground))]">Scenario • Relationships • Plot Points</div>
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">Scenario • Relationships • Synopsis</div>
               </div>
               <div className="flex gap-2">
                 <Button variant="secondary" onClick={() => navigateTo("my_stories")}>Stories</Button>
@@ -4712,7 +5013,7 @@ ${feedback}`,
                 ["first_message", "First Message"],
                 ["system_rules", "System Rules"],
                 ["relationships", "Relationships"],
-                ["plot_points", "Plot Points"],
+                ["synopsis", "Synopsis"],
               ].map(([id, label]) => (
                 <button
                   key={id}
@@ -5129,44 +5430,27 @@ ${feedback}`,
               </div>
             ) : (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
-                <div className="flex gap-2">
-                  <Input
-                    value={storyPlotPointInput}
-                    onChange={(e) => setStoryPlotPointInput(e.target.value)}
-                    onKeyDown={(e) => onEnterAdd(e, () => {
-                      if (!activeStory) return;
-                      const v = collapseWhitespace(storyPlotPointInput);
-                      if (!v) return;
-                      updateStory(activeStory.id, { plotPoints: [...activeStory.plotPoints, v] });
-                      setStoryPlotPointInput("");
-                    })}
-                    placeholder="Add plot point..."
-                  />
-                  <Button variant="secondary" onClick={() => {
-                    if (!activeStory) return;
-                    const v = collapseWhitespace(storyPlotPointInput);
-                    if (!v) return;
-                    updateStory(activeStory.id, { plotPoints: [...activeStory.plotPoints, v] });
-                    setStoryPlotPointInput("");
-                  }}>Add</Button>
-                </div>
-                <div className="space-y-2">
-                  {activeStory.plotPoints.map((p, i) => (
-                    <div key={p + i} className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 text-sm">
-                      <RichText text={p} />
-                    </div>
-                  ))}
-                  {!activeStory.plotPoints.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No plot points yet.</div> : null}
+                {renderGeneratedTextarea({
+                  fieldKey: `story-synopsis:${activeStory.id}`,
+                  value: activeStory.synopsis || "",
+                  onChange: (next) => updateStory(activeStory.id, { synopsis: next, synopsisStyle: storySynopsisStyle }),
+                  rows: 10,
+                  placeholder: "Story synopsis...",
+                })}
+                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
+                  <div className="text-sm font-medium">Generate synopsis</div>
+                  <Select value={storySynopsisStyle} onChange={(e) => setStorySynopsisStyle(e.target.value as any)}>
+                    <option value="realistic">Realistic</option>
+                    <option value="dramatic">Dramatic</option>
+                    <option value="melancholic">Melancholic</option>
+                  </Select>
+                  <Textarea value={storySynopsisPrompt} onChange={(e) => setStorySynopsisPrompt(e.target.value)} rows={3} placeholder="Prompt for synopsis generation..." />
+                  <Button variant="secondary" onClick={generateStorySynopsis} disabled={genLoading || !collapseWhitespace(storySynopsisPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button>
                 </div>
                 <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
-                  <div className="text-sm font-medium">Generate detailed list</div>
-                  <div className="text-xs text-[hsl(var(--muted-foreground))]">Turns your written list into a more described list (max 30 words per entry).</div>
-                  <Button variant="secondary" onClick={generateStoryPlotPoints} disabled={genLoading || !activeStory.plotPoints.length}><Sparkles className="h-4 w-4" /> Generate detailed list</Button>
-                </div>
-                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 space-y-2">
-                  <div className="text-sm font-medium">Revise plot points</div>
-                  <Textarea value={storyPlotPointRevision} onChange={(e) => setStoryPlotPointRevision(e.target.value)} rows={3} placeholder="Revision feedback..." />
-                  <Button variant="secondary" onClick={reviseStoryPlotPoints} disabled={genLoading}><Sparkles className="h-4 w-4" /> Revise</Button>
+                  <div className="text-sm font-medium">Revise synopsis</div>
+                  <Textarea value={storySynopsisRevision} onChange={(e) => setStorySynopsisRevision(e.target.value)} rows={3} placeholder="Revision feedback..." />
+                  <Button variant="secondary" onClick={reviseStorySynopsis} disabled={genLoading || !collapseWhitespace(storySynopsisRevision)}><Sparkles className="h-4 w-4" /> Revise</Button>
                 </div>
               </div>
             )}
@@ -5589,59 +5873,137 @@ ${feedback}`,
           </div>
         ) : page === "characters" ? (
           <div className="anim-page mt-6 space-y-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="relative w-full md:max-w-xl">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-[hsl(var(--muted-foreground))]" />
-                <Input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search characters…"
-                  className="pl-9"
-                />
-              </div>
-              <div className="flex justify-end">
-                <Button variant="primary" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}>
-                  <Plus className="h-4 w-4" /> Create
-                </Button>
-              </div>
+            <div className="flex items-center justify-between">
+              <div className="text-xl font-semibold">Character Dashboard</div>
+              <Button variant="primary" onClick={() => {
+                const now = new Date().toISOString();
+                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
+                setCharacterCards((prev) => [newCard, ...prev]);
+                setActiveCharacterCardId(newCard.id);
+                setCharacterCardNameInput(newCard.name);
+                setSelectedId(null);
+                resetForm();
+                navigateTo("create");
+              }}><Plus className="h-4 w-4" /> New</Button>
             </div>
-            {filteredCharacters.length === 0 ? (
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-6 text-sm text-[hsl(var(--muted-foreground))]">
-                {characters.length === 0 ? "No characters yet. Click Create to make your first one." : "No matches for your search."}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {characterCards.map((card) => {
+                const firstCharacter = characters.find((c) => c.id === (card.characterIds[0] || "")) || null;
+                return (
+                  <button key={card.id} type="button" onClick={() => {
+                    setActiveCharacterCardId(card.id);
+                    setCharacterCardNameInput(card.name);
+                    setSelectedId(card.characterIds[0] || null);
+                    if (card.characterIds[0]) {
+                      const c = characters.find((x) => x.id === card.characterIds[0]);
+                      if (c) loadCharacterIntoForm(c);
+                    } else {
+                      resetForm();
+                    }
+                    navigateTo("create");
+                  }} className="text-left rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                    <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-[hsl(var(--border))]">
+                      {firstCharacter?.imageDataUrl ? <img src={firstCharacter.imageDataUrl} alt={card.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>}
+                    </div>
+                    <div className="mt-2 font-semibold">{card.name || "Character Card"}</div>
+                    <div className="text-xs text-[hsl(var(--muted-foreground))]">{card.characterIds.length} character entries</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : page === "create" ? (
+          <div className="anim-page mt-6 space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {tabs.map((t) => (
+                <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
+              ))}
+            </div>
+
+            {tab === "relationships" ? (
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">Use the exact drag-and-drop relationship board.</div>
+                <Button variant="secondary" onClick={openCardRelationshipBoard}>Open Relationship Board</Button>
               </div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {filteredCharacters.map((c) => (
-                  <button
-                    key={c.id}
-                    className={cn(
-                      "clickable group relative overflow-hidden rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left shadow-sm",
-                      "focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
-                    )}
-                    onClick={() => setPreviewId(c.id)}
-                    type="button"
-                  >
-                    <div className="relative aspect-[3/4] w-full">
-                      {c.imageDataUrl ? (
-                        <img src={c.imageDataUrl} alt={c.name} className="absolute inset-0 h-full w-full object-cover object-top" />
-                      ) : (
-                        <div className="absolute inset-0 flex items-center justify-center bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))]">
-                          <span className="text-sm">No image</span>
+              <div className={cn("grid gap-4", tab === "definition" ? "lg:grid-cols-[280px,1fr]" : "lg:grid-cols-1")}>
+                {tab === "definition" ? (
+                <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-[hsl(var(--muted-foreground))]" />
+                    <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search character entries…" className="pl-9" />
+                  </div>
+                  <Button variant="primary" className="w-full" onClick={createCharacterEntryInActiveCard}><Plus className="h-4 w-4" /> New character entry</Button>
+                  <div className="max-h-[65vh] space-y-2 overflow-auto">
+                    {filteredCharacters.map((c) => (
+                      <button key={c.id} type="button" draggable onDragStart={() => setDragCharacterId(c.id)} onDragOver={(e) => e.preventDefault()} onDrop={() => {
+                        if (!activeCharacterCardId || !dragCharacterId || dragCharacterId === c.id) return;
+                        setCharacterCards((prev) => prev.map((card) => {
+                          if (card.id !== activeCharacterCardId) return card;
+                          const ids = card.characterIds.filter((id) => id !== dragCharacterId);
+                          const idx = ids.indexOf(c.id);
+                          if (idx < 0) return card;
+                          ids.splice(idx, 0, dragCharacterId);
+                          return { ...card, characterIds: ids, updatedAt: new Date().toISOString() };
+                        }));
+                        setDragCharacterId(null);
+                      }} onClick={() => loadCharacterIntoForm(c)} className={cn("w-full rounded-xl border px-3 py-2 text-left text-sm", selectedId === c.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))]")}>
+                        <div className="font-medium">{c.name || "(no name)"}</div>
+                        <div className="text-xs text-[hsl(var(--muted-foreground))]">{c.gender || "—"}</div>
+                      </button>
+                    ))}
+                    {!filteredCharacters.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No entries.</div> : null}
+                  </div>
+                </div>
+                ) : null}
+
+                <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex-1 space-y-2">
+                      <div className="text-lg font-semibold">Character Dashboard</div>
+                      <Input value={characterCardNameInput} onChange={(e) => { const v = e.target.value; setCharacterCardNameInput(v); if (activeCharacterCardId) setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, name: v, updatedAt: new Date().toISOString() } : card)); }} placeholder="Character card name" />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="secondary" onClick={updateWholeCharacterCard}><Pencil className="h-4 w-4" /> Update</Button>
+                      {selectedId ? <Button variant="secondary" onClick={() => deleteCharacter(selectedId)}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
+                    </div>
+                  </div>
+
+                  {tab === "definition" ? (
+                    <div className="space-y-3">
+                      <div className="grid gap-3 md:grid-cols-[160px,1fr]">
+                        <div className="space-y-2">
+                          <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-[hsl(var(--border))]">{imageDataUrl ? <img src={imageDataUrl} alt="Character" className="absolute inset-0 h-full w-full object-cover object-top" /> : <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>}</div>
+                          <Button variant="secondary" className="w-full" onClick={() => imageFileRef.current?.click()}><Upload className="h-4 w-4" /> Upload</Button>
+                          <input ref={imageFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePickImage(f); e.currentTarget.value = ""; }} />
                         </div>
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[hsl(var(--card))]" />
-                      <div className="absolute bottom-0 left-0 right-0 p-4">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="truncate text-base font-semibold text-[hsl(var(--foreground))]">{c.name}</div>
-                            <div className={cn("text-sm", genderColorClass(c.gender))}>{c.gender || "—"}</div>
-                          </div>
-                          {c.race ? <Badge className="shrink-0">{c.race}</Badge> : null}
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div><div className="mb-1 text-sm">Name</div><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
+                          <div><div className="mb-1 text-sm">Gender</div><Select value={gender} onChange={(e) => setGender(e.target.value as any)}><option value="">—</option><option value="Male">Male</option><option value="Female">Female</option></Select></div>
+                          <div><div className="mb-1 text-sm">Age</div><Input type="number" value={age === "" ? "" : String(age)} onChange={(e) => setAge(e.target.value === "" ? "" : Number(e.target.value))} /></div>
+                          <div><div className="mb-1 text-sm">Race</div><Input value={racePreset === "Other" ? customRace : racePreset} onChange={(e) => { setRacePreset("Other"); setCustomRace(e.target.value); }} /></div>
+                          <div><div className="mb-1 text-sm">Height</div><Input value={height} onChange={(e) => setHeight(e.target.value)} /></div>
+                          <div><div className="mb-1 text-sm">Origin</div><Input value={origins} onChange={(e) => setOrigins(e.target.value)} /></div>
                         </div>
                       </div>
+                      <div className="space-y-2"><div className="text-sm font-medium">Personality</div><Input value={personalitySearch} onChange={(e) => setPersonalitySearch(e.target.value)} placeholder="Type to filter personalities" /><div className="flex max-h-36 flex-wrap gap-2 overflow-auto">{PERSONALITIES.filter((x) => !personalitySearch || x.toLowerCase().includes(personalitySearch.toLowerCase())).map((x) => { const active = personalities.includes(x); return <button key={x} type="button" className={cn("rounded-lg border px-2 py-1 text-xs", active ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))]")} onClick={() => setPersonalities((prev) => active ? prev.filter((p) => p !== x) : [...prev, x])}>{x}</button>; })}</div></div>
+                      <div><div className="mb-1 text-sm font-medium">Physical appearance</div><div className="flex gap-2"><Input value={appearanceInput} onChange={(e) => setAppearanceInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, () => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput("")))} /><Button variant="secondary" onClick={() => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{physicalAppearance.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setPhysicalAppearance)}>{x} ×</button>)}</div></div>
+                      <div><div className="mb-1 text-sm font-medium">Unique traits</div><div className="flex gap-2"><Input value={traitInput} onChange={(e)=>setTraitInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput("")))} /><Button variant="secondary" onClick={()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{traits.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setTraits)}>{x} ×</button>)}</div></div>
+                      <div><div className="mb-1 text-sm font-medium">Speech patterns</div><div className="flex gap-2"><Input value={speechPatternInput} onChange={(e)=>setSpeechPatternInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(speechPatternInput, speechPatterns, setSpeechPatterns, ()=>setSpeechPatternInput("")))} /><Button variant="secondary" onClick={()=>addToList(speechPatternInput, speechPatterns, setSpeechPatterns, ()=>setSpeechPatternInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{speechPatterns.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setSpeechPatterns)}>{x} ×</button>)}</div></div>
+                      <div className="space-y-2"><div className="text-sm font-medium">Backstory</div>{renderGeneratedTextarea({ fieldKey: "character:backstory", value: backstoryText, onChange: setBackstoryText, rows: 8, placeholder: "Write backstory here..." })}<Textarea value={backstoryPrompt} onChange={(e) => setBackstoryPrompt(e.target.value)} rows={3} placeholder="Prompt for generate/revise" /><div className="flex gap-2"><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div></div>
                     </div>
-                  </button>
-                ))}
+                  ) : null}
+
+                  {tab === "system" ? (
+                    <div className="space-y-3"><div className="grid gap-2">{STORY_SYSTEM_RULE_CARDS.map((rule) => { const selected = cardSelectedSystemRuleIds.includes(rule.id); return <button key={rule.id} type="button" className={cn("rounded-xl border p-3 text-left", selected ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))]")} onClick={() => setCardSelectedSystemRuleIds((prev) => prev.includes(rule.id) ? prev.filter((id) => id !== rule.id) : [...prev, rule.id])}><div className="text-sm font-medium">{rule.label}</div><div className="text-xs text-[hsl(var(--muted-foreground))]">{rule.text}</div></button>; })}</div><div><div className="mb-1 text-xs font-medium text-[hsl(var(--muted-foreground))]">Additional custom system rules</div><Textarea value={cardSystemRules} onChange={(e) => setCardSystemRules(e.target.value)} rows={8} /></div></div>
+                  ) : null}
+
+                  {tab === "intro" ? (
+                    <div className="space-y-3"><div className="flex items-center justify-between"><div className="text-sm">Message {introIndex + 1} / {Math.max(1, introMessages.length)}</div><Button variant="secondary" onClick={() => { setIntroMessages((prev)=>[...prev, ""]); setIntroVersionHistories((prev)=>[...prev,[""]]); setIntroVersionIndices((prev)=>[...prev,0]); setIntroIndex(introMessages.length); }}><Plus className="h-4 w-4" /> New</Button></div><div className="flex items-center justify-between gap-2"><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.max(0,i-1))} disabled={introIndex<=0}><ChevronLeft className="h-4 w-4" /> Prev</Button><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.min(introMessages.length-1,i+1))} disabled={introIndex>=introMessages.length-1}>Next <ChevronRight className="h-4 w-4" /></Button></div><Textarea value={introMessages[clampIndex(introIndex, Math.max(1,introMessages.length))] || ""} onChange={(e) => { const v=e.target.value; setIntroMessages((prev)=>{const b=[...prev]; b[clampIndex(introIndex,b.length)] = v; return b;}); setIntroVersionHistories((prev)=>{const base = prev.length ? prev.map((h)=> (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]]; const i = clampIndex(introIndex, Math.max(1, base.length)); while (base.length <= i) base.push([""]); const history = base[i]; const vi = clampIndex(introVersionIndices[i] || 0, history.length); history[vi] = v; return base;}); }} rows={9} placeholder="Write first message..." /><Textarea value={introPrompt} onChange={(e)=>setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" /><div className="flex gap-2"><Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div><Textarea value={introRevisionPrompt} onChange={(e)=>setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" /></div>
+                  ) : null}
+
+                  {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
+                </div>
               </div>
             )}
           </div>
@@ -5668,10 +6030,7 @@ ${feedback}`,
                   variant="secondary"
                   onClick={() => {
                     if (!draft) return alert("Please enter a character name before exporting.");
-                    downloadText(
-                      (filenameSafe(draft.name) || "character") + ".txt",
-                      characterToTxt(draft)
-                    );
+                    exportCurrentCardTxt(draft);
                   }}
                 >
                   <Download className="h-4 w-4" /> Export TXT
@@ -6132,10 +6491,7 @@ ${feedback}`,
                         type="button"
                         onClick={() => {
                           if (!draft) return alert("Enter a character name first.");
-                          downloadText(
-                            (filenameSafe(draft.name) || "character") + ".txt",
-                            characterToTxt(draft)
-                          );
+                          exportCurrentCardTxt(draft);
                         }}
                       >
                         <Download className="h-4 w-4" /> Export TXT
@@ -6203,7 +6559,7 @@ ${feedback}`,
                 type="button"
                 onClick={() => {
                   if (!draft) return alert("Enter a character name first.");
-                  downloadText((filenameSafe(draft.name) || "character") + ".txt", characterToTxt(draft));
+                  exportCurrentCardTxt(draft);
                 }}
               >
                 <Download className="h-4 w-4" /> Export TXT
@@ -6488,10 +6844,7 @@ ${feedback}`,
                   <Button
                     variant="secondary"
                     onClick={() => {
-                      downloadText(
-                        (filenameSafe(previewChar.name) || "character") + ".txt",
-                        characterToTxt(previewChar)
-                      );
+                      exportCurrentCardTxt(previewChar);
                     }}
                   >
                     <Download className="h-4 w-4" /> TXT
@@ -6531,7 +6884,7 @@ ${feedback}`,
         </div>
 
         {saveToastOpen ? (
-          <div className="fixed bottom-4 right-4 z-[70] rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-4 py-2 text-sm shadow-lg">
+          <div className="fixed bottom-4 left-4 z-[70] rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-6 py-4 text-base font-semibold shadow-2xl">
             Saved.
           </div>
         ) : null}
