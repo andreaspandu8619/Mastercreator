@@ -1443,23 +1443,24 @@ export default function CharacterCreatorApp() {
     (async () => {
       try {
         const fromIdb = await idbGetAllCharacters();
-        if (fromIdb.length) {
-          setCharacters(fromIdb);
-          setHydrated(true);
-          return;
-        }
-
         const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const parsed = safeParseJSON(raw);
-          if (Array.isArray(parsed)) {
-            const normalized = parsed.map(normalizeCharacter).filter(Boolean) as Character[];
-            setCharacters(normalized);
-            try {
-              await idbPutManyCharacters(normalized);
-              localStorage.removeItem(STORAGE_KEY);
-            } catch {}
+        const fromLocal = raw && Array.isArray(safeParseJSON(raw))
+          ? (safeParseJSON(raw) as any[]).map(normalizeCharacter).filter(Boolean) as Character[]
+          : [];
+
+        const mergedById = new Map<string, Character>();
+        for (const ch of [...fromIdb, ...fromLocal]) {
+          const existing = mergedById.get(ch.id);
+          if (!existing || (ch.updatedAt || "") > (existing.updatedAt || "")) {
+            mergedById.set(ch.id, ch);
           }
+        }
+        const merged = Array.from(mergedById.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        if (merged.length) {
+          setCharacters(merged);
+          try {
+            await idbPutManyCharacters(merged);
+          } catch {}
         }
         setHydrated(true);
       } catch (e: any) {
@@ -1548,6 +1549,11 @@ export default function CharacterCreatorApp() {
   useEffect(() => {
     localStorage.setItem(CHARACTER_CARDS_KEY, JSON.stringify(characterCards));
   }, [characterCards]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(characters));
+  }, [characters, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -6876,7 +6882,7 @@ ${feedback}`,
         </div>
 
         {saveToastOpen ? (
-          <div className="fixed bottom-4 left-4 z-[70] rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-4 py-2 text-sm shadow-lg">
+          <div className="fixed bottom-4 left-4 z-[70] rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-6 py-4 text-base font-semibold shadow-2xl">
             Saved.
           </div>
         ) : null}
