@@ -3288,6 +3288,23 @@ Write the character's next reply to the latest user message.`;
       .join("\n\n");
   }
 
+  function getPromptFocusContext(prompt: string) {
+    const chars = getActiveCardCharacters();
+    const lowerPrompt = collapseWhitespace(prompt).toLowerCase();
+    const focused = chars.filter((c) => {
+      const n = collapseWhitespace(c.name).toLowerCase();
+      return !!n && lowerPrompt.includes(n);
+    });
+    if (!focused.length) {
+      return "No specific character explicitly mentioned in prompt. Keep balanced focus across ALL character entries in this card.";
+    }
+    return [
+      `Prompt-mentioned focus characters (${focused.length}):`,
+      ...focused.map((c) => `- ${collapseWhitespace(c.name) || "(unnamed)"}`),
+      "Prioritize these characters while still preserving context of all entries in this card.",
+    ].join("\n");
+  }
+
   function getCharacterSummaryForLLM() {
     return [
       `Name: ${collapseWhitespace(name) || "(unnamed)"}`,
@@ -3729,9 +3746,24 @@ ${more}`.trim();
     }
 
     const system =
-      "You write an INTRO MESSAGE for a roleplay character. Write a compelling opening message that starts the roleplay immediately. Keep it in-character, vivid, and usable as the first message. Do not add explanations or meta commentary.";
+      "You write ONE shared FIRST MESSAGE for a character card that can contain multiple character entries. Follow the user prompt exactly. Use the whole card context. If the user prompt explicitly mentions one or more characters, make those the focus while retaining continuity with the rest of the card cast. Write only the first message content, no meta commentary.";
 
-    const user = `Character info:\n${getCharacterSummaryForLLM()}\n\nUser prompt:\n${userPrompt}\n\nReturn ONLY the intro message text.`;
+    const user = `User prompt (highest priority):
+${userPrompt}
+
+Prompt focus analysis:
+${getPromptFocusContext(userPrompt)}
+
+Current selected character entry (supporting details only):
+${getCharacterSummaryForLLM()}
+
+All character entries in THIS SAME card (required global context):
+${getActiveCardCharactersContext()}
+
+Card system rules:
+${cardSystemRules || "(none)"}
+
+Return ONLY the first message text.`;
 
     const targetIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
     const existing = introMessages[targetIndex] || "";
@@ -3849,21 +3881,27 @@ ${more}`.trim();
     }
 
     const system =
-      "You revise exactly ONE roleplay intro message based on feedback. Only use overview/system context and the provided current intro. Do not use other intros. Keep it in-character and ready to use. Return ONLY the revised intro text.";
+      "You revise ONE shared first message for a character card. Follow user feedback exactly, preserve immediate continuity from the current message text, and keep the whole card cast context. If feedback mentions specific characters, prioritize them while retaining card-wide coherence. Return ONLY the revised first message text.";
 
-    const user = `Overview and system context:
+    const user = `Revision feedback (highest priority):
+${feedback}
+
+Prompt focus analysis:
+${getPromptFocusContext(feedback)}
+
+Current first message (continue/refine this text):
+${currentIntro}
+
+Current selected character entry (supporting details only):
+${getCharacterSummaryForLLM()}
+
+All character entries in THIS SAME card (required global context):
 ${getActiveCardCharactersContext()}
 
 Card system rules:
 ${cardSystemRules || "(none)"}
 
-Current intro message (only this one should be revised):
-${currentIntro}
-
-User revision feedback:
-${feedback}
-
-Return only the revised intro message.`;
+Return only the revised first message.`;
 
     const targetIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
     setIntroVersionHistories((prev) => {
