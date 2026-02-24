@@ -1575,7 +1575,7 @@ export default function CharacterCreatorApp() {
   }, [activeCharacterCardId]);
 
   useEffect(() => {
-    if (!activeCharacterCardId) return;
+    if (!hydrated || !activeCharacterCardId) return;
     setCharacterCards((prev) => prev.map((card) => card.id !== activeCharacterCardId ? card : {
       ...card,
       systemRules: cardSystemRules,
@@ -1584,7 +1584,7 @@ export default function CharacterCreatorApp() {
       selectedFirstMessageIndex: introIndex,
       updatedAt: new Date().toISOString(),
     }));
-  }, [activeCharacterCardId, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex]);
+  }, [hydrated, activeCharacterCardId, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -1742,7 +1742,6 @@ export default function CharacterCreatorApp() {
   }
 
   function validate(): string | null {
-    if (!collapseWhitespace(name)) return "Name is required.";
     if (age !== "" && (Number.isNaN(Number(age)) || Number(age) < 0))
       return "Age must be a positive number.";
     if (racePreset === "Other" && !collapseWhitespace(customRace))
@@ -1752,7 +1751,7 @@ export default function CharacterCreatorApp() {
 
   function getDraftCharacter(): Character | null {
     const cleanName = collapseWhitespace(name);
-    if (!cleanName) return null;
+    if (!cleanName && !selectedId) return null;
 
     const now = new Date().toISOString();
     const finalRace = getFinalRace();
