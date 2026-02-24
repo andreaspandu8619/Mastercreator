@@ -1116,6 +1116,30 @@ export default function CharacterCreatorApp() {
     onCommit(text);
   }
 
+  async function continueGeneratedText(fieldKey: string, currentText: string, onCommit: (next: string) => void) {
+    const base = String(currentText || "");
+    if (!collapseWhitespace(base) || genLoading) return;
+    setGenError(null);
+    setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
+    try {
+      const out = await callProxyChatCompletion({
+        system: "Continue the provided text from exactly where it stops. Keep the same tone, perspective, and formatting. Return only the continuation text.",
+        user: `Continue this text:
+
+${base}`,
+        maxTokens: proxyMaxTokens,
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, `${base}${partial}`, onCommit),
+      });
+      commitGeneratedText(fieldKey, `${base}${out}`, onCommit, true);
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Continue generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
   function renderGeneratedTextarea(args: {
     fieldKey: string;
     value: string;
@@ -1136,7 +1160,7 @@ export default function CharacterCreatorApp() {
     return (
       <div className="space-y-2">
         {pages.length > 0 ? (
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="secondary"
               type="button"
@@ -1162,8 +1186,29 @@ export default function CharacterCreatorApp() {
             >
               Roll forward <ChevronRight className="h-4 w-4" />
             </Button>
+            <Button
+              variant="secondary"
+              type="button"
+              disabled={genLoading || !collapseWhitespace(effectiveValue)}
+              className="ml-auto border-[hsl(var(--hover-accent))] text-[hsl(var(--hover-accent))]"
+              onClick={() => continueGeneratedText(args.fieldKey, effectiveValue, args.onChange)}
+            >
+              Continue <ChevronRight className="h-5 w-5" />
+            </Button>
           </div>
-        ) : null}
+        ) : (
+          <div className="flex justify-end">
+            <Button
+              variant="secondary"
+              type="button"
+              disabled={genLoading || !collapseWhitespace(effectiveValue)}
+              className="border-[hsl(var(--hover-accent))] text-[hsl(var(--hover-accent))]"
+              onClick={() => continueGeneratedText(args.fieldKey, effectiveValue, args.onChange)}
+            >
+              Continue <ChevronRight className="h-5 w-5" />
+            </Button>
+          </div>
+        )}
         <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
           <input
             type="checkbox"
