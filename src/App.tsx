@@ -544,15 +544,16 @@ async function idbDeleteCharacter(id: string): Promise<void> {
 }
 
 
-function characterToTxt(c: Character) {
+function characterToTxt(c: Character, options?: { includeIntro?: boolean }) {
   const selectedBackstory = (c.backstory || []).length
     ? (c.backstory || [])[Math.max(0, Math.min((c.backstory || []).length - 1, (c as any).selectedBackstoryIndex || 0))] || ""
     : "";
   const selectedIntro = (c.introMessages || []).length
     ? (c.introMessages || [])[Math.max(0, Math.min((c.introMessages || []).length - 1, c.selectedIntroIndex || 0))] || ""
     : "";
+  const includeIntro = options?.includeIntro ?? true;
 
-  return [
+  const lines = [
     `### Character: ${collapseWhitespace(c.name) || "(Unnamed)"}`,
     `ID: ${c.id || "-"}`,
     `Gender: ${c.gender || "-"}`,
@@ -568,12 +569,18 @@ function characterToTxt(c: Character) {
     "",
     "Backstory:",
     selectedBackstory || "-",
-    "",
-    `* Intro ${Math.max(0, Math.min((c.introMessages || []).length - 1, c.selectedIntroIndex || 0)) + 1}:`,
-    selectedIntro || "-",
-    "",
-    "***",
-  ].join("\n");
+  ];
+
+  if (includeIntro) {
+    lines.push(
+      "",
+      `* Intro ${Math.max(0, Math.min((c.introMessages || []).length - 1, c.selectedIntroIndex || 0)) + 1}:`,
+      selectedIntro || "-"
+    );
+  }
+
+  lines.push("", "***");
+  return lines.join("\n");
 }
 
 function normalizeCharacter(x: any): Character | null {
@@ -4445,7 +4452,7 @@ ${feedback}`,
       "",
       "### Individual Character Info",
       "",
-      ...(cardChars.length ? cardChars.flatMap((c) => [characterToTxt(c), ""]) : ["- No characters in this card.", ""]),
+      ...(cardChars.length ? cardChars.flatMap((c) => [characterToTxt(c, { includeIntro: false }), ""]) : ["- No characters in this card.", ""]),
       "### Relationships",
       ...(relationships.length ? relationships : ["- None"]),
       "",
