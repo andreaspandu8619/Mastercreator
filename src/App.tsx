@@ -6709,6 +6709,26 @@ ${feedback}`,
                       >
                         <MessageCircle className="h-4 w-4" /> Open Character Chat
                       </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          onClick={() => {
+                            exportCurrentCardInfoTxt(draft || undefined);
+                          }}
+                        >
+                          <Download className="h-4 w-4" /> Export Info+System TXT
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          onClick={() => {
+                            exportCurrentCardIntroTxt(draft || undefined);
+                          }}
+                        >
+                          <Download className="h-4 w-4" /> Export Intro TXT
+                        </Button>
+                      </div>
                       <div className="flex items-center justify-between gap-2">
                       <div className="text-lg font-semibold">Preview</div>
                       <Button variant="secondary" type="button" onClick={() => setShowCreatePreview(false)}>
@@ -6767,24 +6787,6 @@ ${feedback}`,
                     </div>
 
                     <div className="flex gap-2">
-                      <Button
-                        variant="secondary"
-                        type="button"
-                        onClick={() => {
-                          exportCurrentCardInfoTxt(draft || undefined);
-                        }}
-                      >
-                        <Download className="h-4 w-4" /> Export Info+System TXT
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        type="button"
-                        onClick={() => {
-                          exportCurrentCardIntroTxt(draft || undefined);
-                        }}
-                      >
-                        <Download className="h-4 w-4" /> Export Intro TXT
-                      </Button>
                       <Button variant="primary" type="button" onClick={saveCharacter}>
                         <Plus className="h-4 w-4" /> Save
                       </Button>
