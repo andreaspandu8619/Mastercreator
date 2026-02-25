@@ -202,6 +202,8 @@ type CharacterCard = {
   selectedSystemRuleIds: string[];
   firstMessageMessages: string[];
   selectedFirstMessageIndex: number;
+  firstMessageVersionHistories: string[][];
+  firstMessageVersionIndices: number[];
   createdAt: string;
   updatedAt: string;
 };
@@ -340,6 +342,27 @@ function normalizeStringArray(v: any): string[] {
     return s ? [s] : [];
   }
   return [];
+}
+
+function normalizeTextArray(v: any): string[] {
+  if (Array.isArray(v)) {
+    return v
+      .map((x) => (typeof x === "string" ? x : x == null ? "" : String(x)))
+      .map((x) => x.replace(/\r\n/g, "\n"))
+      .filter((x) => x.length > 0);
+  }
+  if (typeof v === "string") {
+    return [v.replace(/\r\n/g, "\n")];
+  }
+  return [];
+}
+
+function normalizeTextMatrix(v: any): string[][] {
+  if (!Array.isArray(v)) return [];
+  return v.map((entry) => {
+    const normalized = normalizeTextArray(entry);
+    return normalized.length ? normalized : [""];
+  });
 }
 
 function normalizeGender(v: any): Gender {
@@ -560,9 +583,9 @@ function normalizeCharacter(x: any): Character | null {
   const now = new Date().toISOString();
 
   const introMessages = (() => {
-    const arr = normalizeStringArray(x.introMessages);
+    const arr = normalizeTextArray(x.introMessages);
     if (arr.length) return arr;
-    const legacy = collapseWhitespace(x.introMessage);
+    const legacy = typeof x.introMessage === "string" ? x.introMessage.replace(/\r\n/g, "\n") : "";
     return legacy ? [legacy] : [""];
   })();
 
@@ -602,7 +625,7 @@ function normalizeCharacter(x: any): Character | null {
     respondToProblems: normalizeStringArray(x.respondToProblems),
     sexualBehavior: normalizeStringArray(x.sexualBehavior),
     speechPatterns: normalizeStringArray((x as any).speechPatterns),
-    backstory: normalizeStringArray(x.backstory),
+    backstory: normalizeTextArray(x.backstory),
     selectedBackstoryIndex: Number.isFinite(Number(x.selectedBackstoryIndex)) ? Math.max(0, Number(x.selectedBackstoryIndex)) : 0,
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
     selectedSystemRuleIds: normalizeStringArray(x.selectedSystemRuleIds),
@@ -1470,8 +1493,12 @@ ${base}`,
             relationshipStoryId: typeof card.relationshipStoryId === "string" ? card.relationshipStoryId : undefined,
             systemRules: typeof card.systemRules === "string" ? card.systemRules : "",
             selectedSystemRuleIds: normalizeStringArray(card.selectedSystemRuleIds),
-            firstMessageMessages: normalizeStringArray(card.firstMessageMessages).length ? normalizeStringArray(card.firstMessageMessages) : [""],
+            firstMessageMessages: normalizeTextArray(card.firstMessageMessages).length ? normalizeTextArray(card.firstMessageMessages) : [""],
             selectedFirstMessageIndex: Number.isFinite(Number(card.selectedFirstMessageIndex)) ? Math.max(0, Number(card.selectedFirstMessageIndex)) : 0,
+            firstMessageVersionHistories: normalizeTextMatrix(card.firstMessageVersionHistories),
+            firstMessageVersionIndices: Array.isArray(card.firstMessageVersionIndices)
+              ? card.firstMessageVersionIndices.map((x: any) => (Number.isFinite(Number(x)) ? Math.max(0, Number(x)) : 0))
+              : [],
             createdAt: typeof card.createdAt === "string" ? card.createdAt : now,
             updatedAt: typeof card.updatedAt === "string" ? card.updatedAt : now,
           } as CharacterCard;
@@ -1621,11 +1648,22 @@ ${base}`,
     setCardSystemRules(card.systemRules || "");
     setCardSelectedSystemRuleIds(card.selectedSystemRuleIds || []);
     const msgs = card.firstMessageMessages?.length ? [...card.firstMessageMessages] : [""];
+    const historiesBase = normalizeTextMatrix(card.firstMessageVersionHistories);
+    const histories = msgs.map((msg, idx) => {
+      const existing = historiesBase[idx];
+      if (!existing || !existing.length) return [msg || ""];
+      return existing;
+    });
+    const indices = msgs.map((_, idx) => {
+      const history = histories[idx] || [""];
+      const raw = card.firstMessageVersionIndices?.[idx] ?? 0;
+      return clampIndex(raw, history.length);
+    });
     setIntroMessages(msgs);
     setIntroIndex(clampIndex(card.selectedFirstMessageIndex || 0, msgs.length));
-    setIntroVersionHistories(msgs.map((m) => [m || ""]));
-    setIntroVersionIndices(msgs.map(() => 0));
-  }, [activeCharacterCardId]);
+    setIntroVersionHistories(histories);
+    setIntroVersionIndices(indices);
+  }, [activeCharacterCardId, characterCards]);
 
   useEffect(() => {
     if (!hydrated || !activeCharacterCardId) return;
@@ -1635,15 +1673,17 @@ ${base}`,
       selectedSystemRuleIds: cardSelectedSystemRuleIds,
       firstMessageMessages: introMessages,
       selectedFirstMessageIndex: introIndex,
+      firstMessageVersionHistories: introVersionHistories,
+      firstMessageVersionIndices: introVersionIndices,
       updatedAt: new Date().toISOString(),
     }));
-  }, [hydrated, activeCharacterCardId, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex]);
+  }, [hydrated, activeCharacterCardId, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex, introVersionHistories, introVersionIndices]);
 
   useEffect(() => {
     if (!hydrated) return;
     if (!characterCards.length) {
       const now = new Date().toISOString();
-      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
+      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, firstMessageVersionHistories: [[""]], firstMessageVersionIndices: [0], createdAt: now, updatedAt: now };
       setCharacterCards([card]);
       setActiveCharacterCardId(card.id);
       setCharacterCardNameInput(card.name);
@@ -3737,6 +3777,24 @@ ${more}`.trim();
     return clean;
   }
 
+  function beginIntroRevisionIteration(targetIndex: number, seedText: string) {
+    setIntroVersionHistories((prev) => {
+      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      while (base.length <= targetIndex) base.push([""]);
+      const history = [...base[targetIndex]];
+      if (!history.length || history[history.length - 1] !== seedText) history.push(seedText);
+      history.push("");
+      base[targetIndex] = history;
+      setIntroVersionIndices((old) => {
+        const next = old.length ? [...old] : [0];
+        while (next.length <= targetIndex) next.push(0);
+        next[targetIndex] = history.length - 1;
+        return next;
+      });
+      return base;
+    });
+  }
+
   async function generateSelectedIntro() {
     setGenError(null);
     const userPrompt = collapseWhitespace(introPrompt);
@@ -3746,7 +3804,7 @@ ${more}`.trim();
     }
 
     const system =
-      "You write ONE shared FIRST MESSAGE for a character card that can contain multiple character entries. Follow the user prompt exactly. Use the whole card context. If the user prompt explicitly mentions one or more characters, make those the focus while retaining continuity with the rest of the card cast. Write only the first message content, no meta commentary.";
+      "You write ONE shared FIRST MESSAGE for a character card that can contain multiple character entries. Follow the user prompt exactly. Use the whole card context. If the user prompt explicitly mentions one or more characters, make those the focus while retaining continuity with the rest of the card cast. Write only the first message content, no meta commentary. Internal format rule: narration/action text must be wrapped in *asterisks* and spoken dialogue must be in double quotes.";
 
     const user = `User prompt (highest priority):
 ${userPrompt}
@@ -3774,20 +3832,7 @@ Return ONLY the first message text.`;
       if (!ok) return;
     }
 
-    const baseline = existing;
-    setIntroVersionHistories((prev) => {
-      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
-      while (base.length <= targetIndex) base.push([""]);
-      const history = base[targetIndex];
-      history.push(baseline);
-      return base;
-    });
-    setIntroVersionIndices((prev) => {
-      const base = prev.length ? [...prev] : [0];
-      while (base.length <= targetIndex) base.push(0);
-      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
-      return base;
-    });
+    beginIntroRevisionIteration(targetIndex, existing || "");
     setGenLoading(true);
     try {
       const text = await callProxyChatCompletion({
@@ -3881,7 +3926,7 @@ Return ONLY the first message text.`;
     }
 
     const system =
-      "You revise ONE shared first message for a character card. Follow user feedback exactly, preserve immediate continuity from the current message text, and keep the whole card cast context. If feedback mentions specific characters, prioritize them while retaining card-wide coherence. Return ONLY the revised first message text.";
+      "You revise ONE shared first message for a character card. Follow user feedback exactly, preserve immediate continuity from the current message text, and keep the whole card cast context. If feedback mentions specific characters, prioritize them while retaining card-wide coherence. Return ONLY the revised first message text. Internal format rule: narration/action text must be wrapped in *asterisks* and spoken dialogue must be in double quotes.";
 
     const user = `Revision feedback (highest priority):
 ${feedback}
@@ -3904,19 +3949,7 @@ ${cardSystemRules || "(none)"}
 Return only the revised first message.`;
 
     const targetIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
-    setIntroVersionHistories((prev) => {
-      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
-      while (base.length <= targetIndex) base.push([""]);
-      const history = base[targetIndex];
-      history.push(currentIntro);
-      return base;
-    });
-    setIntroVersionIndices((prev) => {
-      const base = prev.length ? [...prev] : [0];
-      while (base.length <= targetIndex) base.push(0);
-      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
-      return base;
-    });
+    beginIntroRevisionIteration(targetIndex, currentIntro);
     setGenLoading(true);
     try {
       const text = await callProxyChatCompletion({
@@ -4385,7 +4418,7 @@ ${feedback}`,
   }
 
 
-  function exportCurrentCardTxt(fallbackCharacter?: Character) {
+  function exportCurrentCardInfoTxt(fallbackCharacter?: Character) {
     const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
     const cardChars = activeCard
       ? (activeCard.characterIds || []).map((id) => characters.find((c) => c.id === id)).filter((c): c is Character => !!c)
@@ -4422,7 +4455,25 @@ ${feedback}`,
     ].join("\n");
 
     const exportName = filenameSafe(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "character_card") || "character_card";
-    downloadText(`${exportName}.txt`, xml);
+    downloadText(`${exportName}_info_system.txt`, xml);
+  }
+
+  function exportCurrentCardIntroTxt(fallbackCharacter?: Character) {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
+    const selectedMsgIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
+    const selectedHistory = introVersionHistories[selectedMsgIndex] || [introMessages[selectedMsgIndex] || ""];
+    const selectedVersionIndex = clampIndex(introVersionIndices[selectedMsgIndex] || 0, Math.max(1, selectedHistory.length));
+    const selectedIntro = selectedHistory[selectedVersionIndex] || introMessages[selectedMsgIndex] || "";
+    const xml = [
+      `<character_card_intro name="${xmlEscape(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card")}">`,
+      `  <intro_messages>`,
+      `    <intro index="${introIndex + 1}">${xmlEscape(selectedIntro)}</intro>`,
+      `  </intro_messages>`,
+      `</character_card_intro>`,
+      "",
+    ].join("\n");
+    const exportName = filenameSafe(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "character_card") || "character_card";
+    downloadText(`${exportName}_intro_messages.txt`, xml);
   }
 
 
@@ -5986,7 +6037,7 @@ ${feedback}`,
               <div className="text-xl font-semibold">Character Dashboard</div>
               <Button variant="primary" onClick={() => {
                 const now = new Date().toISOString();
-                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
+                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, firstMessageVersionHistories: [[""]], firstMessageVersionIndices: [0], createdAt: now, updatedAt: now };
                 setCharacterCards((prev) => [newCard, ...prev]);
                 setActiveCharacterCardId(newCard.id);
                 setCharacterCardNameInput(newCard.name);
@@ -6138,11 +6189,18 @@ ${feedback}`,
                 <Button
                   variant="secondary"
                   onClick={() => {
-                    if (!draft) return alert("Please enter a character name before exporting.");
-                    exportCurrentCardTxt(draft);
+                    exportCurrentCardInfoTxt(draft || undefined);
                   }}
                 >
-                  <Download className="h-4 w-4" /> Export TXT
+                  <Download className="h-4 w-4" /> Export Info+System TXT
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    exportCurrentCardIntroTxt(draft || undefined);
+                  }}
+                >
+                  <Download className="h-4 w-4" /> Export Intro TXT
                 </Button>
                 <Button
                   variant="secondary"
@@ -6599,11 +6657,19 @@ ${feedback}`,
                         variant="secondary"
                         type="button"
                         onClick={() => {
-                          if (!draft) return alert("Enter a character name first.");
-                          exportCurrentCardTxt(draft);
+                          exportCurrentCardInfoTxt(draft || undefined);
                         }}
                       >
-                        <Download className="h-4 w-4" /> Export TXT
+                        <Download className="h-4 w-4" /> Export Info+System TXT
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        onClick={() => {
+                          exportCurrentCardIntroTxt(draft || undefined);
+                        }}
+                      >
+                        <Download className="h-4 w-4" /> Export Intro TXT
                       </Button>
                       <Button variant="primary" type="button" onClick={saveCharacter}>
                         <Plus className="h-4 w-4" /> Save
@@ -6667,11 +6733,19 @@ ${feedback}`,
                 variant="secondary"
                 type="button"
                 onClick={() => {
-                  if (!draft) return alert("Enter a character name first.");
-                  exportCurrentCardTxt(draft);
+                  exportCurrentCardInfoTxt(draft || undefined);
                 }}
               >
-                <Download className="h-4 w-4" /> Export TXT
+                <Download className="h-4 w-4" /> Export Info+System TXT
+              </Button>
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => {
+                  exportCurrentCardIntroTxt(draft || undefined);
+                }}
+              >
+                <Download className="h-4 w-4" /> Export Intro TXT
               </Button>
               <Button variant="primary" type="button" onClick={saveCharacter}>
                 <Plus className="h-4 w-4" /> Save
@@ -6953,10 +7027,18 @@ ${feedback}`,
                   <Button
                     variant="secondary"
                     onClick={() => {
-                      exportCurrentCardTxt(previewChar);
+                      exportCurrentCardInfoTxt(previewChar || undefined);
                     }}
                   >
-                    <Download className="h-4 w-4" /> TXT
+                    <Download className="h-4 w-4" /> Info+System TXT
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      exportCurrentCardIntroTxt(previewChar || undefined);
+                    }}
+                  >
+                    <Download className="h-4 w-4" /> Intro TXT
                   </Button>
                   <Button
                     variant="secondary"
