@@ -1663,7 +1663,7 @@ ${base}`,
     setIntroIndex(clampIndex(card.selectedFirstMessageIndex || 0, msgs.length));
     setIntroVersionHistories(histories);
     setIntroVersionIndices(indices);
-  }, [activeCharacterCardId, characterCards]);
+  }, [activeCharacterCardId]);
 
   useEffect(() => {
     if (!hydrated || !activeCharacterCardId) return;
@@ -6159,7 +6159,121 @@ ${feedback}`,
                   ) : null}
 
                   {tab === "intro" ? (
-                    <div className="space-y-3"><div className="flex items-center justify-between"><div className="text-sm">Message {introIndex + 1} / {Math.max(1, introMessages.length)}</div><Button variant="secondary" onClick={() => { setIntroMessages((prev)=>[...prev, ""]); setIntroVersionHistories((prev)=>[...prev,[""]]); setIntroVersionIndices((prev)=>[...prev,0]); setIntroIndex(introMessages.length); }}><Plus className="h-4 w-4" /> New</Button></div><div className="flex items-center justify-between gap-2"><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.max(0,i-1))} disabled={introIndex<=0}><ChevronLeft className="h-4 w-4" /> Prev</Button><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.min(introMessages.length-1,i+1))} disabled={introIndex>=introMessages.length-1}>Next <ChevronRight className="h-4 w-4" /></Button></div><Textarea value={introMessages[clampIndex(introIndex, Math.max(1,introMessages.length))] || ""} onChange={(e) => { const v=e.target.value; setIntroMessages((prev)=>{const b=[...prev]; b[clampIndex(introIndex,b.length)] = v; return b;}); setIntroVersionHistories((prev)=>{const base = prev.length ? prev.map((h)=> (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]]; const i = clampIndex(introIndex, Math.max(1, base.length)); while (base.length <= i) base.push([""]); const history = base[i]; const vi = clampIndex(introVersionIndices[i] || 0, history.length); history[vi] = v; return base;}); }} rows={9} placeholder="Write first message..." /><Textarea value={introPrompt} onChange={(e)=>setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" /><div className="flex gap-2"><Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div><Textarea value={introRevisionPrompt} onChange={(e)=>setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" /></div>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm">Message {introIndex + 1} / {Math.max(1, introMessages.length)}</div>
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setIntroMessages((prev) => [...prev, ""]);
+                            setIntroVersionHistories((prev) => [...prev, [""]]);
+                            setIntroVersionIndices((prev) => [...prev, 0]);
+                            setIntroIndex(introMessages.length);
+                          }}
+                        >
+                          <Plus className="h-4 w-4" /> New message
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={() => setIntroIndex((i) => Math.max(0, i - 1))}
+                          disabled={introIndex <= 0}
+                        >
+                          <ChevronLeft className="h-4 w-4" /> Prev message
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => setIntroIndex((i) => Math.min(introMessages.length - 1, i + 1))}
+                          disabled={introIndex >= introMessages.length - 1}
+                        >
+                          Next message <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            const i = clampIndex(introIndex, Math.max(1, introMessages.length));
+                            const history = introVersionHistories[i] || [introMessages[i] || ""];
+                            const current = clampIndex(introVersionIndices[i] || 0, history.length);
+                            const nextIdx = Math.max(0, current - 1);
+                            setIntroVersionIndices((prev) => {
+                              const base = prev.length ? [...prev] : [0];
+                              while (base.length <= i) base.push(0);
+                              base[i] = nextIdx;
+                              return base;
+                            });
+                            setIntroMessages((prev) => {
+                              const base = prev.length ? [...prev] : [""];
+                              base[i] = history[nextIdx] || "";
+                              return base;
+                            });
+                          }}
+                          disabled={(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) <= 0}
+                        >
+                          <ChevronLeft className="h-4 w-4" /> Prev iteration
+                        </Button>
+                        <div className="text-sm text-[hsl(var(--muted-foreground))]">
+                          Iteration {(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) + 1} / {Math.max(1, introVersionHistories[clampIndex(introIndex, Math.max(1, introMessages.length))]?.length || 1)}
+                        </div>
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            const i = clampIndex(introIndex, Math.max(1, introMessages.length));
+                            const history = introVersionHistories[i] || [introMessages[i] || ""];
+                            const current = clampIndex(introVersionIndices[i] || 0, history.length);
+                            const nextIdx = Math.min(history.length - 1, current + 1);
+                            setIntroVersionIndices((prev) => {
+                              const base = prev.length ? [...prev] : [0];
+                              while (base.length <= i) base.push(0);
+                              base[i] = nextIdx;
+                              return base;
+                            });
+                            setIntroMessages((prev) => {
+                              const base = prev.length ? [...prev] : [""];
+                              base[i] = history[nextIdx] || "";
+                              return base;
+                            });
+                          }}
+                          disabled={(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) >= Math.max(1, introVersionHistories[clampIndex(introIndex, Math.max(1, introMessages.length))]?.length || 1) - 1}
+                        >
+                          Next iteration <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      <Textarea
+                        value={introMessages[clampIndex(introIndex, Math.max(1, introMessages.length))] || ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setIntroMessages((prev) => {
+                            const b = [...prev];
+                            b[clampIndex(introIndex, b.length)] = v;
+                            return b;
+                          });
+                          setIntroVersionHistories((prev) => {
+                            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+                            const i = clampIndex(introIndex, Math.max(1, base.length));
+                            while (base.length <= i) base.push([""]);
+                            const history = base[i];
+                            const vi = clampIndex(introVersionIndices[i] || 0, history.length);
+                            history[vi] = v;
+                            return base;
+                          });
+                        }}
+                        rows={9}
+                        placeholder="Write first message..."
+                      />
+
+                      <Textarea value={introPrompt} onChange={(e) => setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" />
+                      <div className="flex gap-2">
+                        <Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button>
+                        <Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button>
+                      </div>
+                      <Textarea value={introRevisionPrompt} onChange={(e) => setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" />
+                    </div>
                   ) : null}
 
                   {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
@@ -6382,10 +6496,9 @@ ${feedback}`,
                           variant="secondary"
                           type="button"
                           onClick={() =>
-                            setIntroIndex((i) =>
-                              clampIndex(i - 1, Math.max(1, introMessages.length))
-                            )
+                            setIntroIndex((i) => Math.max(0, i - 1))
                           }
+                          disabled={introIndex <= 0}
                         >
                           <ChevronLeft className="h-4 w-4" /> Prev intro
                         </Button>
@@ -6396,10 +6509,9 @@ ${feedback}`,
                           variant="secondary"
                           type="button"
                           onClick={() =>
-                            setIntroIndex((i) =>
-                              clampIndex(i + 1, Math.max(1, introMessages.length))
-                            )
+                            setIntroIndex((i) => Math.min(Math.max(1, introMessages.length) - 1, i + 1))
                           }
+                          disabled={introIndex >= Math.max(1, introMessages.length) - 1}
                         >
                           Next intro <ChevronRight className="h-4 w-4" />
                         </Button>
@@ -6413,7 +6525,7 @@ ${feedback}`,
                             const i = clampIndex(introIndex, Math.max(1, introMessages.length));
                             const history = introVersionHistories[i] || [introMessages[i] || ""];
                             const current = clampIndex(introVersionIndices[i] || 0, history.length);
-                            const nextIdx = clampIndex(current - 1, history.length);
+                            const nextIdx = Math.max(0, current - 1);
                             setIntroVersionIndices((prev) => {
                               const base = prev.length ? [...prev] : [0];
                               while (base.length <= i) base.push(0);
@@ -6426,6 +6538,7 @@ ${feedback}`,
                               return base;
                             });
                           }}
+                          disabled={(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) <= 0}
                         >
                           <ChevronLeft className="h-4 w-4" /> Roll back
                         </Button>
@@ -6439,7 +6552,7 @@ ${feedback}`,
                             const i = clampIndex(introIndex, Math.max(1, introMessages.length));
                             const history = introVersionHistories[i] || [introMessages[i] || ""];
                             const current = clampIndex(introVersionIndices[i] || 0, history.length);
-                            const nextIdx = clampIndex(current + 1, history.length);
+                            const nextIdx = Math.min(history.length - 1, current + 1);
                             setIntroVersionIndices((prev) => {
                               const base = prev.length ? [...prev] : [0];
                               while (base.length <= i) base.push(0);
@@ -6452,6 +6565,7 @@ ${feedback}`,
                               return base;
                             });
                           }}
+                          disabled={(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) >= Math.max(1, introVersionHistories[clampIndex(introIndex, Math.max(1, introMessages.length))]?.length || 1) - 1}
                         >
                           Roll forward <ChevronRight className="h-4 w-4" />
                         </Button>
