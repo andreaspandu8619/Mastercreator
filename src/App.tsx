@@ -6074,10 +6074,18 @@ ${feedback}`,
           </div>
         ) : page === "create" ? (
           <div className="anim-page mt-6 space-y-3">
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {tabs.map((t) => (
                 <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
               ))}
+              <div className="ml-auto flex flex-wrap gap-2">
+                <Button variant="secondary" type="button" onClick={() => exportCurrentCardInfoTxt(draft || undefined)}>
+                  <Download className="h-4 w-4" /> Export Info+System TXT
+                </Button>
+                <Button variant="secondary" type="button" onClick={() => exportCurrentCardIntroTxt(draft || undefined)}>
+                  <Download className="h-4 w-4" /> Export Intro TXT
+                </Button>
+              </div>
             </div>
 
             {tab === "relationships" ? (
