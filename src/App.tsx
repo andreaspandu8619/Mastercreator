@@ -261,6 +261,7 @@ const STORIES_KEY = "mastercreator_stories_v1";
 const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
 const CHARACTER_CARDS_KEY = "mastercreator_character_cards_v1";
 const GOOGLE_CLIENT_ID = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || "";
+const GOOGLE_CLIENT_ID_KEY = "mastercreator_google_client_id";
 const GOOGLE_SYNC_FILE = "mastercreator_sync_v1.json";
 const GOOGLE_SYNC_SCOPE = "https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
 const SYNC_KEYS = [
@@ -1154,6 +1155,7 @@ export default function CharacterCreatorApp() {
   const [proxyProgress, setProxyProgress] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
   const [googleReady, setGoogleReady] = useState(false);
+  const [googleClientId, setGoogleClientId] = useState(GOOGLE_CLIENT_ID);
   const [googleToken, setGoogleToken] = useState("");
   const [googleProfile, setGoogleProfile] = useState<GoogleProfile | null>(null);
   const [googleSyncBusy, setGoogleSyncBusy] = useState(false);
@@ -1438,8 +1440,13 @@ ${payloadText}
   }, []);
 
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID) {
-      setGoogleSyncStatus("Set VITE_GOOGLE_CLIENT_ID to enable Google sync.");
+    const savedClientId = collapseWhitespace(localStorage.getItem(GOOGLE_CLIENT_ID_KEY) || "");
+    if (!GOOGLE_CLIENT_ID && savedClientId) {
+      setGoogleClientId(savedClientId);
+    }
+
+    if (!GOOGLE_CLIENT_ID && !savedClientId) {
+      setGoogleSyncStatus("Google sync is not configured yet. Click Google Login to enter a Client ID.");
       return;
     }
 
@@ -1460,9 +1467,9 @@ ${payloadText}
   }, []);
 
   useEffect(() => {
-    if (!googleReady || !GOOGLE_CLIENT_ID || !window.google?.accounts?.oauth2) return;
+    if (!googleReady || !googleClientId || !window.google?.accounts?.oauth2) return;
     googleTokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
+      client_id: googleClientId,
       scope: GOOGLE_SYNC_SCOPE,
       callback: async (response) => {
         if (response?.error || !response?.access_token) {
@@ -1487,7 +1494,7 @@ ${payloadText}
         }
       },
     });
-  }, [googleReady]);
+  }, [googleReady, googleClientId]);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem(THEME_KEY);
@@ -2398,8 +2405,12 @@ ${payloadText}
   }
 
   function startGoogleLogin() {
-    if (!GOOGLE_CLIENT_ID) {
-      alert("Google login is not configured. Add VITE_GOOGLE_CLIENT_ID in your environment.");
+    if (!googleClientId) {
+      const entered = collapseWhitespace(window.prompt("Paste your Google OAuth Client ID (Web app):") || "");
+      if (!entered) return;
+      setGoogleClientId(entered);
+      localStorage.setItem(GOOGLE_CLIENT_ID_KEY, entered);
+      setGoogleSyncStatus("Google Client ID saved. Click Google Login again.");
       return;
     }
     if (!googleTokenClientRef.current) {
