@@ -544,36 +544,43 @@ async function idbDeleteCharacter(id: string): Promise<void> {
 }
 
 
-function xmlEscape(input: string) {
-  return String(input || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-function characterToTxt(c: Character) {
+function characterToTxt(c: Character, options?: { includeIntro?: boolean }) {
   const selectedBackstory = (c.backstory || []).length
     ? (c.backstory || [])[Math.max(0, Math.min((c.backstory || []).length - 1, (c as any).selectedBackstoryIndex || 0))] || ""
     : "";
+  const selectedIntro = (c.introMessages || []).length
+    ? (c.introMessages || [])[Math.max(0, Math.min((c.introMessages || []).length - 1, c.selectedIntroIndex || 0))] || ""
+    : "";
+  const includeIntro = options?.includeIntro ?? true;
 
-  return [
-    `  <character id="${xmlEscape(c.id || "")}">`,
-    `    <name>${xmlEscape(c.name || "")}</name>`,
-    `    <gender>${xmlEscape(c.gender || "")}</gender>`,
-    `    <age>${xmlEscape(c.age === "" ? "" : String(c.age))}</age>`,
-    `    <height>${xmlEscape(c.height || "")}</height>`,
-    `    <origin>${xmlEscape(c.origins || "")}</origin>`,
-    `    <race>${xmlEscape(c.race || "")}</race>`,
-    `    <personality>${xmlEscape((c.personalities || []).join(", "))}</personality>`,
-    `    <physical_appearance>${xmlEscape((c.physicalAppearance || []).join(", "))}</physical_appearance>`,
-    `    <unique_traits>${xmlEscape((c.uniqueTraits || []).join(", "))}</unique_traits>`,
-    `    <behavior>${xmlEscape([...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", "))}</behavior>`,
-    `    <speech_patterns>${xmlEscape((c.speechPatterns || []).join(", "))}</speech_patterns>`,
-    `    <backstory>${xmlEscape(selectedBackstory)}</backstory>`,
-    `  </character>`,
-  ].join("\n");
+  const lines = [
+    `### Character: ${collapseWhitespace(c.name) || "(Unnamed)"}`,
+    `ID: ${c.id || "-"}`,
+    `Gender: ${c.gender || "-"}`,
+    `Age: ${c.age === "" ? "-" : String(c.age)}`,
+    `Height: ${collapseWhitespace(c.height) || "-"}`,
+    `Origin: ${collapseWhitespace(c.origins) || "-"}`,
+    `Race: ${collapseWhitespace(c.race) || "-"}`,
+    `Personality: ${(c.personalities || []).length ? (c.personalities || []).join(", ") : "-"}`,
+    `Physical Appearance: ${(c.physicalAppearance || []).length ? (c.physicalAppearance || []).join(", ") : "-"}`,
+    `Unique Traits: ${(c.uniqueTraits || []).length ? (c.uniqueTraits || []).join(", ") : "-"}`,
+    `Behavior: ${([...(c.respondToProblems || []), ...(c.sexualBehavior || [])].length) ? [...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", ") : "-"}`,
+    `Speech Patterns: ${(c.speechPatterns || []).length ? (c.speechPatterns || []).join(", ") : "-"}`,
+    "",
+    "Backstory:",
+    selectedBackstory || "-",
+  ];
+
+  if (includeIntro) {
+    lines.push(
+      "",
+      `* Intro ${Math.max(0, Math.min((c.introMessages || []).length - 1, c.selectedIntroIndex || 0)) + 1}:`,
+      selectedIntro || "-"
+    );
+  }
+
+  lines.push("", "***");
+  return lines.join("\n");
 }
 
 function normalizeCharacter(x: any): Character | null {
@@ -839,7 +846,7 @@ function runTests() {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
-  if (!t.includes("# A")) throw new Error("TXT export header missing");
+  if (!t.includes("### Character: A")) throw new Error("TXT export header missing");
   if (!t.includes("Personality: Brave")) throw new Error("TXT export personality missing");
   if (!t.includes("* Intro 2:")) throw new Error("TXT export selected intro marker missing");
 }
@@ -4431,31 +4438,36 @@ ${feedback}`,
     const relationships = (cardStory?.relationships || []).map((r) => {
       const from = cardChars.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
       const to = cardChars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
-      return `    <relationship from="${xmlEscape(from)}" to="${xmlEscape(to)}" alignment="${xmlEscape(r.alignment)}" type="${xmlEscape(r.relationType)}">${xmlEscape(r.details || "")}</relationship>`;
+      return `- ${from} -> ${to} | Alignment: ${r.alignment || "-"} | Type: ${r.relationType || "-"}${r.details ? ` | Details: ${r.details}` : ""}`;
     });
 
     const selectedRuleTexts = STORY_SYSTEM_RULE_CARDS
       .filter((r) => cardSelectedSystemRuleIds.includes(r.id))
-      .map((r) => r.text);
+      .map((r) => `${r.label}: ${r.text}`);
 
-    const xml = [
-      `<character_card name="${xmlEscape(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card")}">`,
-      `  <individual_character_info>`,
-      ...(cardChars.length ? cardChars.map((c) => characterToTxt(c)) : ["    <character />"]),
-      `  </individual_character_info>`,
-      `  <relationships>`,
-      ...(relationships.length ? relationships : ["    <relationship />"]),
-      `  </relationships>`,
-      `  <system_rules>`,
-      `    <selected_rule_cards>${xmlEscape(selectedRuleTexts.join(" | "))}</selected_rule_cards>`,
-      `    <custom_rules>${xmlEscape(cardSystemRules || "")}</custom_rules>`,
-      `  </system_rules>`,
-      `</character_card>`,
+    const text = [
+      `### Character Card: ${collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card"}`,
+      "",
+      "***",
+      "",
+      "### Individual Character Info",
+      "",
+      ...(cardChars.length ? cardChars.flatMap((c) => [characterToTxt(c, { includeIntro: false }), ""]) : ["- No characters in this card.", ""]),
+      "### Relationships",
+      ...(relationships.length ? relationships : ["- None"]),
+      "",
+      "### System Rules",
+      "",
+      "Selected Rule Cards:",
+      ...(selectedRuleTexts.length ? selectedRuleTexts.map((rule) => `- ${rule}`) : ["- None"]),
+      "",
+      "Custom Rules:",
+      cardSystemRules || "-",
       "",
     ].join("\n");
 
     const exportName = filenameSafe(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "character_card") || "character_card";
-    downloadText(`${exportName}_info_system.txt`, xml);
+    downloadText(`${exportName}_info_system.txt`, text);
   }
 
   function exportCurrentCardIntroTxt(fallbackCharacter?: Character) {
@@ -4464,21 +4476,26 @@ ${feedback}`,
     const selectedHistory = introVersionHistories[selectedMsgIndex] || [introMessages[selectedMsgIndex] || ""];
     const selectedVersionIndex = clampIndex(introVersionIndices[selectedMsgIndex] || 0, Math.max(1, selectedHistory.length));
     const selectedIntro = selectedHistory[selectedVersionIndex] || introMessages[selectedMsgIndex] || "";
-    const xml = [
-      `<character_card_intro name="${xmlEscape(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card")}">`,
-      `  <intro_messages>`,
-      `    <intro index="${introIndex + 1}">${xmlEscape(selectedIntro)}</intro>`,
-      `  </intro_messages>`,
-      `</character_card_intro>`,
+    const text = [
+      `### Character Card Intro: ${collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card"}`,
+      "",
+      "***",
+      "",
+      "### Intro Message",
+      `Message Index: ${selectedMsgIndex + 1}`,
+      `Version: ${selectedVersionIndex + 1} / ${Math.max(1, selectedHistory.length)}`,
+      "",
+      "Content:",
+      selectedIntro || "-",
       "",
     ].join("\n");
     const exportName = filenameSafe(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "character_card") || "character_card";
-    downloadText(`${exportName}_intro_messages.txt`, xml);
+    downloadText(`${exportName}_intro_messages.txt`, text);
   }
 
 
-
   const draft = getDraftCharacter();
+
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
     { id: "definition", label: "Characters" },
@@ -6074,10 +6091,18 @@ ${feedback}`,
           </div>
         ) : page === "create" ? (
           <div className="anim-page mt-6 space-y-3">
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {tabs.map((t) => (
                 <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
               ))}
+              <div className="ml-auto flex flex-wrap gap-2">
+                <Button variant="secondary" type="button" onClick={() => exportCurrentCardInfoTxt(draft || undefined)}>
+                  <Download className="h-4 w-4" /> Export Info+System TXT
+                </Button>
+                <Button variant="secondary" type="button" onClick={() => exportCurrentCardIntroTxt(draft || undefined)}>
+                  <Download className="h-4 w-4" /> Export Intro TXT
+                </Button>
+              </div>
             </div>
 
             {tab === "relationships" ? (
@@ -6709,6 +6734,26 @@ ${feedback}`,
                       >
                         <MessageCircle className="h-4 w-4" /> Open Character Chat
                       </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          onClick={() => {
+                            exportCurrentCardInfoTxt(draft || undefined);
+                          }}
+                        >
+                          <Download className="h-4 w-4" /> Export Info+System TXT
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          onClick={() => {
+                            exportCurrentCardIntroTxt(draft || undefined);
+                          }}
+                        >
+                          <Download className="h-4 w-4" /> Export Intro TXT
+                        </Button>
+                      </div>
                       <div className="flex items-center justify-between gap-2">
                       <div className="text-lg font-semibold">Preview</div>
                       <Button variant="secondary" type="button" onClick={() => setShowCreatePreview(false)}>
@@ -6767,24 +6812,6 @@ ${feedback}`,
                     </div>
 
                     <div className="flex gap-2">
-                      <Button
-                        variant="secondary"
-                        type="button"
-                        onClick={() => {
-                          exportCurrentCardInfoTxt(draft || undefined);
-                        }}
-                      >
-                        <Download className="h-4 w-4" /> Export Info+System TXT
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        type="button"
-                        onClick={() => {
-                          exportCurrentCardIntroTxt(draft || undefined);
-                        }}
-                      >
-                        <Download className="h-4 w-4" /> Export Intro TXT
-                      </Button>
                       <Button variant="primary" type="button" onClick={saveCharacter}>
                         <Plus className="h-4 w-4" /> Save
                       </Button>
