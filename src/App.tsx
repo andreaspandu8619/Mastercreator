@@ -6615,7 +6615,7 @@ ${feedback}`,
                       </div>
                     </div>
 
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <Button
                         variant="secondary"
                         type="button"
@@ -6625,6 +6625,16 @@ ${feedback}`,
                         }}
                       >
                         <Download className="h-4 w-4" /> Export TXT
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        onClick={() => {
+                          if (!draft) return alert("Enter a character name first.");
+                          exportCurrentCardJson(draft);
+                        }}
+                      >
+                        <Download className="h-4 w-4" /> Export JSON
                       </Button>
                       <Button variant="primary" type="button" onClick={saveCharacter}>
                         <Plus className="h-4 w-4" /> Save
@@ -6693,6 +6703,16 @@ ${feedback}`,
                 }}
               >
                 <Download className="h-4 w-4" /> Export TXT
+              </Button>
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => {
+                  if (!draft) return alert("Enter a character name first.");
+                  exportCurrentCardJson(draft);
+                }}
+              >
+                <Download className="h-4 w-4" /> Export JSON
               </Button>
               <Button variant="primary" type="button" onClick={saveCharacter}>
                 <Plus className="h-4 w-4" /> Save
