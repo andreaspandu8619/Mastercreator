@@ -208,6 +208,15 @@ type CharacterCard = {
   updatedAt: string;
 };
 
+type CharacterCardExportPayload = {
+  format: "mastercreator_character_card";
+  version: 1;
+  exportedAt: string;
+  card: CharacterCard;
+  characters: Character[];
+  relationshipStory: StoryProject | null;
+};
+
 const STORAGE_KEY = "mastercreator_characters_v5";
 const IDB_NAME = "mastercreator_db";
 const IDB_STORE = "characters";
@@ -1084,6 +1093,11 @@ export default function CharacterCreatorApp() {
   }, [storywritingDragPreview]);
 
   const [introRevisionPrompt, setIntroRevisionPrompt] = useState("");
+  const [cardExportModalOpen, setCardExportModalOpen] = useState(false);
+  const [cardExportAsJson, setCardExportAsJson] = useState(true);
+  const [cardExportAsTxt, setCardExportAsTxt] = useState(true);
+  const [cardExportIncludeDefinition, setCardExportIncludeDefinition] = useState(true);
+  const [cardExportIncludeFirstMessage, setCardExportIncludeFirstMessage] = useState(true);
   const [relationshipDetailsPrompt, setRelationshipDetailsPrompt] = useState("");
   const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
   const [generatedTextStates, setGeneratedTextStates] = useState<Record<string, GeneratedTextState>>({});
@@ -1270,6 +1284,7 @@ ${base}`,
   const lorebookCoverFileRef = useRef<HTMLInputElement | null>(null);
   const factionImageFileRef = useRef<HTMLInputElement | null>(null);
   const sexualBehaviorImportRef = useRef<HTMLInputElement | null>(null);
+  const cardJsonImportRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (import.meta.env.MODE === "test") runTests();
@@ -4493,6 +4508,225 @@ ${feedback}`,
     downloadText(`${exportName}_intro_messages.txt`, text);
   }
 
+  function buildCurrentCardExportPayload(fallbackCharacter?: Character): CharacterCardExportPayload | null {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
+    if (!activeCard && !fallbackCharacter) return null;
+
+    const now = new Date().toISOString();
+    const fallbackId = fallbackCharacter?.id || uid();
+    const card: CharacterCard = activeCard
+      ? {
+          ...activeCard,
+          name: collapseWhitespace(characterCardNameInput) || activeCard.name || "Character Card",
+          systemRules: cardSystemRules,
+          selectedSystemRuleIds: cardSelectedSystemRuleIds,
+          firstMessageMessages: introMessages,
+          selectedFirstMessageIndex: introIndex,
+          firstMessageVersionHistories: introVersionHistories,
+          firstMessageVersionIndices: introVersionIndices,
+          updatedAt: now,
+        }
+      : {
+          id: uid(),
+          name: collapseWhitespace(characterCardNameInput) || fallbackCharacter?.name || "Character Card",
+          characterIds: [fallbackId],
+          systemRules: cardSystemRules,
+          selectedSystemRuleIds: cardSelectedSystemRuleIds,
+          firstMessageMessages: introMessages.length ? introMessages : [""],
+          selectedFirstMessageIndex: clampIndex(introIndex, Math.max(1, introMessages.length || 1)),
+          firstMessageVersionHistories: introVersionHistories.length ? introVersionHistories : [[""]],
+          firstMessageVersionIndices: introVersionIndices.length ? introVersionIndices : [0],
+          createdAt: now,
+          updatedAt: now,
+        };
+
+    const scopedCharacters = card.characterIds
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c);
+
+    if (!scopedCharacters.length && fallbackCharacter) scopedCharacters.push(fallbackCharacter);
+
+    const relationshipStory = card.relationshipStoryId
+      ? stories.find((s) => s.id === card.relationshipStoryId) || null
+      : null;
+
+    return {
+      format: "mastercreator_character_card",
+      version: 1,
+      exportedAt: now,
+      card,
+      characters: scopedCharacters,
+      relationshipStory,
+    };
+  }
+
+  function exportCurrentCardSelection(fallbackCharacter?: Character) {
+    const payload = buildCurrentCardExportPayload(fallbackCharacter);
+    if (!payload) {
+      alert("Please add a character card or character entry before exporting.");
+      return;
+    }
+
+    if (!cardExportAsJson && !cardExportAsTxt) {
+      alert("Select at least one format: JSON and/or TXT.");
+      return;
+    }
+
+    if (!cardExportIncludeDefinition && !cardExportIncludeFirstMessage) {
+      alert("Select at least one section: Definition and/or First Message.");
+      return;
+    }
+
+    const exportName = filenameSafe(payload.card.name || "character_card") || "character_card";
+
+    if (cardExportAsJson) {
+      downloadJSON(`${exportName}.json`, payload);
+    }
+
+    if (cardExportAsTxt) {
+      if (cardExportIncludeDefinition) exportCurrentCardInfoTxt(fallbackCharacter);
+      if (cardExportIncludeFirstMessage) exportCurrentCardIntroTxt(fallbackCharacter);
+    }
+
+    setCardExportModalOpen(false);
+  }
+
+  async function importCharacterCardFromJSON(file: File) {
+    try {
+      const raw = await file.text();
+      const parsed = safeParseJSON(raw);
+      if (!parsed || typeof parsed !== "object") throw new Error("Invalid JSON payload.");
+
+      const payload = parsed as Partial<CharacterCardExportPayload>;
+      if (payload.format !== "mastercreator_character_card") {
+        throw new Error("Unsupported file type. Please import a Mastercreator character card JSON export.");
+      }
+
+      const importedCharacters = Array.isArray(payload.characters)
+        ? payload.characters.map(normalizeCharacter).filter((x): x is Character => !!x)
+        : [];
+      if (!importedCharacters.length) throw new Error("No valid character entries were found in this file.");
+
+      const cardRaw = payload.card as any;
+      if (!cardRaw || typeof cardRaw !== "object") throw new Error("Character card data is missing.");
+
+      const now = new Date().toISOString();
+      const normalizedCard: CharacterCard = {
+        id: typeof cardRaw.id === "string" ? cardRaw.id : uid(),
+        name: collapseWhitespace(cardRaw.name || "Character Card"),
+        characterIds: normalizeStringArray(cardRaw.characterIds),
+        relationshipStoryId: typeof cardRaw.relationshipStoryId === "string" ? cardRaw.relationshipStoryId : undefined,
+        systemRules: typeof cardRaw.systemRules === "string" ? cardRaw.systemRules : "",
+        selectedSystemRuleIds: normalizeStringArray(cardRaw.selectedSystemRuleIds),
+        firstMessageMessages: normalizeTextArray(cardRaw.firstMessageMessages).length ? normalizeTextArray(cardRaw.firstMessageMessages) : [""],
+        selectedFirstMessageIndex: Number.isFinite(Number(cardRaw.selectedFirstMessageIndex)) ? Math.max(0, Number(cardRaw.selectedFirstMessageIndex)) : 0,
+        firstMessageVersionHistories: normalizeTextMatrix(cardRaw.firstMessageVersionHistories),
+        firstMessageVersionIndices: Array.isArray(cardRaw.firstMessageVersionIndices)
+          ? cardRaw.firstMessageVersionIndices.map((x: any) => (Number.isFinite(Number(x)) ? Math.max(0, Number(x)) : 0))
+          : [],
+        createdAt: typeof cardRaw.createdAt === "string" ? cardRaw.createdAt : now,
+        updatedAt: now,
+      };
+
+      const characterIds = importedCharacters.map((c) => c.id);
+      normalizedCard.characterIds = characterIds;
+
+      setCharacters((prev) => {
+        const map = new Map(prev.map((c) => [c.id, c] as const));
+        for (const c of importedCharacters) map.set(c.id, c);
+        return Array.from(map.values()).sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+      });
+
+      const relationshipStoryRaw = (payload as any).relationshipStory;
+      if (relationshipStoryRaw && typeof relationshipStoryRaw === "object") {
+        const storyId = typeof relationshipStoryRaw.id === "string" ? relationshipStoryRaw.id : uid();
+        const importedStory: StoryProject = {
+          id: storyId,
+          title: typeof relationshipStoryRaw.title === "string" ? relationshipStoryRaw.title : `${normalizedCard.name} Relationships`,
+          characterIds,
+          imageDataUrl: typeof relationshipStoryRaw.imageDataUrl === "string" ? relationshipStoryRaw.imageDataUrl : "",
+          scenario: typeof relationshipStoryRaw.scenario === "string" ? relationshipStoryRaw.scenario : "",
+          firstMessage: typeof relationshipStoryRaw.firstMessage === "string" ? relationshipStoryRaw.firstMessage : "",
+          firstMessageVersions: normalizeTextArray(relationshipStoryRaw.firstMessageVersions).length ? normalizeTextArray(relationshipStoryRaw.firstMessageVersions) : [""],
+          selectedFirstMessageIndex: Number.isFinite(Number(relationshipStoryRaw.selectedFirstMessageIndex)) ? Math.max(0, Number(relationshipStoryRaw.selectedFirstMessageIndex)) : 0,
+          firstMessageStyle: relationshipStoryRaw.firstMessageStyle === "dramatic" || relationshipStoryRaw.firstMessageStyle === "melancholic" ? relationshipStoryRaw.firstMessageStyle : "realistic",
+          systemRules: typeof relationshipStoryRaw.systemRules === "string" ? relationshipStoryRaw.systemRules : "",
+          selectedSystemRuleIds: normalizeStringArray(relationshipStoryRaw.selectedSystemRuleIds),
+          synopsis: typeof relationshipStoryRaw.synopsis === "string" ? relationshipStoryRaw.synopsis : "",
+          synopsisStyle: relationshipStoryRaw.synopsisStyle === "dramatic" || relationshipStoryRaw.synopsisStyle === "melancholic" ? relationshipStoryRaw.synopsisStyle : "realistic",
+          relationships: Array.isArray(relationshipStoryRaw.relationships)
+            ? relationshipStoryRaw.relationships
+                .filter((r: any) => r && typeof r === "object")
+                .map((r: any) => ({
+                  id: typeof r.id === "string" ? r.id : uid(),
+                  fromCharacterId: typeof r.fromCharacterId === "string" ? r.fromCharacterId : "",
+                  toCharacterId: typeof r.toCharacterId === "string" ? r.toCharacterId : "",
+                  alignment: typeof r.alignment === "string" ? r.alignment : "Neutral",
+                  relationType: typeof r.relationType === "string" ? r.relationType : "Platonic",
+                  details: typeof r.details === "string" ? r.details : "",
+                  createdAt: typeof r.createdAt === "string" ? r.createdAt : now,
+                }))
+                .filter((r: StoryRelationship) => r.fromCharacterId && r.toCharacterId)
+            : [],
+          boardNodes: Array.isArray(relationshipStoryRaw.boardNodes)
+            ? relationshipStoryRaw.boardNodes
+                .filter((n: any) => n && typeof n === "object")
+                .map((n: any) => ({
+                  characterId: typeof n.characterId === "string" ? n.characterId : "",
+                  x: Number.isFinite(Number(n.x)) ? Number(n.x) : 0,
+                  y: Number.isFinite(Number(n.y)) ? Number(n.y) : 0,
+                }))
+                .filter((n: StoryBoardNode) => !!n.characterId)
+            : [],
+          assignedLorebookIds: normalizeStringArray(relationshipStoryRaw.assignedLorebookIds),
+          createdAt: typeof relationshipStoryRaw.createdAt === "string" ? relationshipStoryRaw.createdAt : now,
+          updatedAt: now,
+        };
+
+        normalizedCard.relationshipStoryId = importedStory.id;
+        setStories((prev) => {
+          const idx = prev.findIndex((s) => s.id === importedStory.id);
+          if (idx < 0) return [importedStory, ...prev];
+          const next = [...prev];
+          next[idx] = importedStory;
+          return next;
+        });
+      }
+
+      setCharacterCards((prev) => {
+        const idx = prev.findIndex((c) => c.id === normalizedCard.id);
+        if (idx < 0) return [normalizedCard, ...prev];
+        const next = [...prev];
+        next[idx] = normalizedCard;
+        return next;
+      });
+
+      setActiveCharacterCardId(normalizedCard.id);
+      setCharacterCardNameInput(normalizedCard.name);
+      setCardSystemRules(normalizedCard.systemRules);
+      setCardSelectedSystemRuleIds(normalizedCard.selectedSystemRuleIds);
+      setIntroMessages(normalizedCard.firstMessageMessages);
+      setIntroIndex(clampIndex(normalizedCard.selectedFirstMessageIndex, normalizedCard.firstMessageMessages.length));
+      const introHistories = normalizeTextMatrix(normalizedCard.firstMessageVersionHistories).length
+        ? normalizeTextMatrix(normalizedCard.firstMessageVersionHistories)
+        : normalizedCard.firstMessageMessages.map((msg) => [msg || ""]);
+      setIntroVersionHistories(introHistories);
+      setIntroVersionIndices(
+        normalizedCard.firstMessageMessages.map((_, idx) => {
+          const history = introHistories[idx] || [""];
+          return clampIndex(normalizedCard.firstMessageVersionIndices[idx] || 0, history.length);
+        })
+      );
+
+      const firstCharacter = importedCharacters[0];
+      setSelectedId(firstCharacter.id);
+      loadCharacterIntoForm(firstCharacter);
+      alert(`Imported character card "${normalizedCard.name}" with ${importedCharacters.length} character entr${importedCharacters.length === 1 ? "y" : "ies"}.`);
+    } catch (e: any) {
+      alert(e?.message ? String(e.message) : "Failed to import character card JSON.");
+    }
+  }
+
 
   const draft = getDraftCharacter();
 
@@ -6096,11 +6330,11 @@ ${feedback}`,
                 <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
               ))}
               <div className="ml-auto flex flex-wrap gap-2">
-                <Button variant="secondary" type="button" onClick={() => exportCurrentCardInfoTxt(draft || undefined)}>
-                  <Download className="h-4 w-4" /> Export Info+System TXT
+                <Button variant="secondary" type="button" onClick={() => setCardExportModalOpen(true)}>
+                  <Download className="h-4 w-4" /> Export
                 </Button>
-                <Button variant="secondary" type="button" onClick={() => exportCurrentCardIntroTxt(draft || undefined)}>
-                  <Download className="h-4 w-4" /> Export Intro TXT
+                <Button variant="secondary" type="button" onClick={() => cardJsonImportRef.current?.click()}>
+                  <Upload className="h-4 w-4" /> Import
                 </Button>
               </div>
             </div>
@@ -6325,33 +6559,11 @@ ${feedback}`,
                 >
                   Preview
                 </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    exportCurrentCardInfoTxt(draft || undefined);
-                  }}
-                >
-                  <Download className="h-4 w-4" /> Export Info+System TXT
+                <Button variant="secondary" onClick={() => setCardExportModalOpen(true)}>
+                  <Download className="h-4 w-4" /> Export
                 </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    exportCurrentCardIntroTxt(draft || undefined);
-                  }}
-                >
-                  <Download className="h-4 w-4" /> Export Intro TXT
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    if (!draft) return alert("Please enter a character name before exporting.");
-                    downloadJSON(
-                      (filenameSafe(draft.name) || "character") + ".json",
-                      draft
-                    );
-                  }}
-                >
-                  <Download className="h-4 w-4" /> Export JSON
+                <Button variant="secondary" onClick={() => cardJsonImportRef.current?.click()}>
+                  <Upload className="h-4 w-4" /> Import
                 </Button>
                 <Button variant="primary" onClick={saveCharacter}>
                   <Plus className="h-4 w-4" /> {selectedId ? "Update" : "Save"}
@@ -6738,20 +6950,16 @@ ${feedback}`,
                         <Button
                           variant="secondary"
                           type="button"
-                          onClick={() => {
-                            exportCurrentCardInfoTxt(draft || undefined);
-                          }}
+                          onClick={() => setCardExportModalOpen(true)}
                         >
-                          <Download className="h-4 w-4" /> Export Info+System TXT
+                          <Download className="h-4 w-4" /> Export
                         </Button>
                         <Button
                           variant="secondary"
                           type="button"
-                          onClick={() => {
-                            exportCurrentCardIntroTxt(draft || undefined);
-                          }}
+                          onClick={() => cardJsonImportRef.current?.click()}
                         >
-                          <Download className="h-4 w-4" /> Export Intro TXT
+                          <Upload className="h-4 w-4" /> Import
                         </Button>
                       </div>
                       <div className="flex items-center justify-between gap-2">
@@ -6830,6 +7038,18 @@ ${feedback}`,
           </div>
         )}
 
+        <input
+          ref={cardJsonImportRef}
+          type="file"
+          accept="application/json"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) importCharacterCardFromJSON(f);
+            e.currentTarget.value = "";
+          }}
+        />
+
         <Modal
           open={isMobileViewport && createPreviewOpen}
           onClose={() => setCreatePreviewOpen(false)}
@@ -6870,26 +7090,40 @@ ${feedback}`,
             </div>
 
             <div className="flex flex-wrap justify-end gap-2">
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={() => {
-                  exportCurrentCardInfoTxt(draft || undefined);
-                }}
-              >
-                <Download className="h-4 w-4" /> Export Info+System TXT
+              <Button variant="secondary" type="button" onClick={() => setCardExportModalOpen(true)}>
+                <Download className="h-4 w-4" /> Export
               </Button>
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={() => {
-                  exportCurrentCardIntroTxt(draft || undefined);
-                }}
-              >
-                <Download className="h-4 w-4" /> Export Intro TXT
+              <Button variant="secondary" type="button" onClick={() => cardJsonImportRef.current?.click()}>
+                <Upload className="h-4 w-4" /> Import
               </Button>
               <Button variant="primary" type="button" onClick={saveCharacter}>
                 <Plus className="h-4 w-4" /> Save
+              </Button>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal open={cardExportModalOpen} onClose={() => setCardExportModalOpen(false)} title="Export Character Card" widthClass="max-w-md">
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={cardExportAsJson} onChange={(e) => setCardExportAsJson(e.target.checked)} /> JSON
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={cardExportAsTxt} onChange={(e) => setCardExportAsTxt(e.target.checked)} /> TXT
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={cardExportIncludeDefinition} onChange={(e) => setCardExportIncludeDefinition(e.target.checked)} /> Definition
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={cardExportIncludeFirstMessage} onChange={(e) => setCardExportIncludeFirstMessage(e.target.checked)} /> First Message
+              </label>
+            </div>
+            <div className="flex justify-end">
+              <Button variant="primary" type="button" onClick={() => exportCurrentCardSelection(draft || undefined)}>
+                <Download className="h-4 w-4" /> Export
               </Button>
             </div>
           </div>
