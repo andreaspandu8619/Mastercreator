@@ -202,6 +202,8 @@ type CharacterCard = {
   selectedSystemRuleIds: string[];
   firstMessageMessages: string[];
   selectedFirstMessageIndex: number;
+  firstMessageVersionHistories: string[][];
+  firstMessageVersionIndices: number[];
   createdAt: string;
   updatedAt: string;
 };
@@ -340,6 +342,27 @@ function normalizeStringArray(v: any): string[] {
     return s ? [s] : [];
   }
   return [];
+}
+
+function normalizeTextArray(v: any): string[] {
+  if (Array.isArray(v)) {
+    return v
+      .map((x) => (typeof x === "string" ? x : x == null ? "" : String(x)))
+      .map((x) => x.replace(/\r\n/g, "\n"))
+      .filter((x) => x.length > 0);
+  }
+  if (typeof v === "string") {
+    return [v.replace(/\r\n/g, "\n")];
+  }
+  return [];
+}
+
+function normalizeTextMatrix(v: any): string[][] {
+  if (!Array.isArray(v)) return [];
+  return v.map((entry) => {
+    const normalized = normalizeTextArray(entry);
+    return normalized.length ? normalized : [""];
+  });
 }
 
 function normalizeGender(v: any): Gender {
@@ -521,36 +544,43 @@ async function idbDeleteCharacter(id: string): Promise<void> {
 }
 
 
-function xmlEscape(input: string) {
-  return String(input || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-function characterToTxt(c: Character) {
+function characterToTxt(c: Character, options?: { includeIntro?: boolean }) {
   const selectedBackstory = (c.backstory || []).length
     ? (c.backstory || [])[Math.max(0, Math.min((c.backstory || []).length - 1, (c as any).selectedBackstoryIndex || 0))] || ""
     : "";
+  const selectedIntro = (c.introMessages || []).length
+    ? (c.introMessages || [])[Math.max(0, Math.min((c.introMessages || []).length - 1, c.selectedIntroIndex || 0))] || ""
+    : "";
+  const includeIntro = options?.includeIntro ?? true;
 
-  return [
-    `  <character id="${xmlEscape(c.id || "")}">`,
-    `    <name>${xmlEscape(c.name || "")}</name>`,
-    `    <gender>${xmlEscape(c.gender || "")}</gender>`,
-    `    <age>${xmlEscape(c.age === "" ? "" : String(c.age))}</age>`,
-    `    <height>${xmlEscape(c.height || "")}</height>`,
-    `    <origin>${xmlEscape(c.origins || "")}</origin>`,
-    `    <race>${xmlEscape(c.race || "")}</race>`,
-    `    <personality>${xmlEscape((c.personalities || []).join(", "))}</personality>`,
-    `    <physical_appearance>${xmlEscape((c.physicalAppearance || []).join(", "))}</physical_appearance>`,
-    `    <unique_traits>${xmlEscape((c.uniqueTraits || []).join(", "))}</unique_traits>`,
-    `    <behavior>${xmlEscape([...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", "))}</behavior>`,
-    `    <speech_patterns>${xmlEscape((c.speechPatterns || []).join(", "))}</speech_patterns>`,
-    `    <backstory>${xmlEscape(selectedBackstory)}</backstory>`,
-    `  </character>`,
-  ].join("\n");
+  const lines = [
+    `### Character: ${collapseWhitespace(c.name) || "(Unnamed)"}`,
+    `ID: ${c.id || "-"}`,
+    `Gender: ${c.gender || "-"}`,
+    `Age: ${c.age === "" ? "-" : String(c.age)}`,
+    `Height: ${collapseWhitespace(c.height) || "-"}`,
+    `Origin: ${collapseWhitespace(c.origins) || "-"}`,
+    `Race: ${collapseWhitespace(c.race) || "-"}`,
+    `Personality: ${(c.personalities || []).length ? (c.personalities || []).join(", ") : "-"}`,
+    `Physical Appearance: ${(c.physicalAppearance || []).length ? (c.physicalAppearance || []).join(", ") : "-"}`,
+    `Unique Traits: ${(c.uniqueTraits || []).length ? (c.uniqueTraits || []).join(", ") : "-"}`,
+    `Behavior: ${([...(c.respondToProblems || []), ...(c.sexualBehavior || [])].length) ? [...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", ") : "-"}`,
+    `Speech Patterns: ${(c.speechPatterns || []).length ? (c.speechPatterns || []).join(", ") : "-"}`,
+    "",
+    "Backstory:",
+    selectedBackstory || "-",
+  ];
+
+  if (includeIntro) {
+    lines.push(
+      "",
+      `* Intro ${Math.max(0, Math.min((c.introMessages || []).length - 1, c.selectedIntroIndex || 0)) + 1}:`,
+      selectedIntro || "-"
+    );
+  }
+
+  lines.push("", "***");
+  return lines.join("\n");
 }
 
 function normalizeCharacter(x: any): Character | null {
@@ -560,9 +590,9 @@ function normalizeCharacter(x: any): Character | null {
   const now = new Date().toISOString();
 
   const introMessages = (() => {
-    const arr = normalizeStringArray(x.introMessages);
+    const arr = normalizeTextArray(x.introMessages);
     if (arr.length) return arr;
-    const legacy = collapseWhitespace(x.introMessage);
+    const legacy = typeof x.introMessage === "string" ? x.introMessage.replace(/\r\n/g, "\n") : "";
     return legacy ? [legacy] : [""];
   })();
 
@@ -602,7 +632,7 @@ function normalizeCharacter(x: any): Character | null {
     respondToProblems: normalizeStringArray(x.respondToProblems),
     sexualBehavior: normalizeStringArray(x.sexualBehavior),
     speechPatterns: normalizeStringArray((x as any).speechPatterns),
-    backstory: normalizeStringArray(x.backstory),
+    backstory: normalizeTextArray(x.backstory),
     selectedBackstoryIndex: Number.isFinite(Number(x.selectedBackstoryIndex)) ? Math.max(0, Number(x.selectedBackstoryIndex)) : 0,
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
     selectedSystemRuleIds: normalizeStringArray(x.selectedSystemRuleIds),
@@ -816,7 +846,7 @@ function runTests() {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
-  if (!t.includes("# A")) throw new Error("TXT export header missing");
+  if (!t.includes("### Character: A")) throw new Error("TXT export header missing");
   if (!t.includes("Personality: Brave")) throw new Error("TXT export personality missing");
   if (!t.includes("* Intro 2:")) throw new Error("TXT export selected intro marker missing");
 }
@@ -1116,6 +1146,30 @@ export default function CharacterCreatorApp() {
     onCommit(text);
   }
 
+  async function continueGeneratedText(fieldKey: string, currentText: string, onCommit: (next: string) => void) {
+    const base = String(currentText || "");
+    if (!collapseWhitespace(base) || genLoading) return;
+    setGenError(null);
+    setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
+    try {
+      const out = await callProxyChatCompletion({
+        system: "Continue the provided text from exactly where it stops. Keep the same tone, perspective, and formatting. Return only the continuation text.",
+        user: `Continue this text:
+
+${base}`,
+        maxTokens: proxyMaxTokens,
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, `${base}${partial}`, onCommit),
+      });
+      commitGeneratedText(fieldKey, `${base}${out}`, onCommit, true);
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Continue generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
   function renderGeneratedTextarea(args: {
     fieldKey: string;
     value: string;
@@ -1136,7 +1190,7 @@ export default function CharacterCreatorApp() {
     return (
       <div className="space-y-2">
         {pages.length > 0 ? (
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="secondary"
               type="button"
@@ -1162,8 +1216,29 @@ export default function CharacterCreatorApp() {
             >
               Roll forward <ChevronRight className="h-4 w-4" />
             </Button>
+            <Button
+              variant="secondary"
+              type="button"
+              disabled={genLoading || !collapseWhitespace(effectiveValue)}
+              className="ml-auto border-[hsl(var(--hover-accent))] text-[hsl(var(--hover-accent))]"
+              onClick={() => continueGeneratedText(args.fieldKey, effectiveValue, args.onChange)}
+            >
+              Continue <ChevronRight className="h-5 w-5" />
+            </Button>
           </div>
-        ) : null}
+        ) : (
+          <div className="flex justify-end">
+            <Button
+              variant="secondary"
+              type="button"
+              disabled={genLoading || !collapseWhitespace(effectiveValue)}
+              className="border-[hsl(var(--hover-accent))] text-[hsl(var(--hover-accent))]"
+              onClick={() => continueGeneratedText(args.fieldKey, effectiveValue, args.onChange)}
+            >
+              Continue <ChevronRight className="h-5 w-5" />
+            </Button>
+          </div>
+        )}
         <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
           <input
             type="checkbox"
@@ -1425,8 +1500,12 @@ export default function CharacterCreatorApp() {
             relationshipStoryId: typeof card.relationshipStoryId === "string" ? card.relationshipStoryId : undefined,
             systemRules: typeof card.systemRules === "string" ? card.systemRules : "",
             selectedSystemRuleIds: normalizeStringArray(card.selectedSystemRuleIds),
-            firstMessageMessages: normalizeStringArray(card.firstMessageMessages).length ? normalizeStringArray(card.firstMessageMessages) : [""],
+            firstMessageMessages: normalizeTextArray(card.firstMessageMessages).length ? normalizeTextArray(card.firstMessageMessages) : [""],
             selectedFirstMessageIndex: Number.isFinite(Number(card.selectedFirstMessageIndex)) ? Math.max(0, Number(card.selectedFirstMessageIndex)) : 0,
+            firstMessageVersionHistories: normalizeTextMatrix(card.firstMessageVersionHistories),
+            firstMessageVersionIndices: Array.isArray(card.firstMessageVersionIndices)
+              ? card.firstMessageVersionIndices.map((x: any) => (Number.isFinite(Number(x)) ? Math.max(0, Number(x)) : 0))
+              : [],
             createdAt: typeof card.createdAt === "string" ? card.createdAt : now,
             updatedAt: typeof card.updatedAt === "string" ? card.updatedAt : now,
           } as CharacterCard;
@@ -1442,10 +1521,12 @@ export default function CharacterCreatorApp() {
 
     (async () => {
       try {
-        const fromIdb = await idbGetAllCharacters();
+        const fromIdbRaw = await idbGetAllCharacters();
+        const fromIdb = fromIdbRaw.map(normalizeCharacter).filter(Boolean) as Character[];
         const raw = localStorage.getItem(STORAGE_KEY);
-        const fromLocal = raw && Array.isArray(safeParseJSON(raw))
-          ? (safeParseJSON(raw) as any[]).map(normalizeCharacter).filter(Boolean) as Character[]
+        const parsedLocal = raw ? safeParseJSON(raw) : null;
+        const fromLocal = Array.isArray(parsedLocal)
+          ? parsedLocal.map(normalizeCharacter).filter(Boolean) as Character[]
           : [];
 
         const mergedById = new Map<string, Character>();
@@ -1455,7 +1536,7 @@ export default function CharacterCreatorApp() {
             mergedById.set(ch.id, ch);
           }
         }
-        const merged = Array.from(mergedById.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        const merged = Array.from(mergedById.values()).sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
         if (merged.length) {
           setCharacters(merged);
           try {
@@ -1574,10 +1655,21 @@ export default function CharacterCreatorApp() {
     setCardSystemRules(card.systemRules || "");
     setCardSelectedSystemRuleIds(card.selectedSystemRuleIds || []);
     const msgs = card.firstMessageMessages?.length ? [...card.firstMessageMessages] : [""];
+    const historiesBase = normalizeTextMatrix(card.firstMessageVersionHistories);
+    const histories = msgs.map((msg, idx) => {
+      const existing = historiesBase[idx];
+      if (!existing || !existing.length) return [msg || ""];
+      return existing;
+    });
+    const indices = msgs.map((_, idx) => {
+      const history = histories[idx] || [""];
+      const raw = card.firstMessageVersionIndices?.[idx] ?? 0;
+      return clampIndex(raw, history.length);
+    });
     setIntroMessages(msgs);
     setIntroIndex(clampIndex(card.selectedFirstMessageIndex || 0, msgs.length));
-    setIntroVersionHistories(msgs.map((m) => [m || ""]));
-    setIntroVersionIndices(msgs.map(() => 0));
+    setIntroVersionHistories(histories);
+    setIntroVersionIndices(indices);
   }, [activeCharacterCardId]);
 
   useEffect(() => {
@@ -1588,15 +1680,17 @@ export default function CharacterCreatorApp() {
       selectedSystemRuleIds: cardSelectedSystemRuleIds,
       firstMessageMessages: introMessages,
       selectedFirstMessageIndex: introIndex,
+      firstMessageVersionHistories: introVersionHistories,
+      firstMessageVersionIndices: introVersionIndices,
       updatedAt: new Date().toISOString(),
     }));
-  }, [hydrated, activeCharacterCardId, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex]);
+  }, [hydrated, activeCharacterCardId, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex, introVersionHistories, introVersionIndices]);
 
   useEffect(() => {
     if (!hydrated) return;
     if (!characterCards.length) {
       const now = new Date().toISOString();
-      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
+      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, firstMessageVersionHistories: [[""]], firstMessageVersionIndices: [0], createdAt: now, updatedAt: now };
       setCharacterCards([card]);
       setActiveCharacterCardId(card.id);
       setCharacterCardNameInput(card.name);
@@ -2096,7 +2190,33 @@ export default function CharacterCreatorApp() {
     setProblemBehavior(Array.isArray(c.respondToProblems) ? [...c.respondToProblems] : []);
     setSexualBehavior(Array.isArray(c.sexualBehavior) ? [...c.sexualBehavior] : []);
     setSpeechPatterns(Array.isArray(c.speechPatterns) ? [...c.speechPatterns] : []);
-    setBackstory(Array.isArray(c.backstory) ? [...c.backstory] : []);
+    const loadedBackstory = Array.isArray(c.backstory) ? [...c.backstory] : [];
+    const loadedBackstoryIndex = loadedBackstory.length
+      ? clampIndex(c.selectedBackstoryIndex ?? loadedBackstory.length - 1, loadedBackstory.length)
+      : 0;
+    const loadedBackstoryText = loadedBackstory[loadedBackstoryIndex] || "";
+    setBackstory(loadedBackstory);
+    setBackstoryText(loadedBackstoryText);
+    setGeneratedTextStates((prev) => {
+      const next = { ...prev };
+      if (loadedBackstory.length) {
+        next["character:backstory"] = {
+          pages: loadedBackstory.map((text, idx) => ({
+            id: `character-backstory:${c.id}:${idx}`,
+            text,
+            isFinal: true,
+          })),
+          activeIndex: loadedBackstoryIndex,
+        };
+      } else {
+        delete next["character:backstory"];
+      }
+      return next;
+    });
+    setIterationSelections((prev) => ({
+      ...prev,
+      "character:backstory": loadedBackstory.length ? `character-backstory:${c.id}:${loadedBackstoryIndex}` : "",
+    }));
     setTraitInput("");
     setAppearanceInput("");
     setSexualBehaviorInput("");
@@ -3215,6 +3335,23 @@ Write the character's next reply to the latest user message.`;
       .join("\n\n");
   }
 
+  function getPromptFocusContext(prompt: string) {
+    const chars = getActiveCardCharacters();
+    const lowerPrompt = collapseWhitespace(prompt).toLowerCase();
+    const focused = chars.filter((c) => {
+      const n = collapseWhitespace(c.name).toLowerCase();
+      return !!n && lowerPrompt.includes(n);
+    });
+    if (!focused.length) {
+      return "No specific character explicitly mentioned in prompt. Keep balanced focus across ALL character entries in this card.";
+    }
+    return [
+      `Prompt-mentioned focus characters (${focused.length}):`,
+      ...focused.map((c) => `- ${collapseWhitespace(c.name) || "(unnamed)"}`),
+      "Prioritize these characters while still preserving context of all entries in this card.",
+    ].join("\n");
+  }
+
   function getCharacterSummaryForLLM() {
     return [
       `Name: ${collapseWhitespace(name) || "(unnamed)"}`,
@@ -3647,6 +3784,24 @@ ${more}`.trim();
     return clean;
   }
 
+  function beginIntroRevisionIteration(targetIndex: number, seedText: string) {
+    setIntroVersionHistories((prev) => {
+      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      while (base.length <= targetIndex) base.push([""]);
+      const history = [...base[targetIndex]];
+      if (!history.length || history[history.length - 1] !== seedText) history.push(seedText);
+      history.push("");
+      base[targetIndex] = history;
+      setIntroVersionIndices((old) => {
+        const next = old.length ? [...old] : [0];
+        while (next.length <= targetIndex) next.push(0);
+        next[targetIndex] = history.length - 1;
+        return next;
+      });
+      return base;
+    });
+  }
+
   async function generateSelectedIntro() {
     setGenError(null);
     const userPrompt = collapseWhitespace(introPrompt);
@@ -3656,9 +3811,24 @@ ${more}`.trim();
     }
 
     const system =
-      "You write an INTRO MESSAGE for a roleplay character. Write a compelling opening message that starts the roleplay immediately. Keep it in-character, vivid, and usable as the first message. Do not add explanations or meta commentary.";
+      "You write ONE shared FIRST MESSAGE for a character card that can contain multiple character entries. Follow the user prompt exactly. Use the whole card context. If the user prompt explicitly mentions one or more characters, make those the focus while retaining continuity with the rest of the card cast. Write only the first message content, no meta commentary. Internal format rule: narration/action text must be wrapped in *asterisks* and spoken dialogue must be in double quotes.";
 
-    const user = `Character info:\n${getCharacterSummaryForLLM()}\n\nUser prompt:\n${userPrompt}\n\nReturn ONLY the intro message text.`;
+    const user = `User prompt (highest priority):
+${userPrompt}
+
+Prompt focus analysis:
+${getPromptFocusContext(userPrompt)}
+
+Current selected character entry (supporting details only):
+${getCharacterSummaryForLLM()}
+
+All character entries in THIS SAME card (required global context):
+${getActiveCardCharactersContext()}
+
+Card system rules:
+${cardSystemRules || "(none)"}
+
+Return ONLY the first message text.`;
 
     const targetIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
     const existing = introMessages[targetIndex] || "";
@@ -3669,20 +3839,7 @@ ${more}`.trim();
       if (!ok) return;
     }
 
-    const baseline = existing;
-    setIntroVersionHistories((prev) => {
-      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
-      while (base.length <= targetIndex) base.push([""]);
-      const history = base[targetIndex];
-      history.push(baseline);
-      return base;
-    });
-    setIntroVersionIndices((prev) => {
-      const base = prev.length ? [...prev] : [0];
-      while (base.length <= targetIndex) base.push(0);
-      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
-      return base;
-    });
+    beginIntroRevisionIteration(targetIndex, existing || "");
     setGenLoading(true);
     try {
       const text = await callProxyChatCompletion({
@@ -3776,36 +3933,30 @@ ${more}`.trim();
     }
 
     const system =
-      "You revise exactly ONE roleplay intro message based on feedback. Only use overview/system context and the provided current intro. Do not use other intros. Keep it in-character and ready to use. Return ONLY the revised intro text.";
+      "You revise ONE shared first message for a character card. Follow user feedback exactly, preserve immediate continuity from the current message text, and keep the whole card cast context. If feedback mentions specific characters, prioritize them while retaining card-wide coherence. Return ONLY the revised first message text. Internal format rule: narration/action text must be wrapped in *asterisks* and spoken dialogue must be in double quotes.";
 
-    const user = `Overview and system context:
+    const user = `Revision feedback (highest priority):
+${feedback}
+
+Prompt focus analysis:
+${getPromptFocusContext(feedback)}
+
+Current first message (continue/refine this text):
+${currentIntro}
+
+Current selected character entry (supporting details only):
+${getCharacterSummaryForLLM()}
+
+All character entries in THIS SAME card (required global context):
 ${getActiveCardCharactersContext()}
 
 Card system rules:
 ${cardSystemRules || "(none)"}
 
-Current intro message (only this one should be revised):
-${currentIntro}
-
-User revision feedback:
-${feedback}
-
-Return only the revised intro message.`;
+Return only the revised first message.`;
 
     const targetIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
-    setIntroVersionHistories((prev) => {
-      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
-      while (base.length <= targetIndex) base.push([""]);
-      const history = base[targetIndex];
-      history.push(currentIntro);
-      return base;
-    });
-    setIntroVersionIndices((prev) => {
-      const base = prev.length ? [...prev] : [0];
-      while (base.length <= targetIndex) base.push(0);
-      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
-      return base;
-    });
+    beginIntroRevisionIteration(targetIndex, currentIntro);
     setGenLoading(true);
     try {
       const text = await callProxyChatCompletion({
@@ -4274,7 +4425,7 @@ ${feedback}`,
   }
 
 
-  function exportCurrentCardTxt(fallbackCharacter?: Character) {
+  function exportCurrentCardInfoTxt(fallbackCharacter?: Character) {
     const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
     const cardChars = activeCard
       ? (activeCard.characterIds || []).map((id) => characters.find((c) => c.id === id)).filter((c): c is Character => !!c)
@@ -4287,36 +4438,64 @@ ${feedback}`,
     const relationships = (cardStory?.relationships || []).map((r) => {
       const from = cardChars.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
       const to = cardChars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
-      return `    <relationship from="${xmlEscape(from)}" to="${xmlEscape(to)}" alignment="${xmlEscape(r.alignment)}" type="${xmlEscape(r.relationType)}">${xmlEscape(r.details || "")}</relationship>`;
+      return `- ${from} -> ${to} | Alignment: ${r.alignment || "-"} | Type: ${r.relationType || "-"}${r.details ? ` | Details: ${r.details}` : ""}`;
     });
 
     const selectedRuleTexts = STORY_SYSTEM_RULE_CARDS
       .filter((r) => cardSelectedSystemRuleIds.includes(r.id))
-      .map((r) => r.text);
+      .map((r) => `${r.label}: ${r.text}`);
 
-    const xml = [
-      `<character_card name="${xmlEscape(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card")}">`,
-      `  <individual_character_info>`,
-      ...(cardChars.length ? cardChars.map((c) => characterToTxt(c)) : ["    <character />"]),
-      `  </individual_character_info>`,
-      `  <relationships>`,
-      ...(relationships.length ? relationships : ["    <relationship />"]),
-      `  </relationships>`,
-      `  <system_rules>`,
-      `    <selected_rule_cards>${xmlEscape(selectedRuleTexts.join(" | "))}</selected_rule_cards>`,
-      `    <custom_rules>${xmlEscape(cardSystemRules || "")}</custom_rules>`,
-      `  </system_rules>`,
-      `</character_card>`,
+    const text = [
+      `### Character Card: ${collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card"}`,
+      "",
+      "***",
+      "",
+      "### Individual Character Info",
+      "",
+      ...(cardChars.length ? cardChars.flatMap((c) => [characterToTxt(c, { includeIntro: false }), ""]) : ["- No characters in this card.", ""]),
+      "### Relationships",
+      ...(relationships.length ? relationships : ["- None"]),
+      "",
+      "### System Rules",
+      "",
+      "Selected Rule Cards:",
+      ...(selectedRuleTexts.length ? selectedRuleTexts.map((rule) => `- ${rule}`) : ["- None"]),
+      "",
+      "Custom Rules:",
+      cardSystemRules || "-",
       "",
     ].join("\n");
 
     const exportName = filenameSafe(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "character_card") || "character_card";
-    downloadText(`${exportName}.txt`, xml);
+    downloadText(`${exportName}_info_system.txt`, text);
+  }
+
+  function exportCurrentCardIntroTxt(fallbackCharacter?: Character) {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
+    const selectedMsgIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
+    const selectedHistory = introVersionHistories[selectedMsgIndex] || [introMessages[selectedMsgIndex] || ""];
+    const selectedVersionIndex = clampIndex(introVersionIndices[selectedMsgIndex] || 0, Math.max(1, selectedHistory.length));
+    const selectedIntro = selectedHistory[selectedVersionIndex] || introMessages[selectedMsgIndex] || "";
+    const text = [
+      `### Character Card Intro: ${collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card"}`,
+      "",
+      "***",
+      "",
+      "### Intro Message",
+      `Message Index: ${selectedMsgIndex + 1}`,
+      `Version: ${selectedVersionIndex + 1} / ${Math.max(1, selectedHistory.length)}`,
+      "",
+      "Content:",
+      selectedIntro || "-",
+      "",
+    ].join("\n");
+    const exportName = filenameSafe(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "character_card") || "character_card";
+    downloadText(`${exportName}_intro_messages.txt`, text);
   }
 
 
-
   const draft = getDraftCharacter();
+
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
     { id: "definition", label: "Characters" },
@@ -5875,7 +6054,7 @@ ${feedback}`,
               <div className="text-xl font-semibold">Character Dashboard</div>
               <Button variant="primary" onClick={() => {
                 const now = new Date().toISOString();
-                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
+                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, firstMessageVersionHistories: [[""]], firstMessageVersionIndices: [0], createdAt: now, updatedAt: now };
                 setCharacterCards((prev) => [newCard, ...prev]);
                 setActiveCharacterCardId(newCard.id);
                 setCharacterCardNameInput(newCard.name);
@@ -5912,10 +6091,18 @@ ${feedback}`,
           </div>
         ) : page === "create" ? (
           <div className="anim-page mt-6 space-y-3">
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {tabs.map((t) => (
                 <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
               ))}
+              <div className="ml-auto flex flex-wrap gap-2">
+                <Button variant="secondary" type="button" onClick={() => exportCurrentCardInfoTxt(draft || undefined)}>
+                  <Download className="h-4 w-4" /> Export Info+System TXT
+                </Button>
+                <Button variant="secondary" type="button" onClick={() => exportCurrentCardIntroTxt(draft || undefined)}>
+                  <Download className="h-4 w-4" /> Export Intro TXT
+                </Button>
+              </div>
             </div>
 
             {tab === "relationships" ? (
@@ -5997,7 +6184,121 @@ ${feedback}`,
                   ) : null}
 
                   {tab === "intro" ? (
-                    <div className="space-y-3"><div className="flex items-center justify-between"><div className="text-sm">Message {introIndex + 1} / {Math.max(1, introMessages.length)}</div><Button variant="secondary" onClick={() => { setIntroMessages((prev)=>[...prev, ""]); setIntroVersionHistories((prev)=>[...prev,[""]]); setIntroVersionIndices((prev)=>[...prev,0]); setIntroIndex(introMessages.length); }}><Plus className="h-4 w-4" /> New</Button></div><div className="flex items-center justify-between gap-2"><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.max(0,i-1))} disabled={introIndex<=0}><ChevronLeft className="h-4 w-4" /> Prev</Button><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.min(introMessages.length-1,i+1))} disabled={introIndex>=introMessages.length-1}>Next <ChevronRight className="h-4 w-4" /></Button></div><Textarea value={introMessages[clampIndex(introIndex, Math.max(1,introMessages.length))] || ""} onChange={(e) => { const v=e.target.value; setIntroMessages((prev)=>{const b=[...prev]; b[clampIndex(introIndex,b.length)] = v; return b;}); setIntroVersionHistories((prev)=>{const base = prev.length ? prev.map((h)=> (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]]; const i = clampIndex(introIndex, Math.max(1, base.length)); while (base.length <= i) base.push([""]); const history = base[i]; const vi = clampIndex(introVersionIndices[i] || 0, history.length); history[vi] = v; return base;}); }} rows={9} placeholder="Write first message..." /><Textarea value={introPrompt} onChange={(e)=>setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" /><div className="flex gap-2"><Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div><Textarea value={introRevisionPrompt} onChange={(e)=>setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" /></div>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm">Message {introIndex + 1} / {Math.max(1, introMessages.length)}</div>
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setIntroMessages((prev) => [...prev, ""]);
+                            setIntroVersionHistories((prev) => [...prev, [""]]);
+                            setIntroVersionIndices((prev) => [...prev, 0]);
+                            setIntroIndex(introMessages.length);
+                          }}
+                        >
+                          <Plus className="h-4 w-4" /> New message
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={() => setIntroIndex((i) => Math.max(0, i - 1))}
+                          disabled={introIndex <= 0}
+                        >
+                          <ChevronLeft className="h-4 w-4" /> Prev message
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => setIntroIndex((i) => Math.min(introMessages.length - 1, i + 1))}
+                          disabled={introIndex >= introMessages.length - 1}
+                        >
+                          Next message <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            const i = clampIndex(introIndex, Math.max(1, introMessages.length));
+                            const history = introVersionHistories[i] || [introMessages[i] || ""];
+                            const current = clampIndex(introVersionIndices[i] || 0, history.length);
+                            const nextIdx = Math.max(0, current - 1);
+                            setIntroVersionIndices((prev) => {
+                              const base = prev.length ? [...prev] : [0];
+                              while (base.length <= i) base.push(0);
+                              base[i] = nextIdx;
+                              return base;
+                            });
+                            setIntroMessages((prev) => {
+                              const base = prev.length ? [...prev] : [""];
+                              base[i] = history[nextIdx] || "";
+                              return base;
+                            });
+                          }}
+                          disabled={(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) <= 0}
+                        >
+                          <ChevronLeft className="h-4 w-4" /> Prev iteration
+                        </Button>
+                        <div className="text-sm text-[hsl(var(--muted-foreground))]">
+                          Iteration {(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) + 1} / {Math.max(1, introVersionHistories[clampIndex(introIndex, Math.max(1, introMessages.length))]?.length || 1)}
+                        </div>
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            const i = clampIndex(introIndex, Math.max(1, introMessages.length));
+                            const history = introVersionHistories[i] || [introMessages[i] || ""];
+                            const current = clampIndex(introVersionIndices[i] || 0, history.length);
+                            const nextIdx = Math.min(history.length - 1, current + 1);
+                            setIntroVersionIndices((prev) => {
+                              const base = prev.length ? [...prev] : [0];
+                              while (base.length <= i) base.push(0);
+                              base[i] = nextIdx;
+                              return base;
+                            });
+                            setIntroMessages((prev) => {
+                              const base = prev.length ? [...prev] : [""];
+                              base[i] = history[nextIdx] || "";
+                              return base;
+                            });
+                          }}
+                          disabled={(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) >= Math.max(1, introVersionHistories[clampIndex(introIndex, Math.max(1, introMessages.length))]?.length || 1) - 1}
+                        >
+                          Next iteration <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      <Textarea
+                        value={introMessages[clampIndex(introIndex, Math.max(1, introMessages.length))] || ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setIntroMessages((prev) => {
+                            const b = [...prev];
+                            b[clampIndex(introIndex, b.length)] = v;
+                            return b;
+                          });
+                          setIntroVersionHistories((prev) => {
+                            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+                            const i = clampIndex(introIndex, Math.max(1, base.length));
+                            while (base.length <= i) base.push([""]);
+                            const history = base[i];
+                            const vi = clampIndex(introVersionIndices[i] || 0, history.length);
+                            history[vi] = v;
+                            return base;
+                          });
+                        }}
+                        rows={9}
+                        placeholder="Write first message..."
+                      />
+
+                      <Textarea value={introPrompt} onChange={(e) => setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" />
+                      <div className="flex gap-2">
+                        <Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button>
+                        <Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button>
+                      </div>
+                      <Textarea value={introRevisionPrompt} onChange={(e) => setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" />
+                    </div>
                   ) : null}
 
                   {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
@@ -6027,11 +6328,18 @@ ${feedback}`,
                 <Button
                   variant="secondary"
                   onClick={() => {
-                    if (!draft) return alert("Please enter a character name before exporting.");
-                    exportCurrentCardTxt(draft);
+                    exportCurrentCardInfoTxt(draft || undefined);
                   }}
                 >
-                  <Download className="h-4 w-4" /> Export TXT
+                  <Download className="h-4 w-4" /> Export Info+System TXT
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    exportCurrentCardIntroTxt(draft || undefined);
+                  }}
+                >
+                  <Download className="h-4 w-4" /> Export Intro TXT
                 </Button>
                 <Button
                   variant="secondary"
@@ -6213,10 +6521,9 @@ ${feedback}`,
                           variant="secondary"
                           type="button"
                           onClick={() =>
-                            setIntroIndex((i) =>
-                              clampIndex(i - 1, Math.max(1, introMessages.length))
-                            )
+                            setIntroIndex((i) => Math.max(0, i - 1))
                           }
+                          disabled={introIndex <= 0}
                         >
                           <ChevronLeft className="h-4 w-4" /> Prev intro
                         </Button>
@@ -6227,10 +6534,9 @@ ${feedback}`,
                           variant="secondary"
                           type="button"
                           onClick={() =>
-                            setIntroIndex((i) =>
-                              clampIndex(i + 1, Math.max(1, introMessages.length))
-                            )
+                            setIntroIndex((i) => Math.min(Math.max(1, introMessages.length) - 1, i + 1))
                           }
+                          disabled={introIndex >= Math.max(1, introMessages.length) - 1}
                         >
                           Next intro <ChevronRight className="h-4 w-4" />
                         </Button>
@@ -6244,7 +6550,7 @@ ${feedback}`,
                             const i = clampIndex(introIndex, Math.max(1, introMessages.length));
                             const history = introVersionHistories[i] || [introMessages[i] || ""];
                             const current = clampIndex(introVersionIndices[i] || 0, history.length);
-                            const nextIdx = clampIndex(current - 1, history.length);
+                            const nextIdx = Math.max(0, current - 1);
                             setIntroVersionIndices((prev) => {
                               const base = prev.length ? [...prev] : [0];
                               while (base.length <= i) base.push(0);
@@ -6257,6 +6563,7 @@ ${feedback}`,
                               return base;
                             });
                           }}
+                          disabled={(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) <= 0}
                         >
                           <ChevronLeft className="h-4 w-4" /> Roll back
                         </Button>
@@ -6270,7 +6577,7 @@ ${feedback}`,
                             const i = clampIndex(introIndex, Math.max(1, introMessages.length));
                             const history = introVersionHistories[i] || [introMessages[i] || ""];
                             const current = clampIndex(introVersionIndices[i] || 0, history.length);
-                            const nextIdx = clampIndex(current + 1, history.length);
+                            const nextIdx = Math.min(history.length - 1, current + 1);
                             setIntroVersionIndices((prev) => {
                               const base = prev.length ? [...prev] : [0];
                               while (base.length <= i) base.push(0);
@@ -6283,6 +6590,7 @@ ${feedback}`,
                               return base;
                             });
                           }}
+                          disabled={(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) >= Math.max(1, introVersionHistories[clampIndex(introIndex, Math.max(1, introMessages.length))]?.length || 1) - 1}
                         >
                           Roll forward <ChevronRight className="h-4 w-4" />
                         </Button>
@@ -6426,6 +6734,26 @@ ${feedback}`,
                       >
                         <MessageCircle className="h-4 w-4" /> Open Character Chat
                       </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          onClick={() => {
+                            exportCurrentCardInfoTxt(draft || undefined);
+                          }}
+                        >
+                          <Download className="h-4 w-4" /> Export Info+System TXT
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          onClick={() => {
+                            exportCurrentCardIntroTxt(draft || undefined);
+                          }}
+                        >
+                          <Download className="h-4 w-4" /> Export Intro TXT
+                        </Button>
+                      </div>
                       <div className="flex items-center justify-between gap-2">
                       <div className="text-lg font-semibold">Preview</div>
                       <Button variant="secondary" type="button" onClick={() => setShowCreatePreview(false)}>
@@ -6484,16 +6812,6 @@ ${feedback}`,
                     </div>
 
                     <div className="flex gap-2">
-                      <Button
-                        variant="secondary"
-                        type="button"
-                        onClick={() => {
-                          if (!draft) return alert("Enter a character name first.");
-                          exportCurrentCardTxt(draft);
-                        }}
-                      >
-                        <Download className="h-4 w-4" /> Export TXT
-                      </Button>
                       <Button variant="primary" type="button" onClick={saveCharacter}>
                         <Plus className="h-4 w-4" /> Save
                       </Button>
@@ -6556,11 +6874,19 @@ ${feedback}`,
                 variant="secondary"
                 type="button"
                 onClick={() => {
-                  if (!draft) return alert("Enter a character name first.");
-                  exportCurrentCardTxt(draft);
+                  exportCurrentCardInfoTxt(draft || undefined);
                 }}
               >
-                <Download className="h-4 w-4" /> Export TXT
+                <Download className="h-4 w-4" /> Export Info+System TXT
+              </Button>
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => {
+                  exportCurrentCardIntroTxt(draft || undefined);
+                }}
+              >
+                <Download className="h-4 w-4" /> Export Intro TXT
               </Button>
               <Button variant="primary" type="button" onClick={saveCharacter}>
                 <Plus className="h-4 w-4" /> Save
@@ -6842,10 +7168,18 @@ ${feedback}`,
                   <Button
                     variant="secondary"
                     onClick={() => {
-                      exportCurrentCardTxt(previewChar);
+                      exportCurrentCardInfoTxt(previewChar || undefined);
                     }}
                   >
-                    <Download className="h-4 w-4" /> TXT
+                    <Download className="h-4 w-4" /> Info+System TXT
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      exportCurrentCardIntroTxt(previewChar || undefined);
+                    }}
+                  >
+                    <Download className="h-4 w-4" /> Intro TXT
                   </Button>
                   <Button
                     variant="secondary"
