@@ -217,6 +217,39 @@ type CharacterCardExportPayload = {
   relationshipStory: StoryProject | null;
 };
 
+
+type GoogleProfile = {
+  name: string;
+  email: string;
+  picture: string;
+};
+
+type GoogleTokenResponse = {
+  access_token: string;
+  expires_in: number;
+  error?: string;
+};
+
+type GoogleTokenClient = {
+  requestAccessToken: (args?: { prompt?: string }) => void;
+};
+
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        oauth2: {
+          initTokenClient: (config: {
+            client_id: string;
+            scope: string;
+            callback: (response: GoogleTokenResponse) => void;
+          }) => GoogleTokenClient;
+        };
+      };
+    };
+  }
+}
+
 const STORAGE_KEY = "mastercreator_characters_v5";
 const IDB_NAME = "mastercreator_db";
 const IDB_STORE = "characters";
@@ -227,6 +260,19 @@ const CHAT_SESSIONS_KEY = "mastercreator_chat_sessions_v1";
 const STORIES_KEY = "mastercreator_stories_v1";
 const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
 const CHARACTER_CARDS_KEY = "mastercreator_character_cards_v1";
+const GOOGLE_CLIENT_ID = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || "";
+const GOOGLE_SYNC_FILE = "mastercreator_sync_v1.json";
+const GOOGLE_SYNC_SCOPE = "https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
+const SYNC_KEYS = [
+  STORAGE_KEY,
+  CHARACTER_CARDS_KEY,
+  STORIES_KEY,
+  LOREBOOKS_KEY,
+  CHAT_SESSIONS_KEY,
+  THEME_KEY,
+  PROXY_KEY,
+  PERSONA_KEY,
+] as const;
 
 const DEFAULT_PROXY: ProxyConfig = {
   chatUrl: "https://llm.chutes.ai/v1/chat/completions",
@@ -1107,6 +1153,13 @@ export default function CharacterCreatorApp() {
   const [genError, setGenError] = useState<string | null>(null);
   const [proxyProgress, setProxyProgress] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
+  const [googleReady, setGoogleReady] = useState(false);
+  const [googleToken, setGoogleToken] = useState("");
+  const [googleProfile, setGoogleProfile] = useState<GoogleProfile | null>(null);
+  const [googleSyncBusy, setGoogleSyncBusy] = useState(false);
+  const [googleSyncStatus, setGoogleSyncStatus] = useState("");
+  const googleTokenClientRef = useRef<GoogleTokenClient | null>(null);
+  const lastUploadedSnapshotRef = useRef("");
 
   useEffect(() => {
     const sync = () => setIsMobile(window.innerWidth < 768);
@@ -1286,9 +1339,155 @@ ${base}`,
   const sexualBehaviorImportRef = useRef<HTMLInputElement | null>(null);
   const cardJsonImportRef = useRef<HTMLInputElement | null>(null);
 
+  function buildSyncPayload() {
+    const data: Record<string, string> = {};
+    for (const key of SYNC_KEYS) {
+      data[key] = localStorage.getItem(key) || "";
+    }
+    return {
+      format: "mastercreator_sync",
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      data,
+    };
+  }
+
+  function applySyncPayload(payload: any) {
+    if (!payload || typeof payload !== "object") throw new Error("Invalid sync payload.");
+    if (payload.format !== "mastercreator_sync") throw new Error("Unsupported sync file format.");
+    const data = payload.data;
+    if (!data || typeof data !== "object") throw new Error("Sync payload is missing data.");
+
+    for (const key of SYNC_KEYS) {
+      const value = typeof data[key] === "string" ? data[key] : "";
+      localStorage.setItem(key, value);
+    }
+    window.location.reload();
+  }
+
+  async function googleApi(path: string, token: string, init?: RequestInit) {
+    const res = await fetch(`https://www.googleapis.com${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(init?.headers || {}),
+      },
+    });
+    if (!res.ok) {
+      const message = await res.text();
+      throw new Error(message || `Google API error (${res.status})`);
+    }
+    return res;
+  }
+
+  async function findGoogleSyncFileId(token: string): Promise<string | null> {
+    const q = encodeURIComponent(`name='${GOOGLE_SYNC_FILE}' and 'appDataFolder' in parents and trashed=false`);
+    const res = await googleApi(`/drive/v3/files?q=${q}&spaces=appDataFolder&fields=files(id,name,modifiedTime)`, token);
+    const json = await res.json();
+    return json?.files?.[0]?.id || null;
+  }
+
+  async function uploadSyncToGoogleDrive(token: string) {
+    const payload = buildSyncPayload();
+    const payloadText = JSON.stringify(payload);
+    const boundary = `mastercreator_${Date.now()}`;
+    const metadata = {
+      name: GOOGLE_SYNC_FILE,
+      parents: ["appDataFolder"],
+      mimeType: "application/json",
+    };
+    const multipartBody =
+      `--${boundary}
+Content-Type: application/json; charset=UTF-8
+
+${JSON.stringify(metadata)}
+` +
+      `--${boundary}
+Content-Type: application/json
+
+${payloadText}
+` +
+      `--${boundary}--`;
+
+    const fileId = await findGoogleSyncFileId(token);
+    const method = fileId ? "PATCH" : "POST";
+    const path = fileId
+      ? `/upload/drive/v3/files/${fileId}?uploadType=multipart`
+      : `/upload/drive/v3/files?uploadType=multipart`;
+
+    await googleApi(path, token, {
+      method,
+      headers: {
+        "Content-Type": `multipart/related; boundary=${boundary}`,
+      },
+      body: multipartBody,
+    });
+    lastUploadedSnapshotRef.current = payloadText;
+  }
+
+  async function downloadSyncFromGoogleDrive(token: string) {
+    const fileId = await findGoogleSyncFileId(token);
+    if (!fileId) throw new Error("No sync file found for this Google account yet.");
+    const res = await googleApi(`/drive/v3/files/${fileId}?alt=media`, token);
+    const payload = await res.json();
+    applySyncPayload(payload);
+  }
+
   useEffect(() => {
     if (import.meta.env.MODE === "test") runTests();
   }, []);
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) {
+      setGoogleSyncStatus("Set VITE_GOOGLE_CLIENT_ID to enable Google sync.");
+      return;
+    }
+
+    const existing = document.querySelector('script[data-google-identity="1"]') as HTMLScriptElement | null;
+    if (existing) {
+      setGoogleReady(!!window.google?.accounts?.oauth2);
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleIdentity = "1";
+    script.onload = () => setGoogleReady(true);
+    script.onerror = () => setGoogleSyncStatus("Failed to load Google Identity Services.");
+    document.head.appendChild(script);
+  }, []);
+
+  useEffect(() => {
+    if (!googleReady || !GOOGLE_CLIENT_ID || !window.google?.accounts?.oauth2) return;
+    googleTokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: GOOGLE_SYNC_SCOPE,
+      callback: async (response) => {
+        if (response?.error || !response?.access_token) {
+          setGoogleSyncStatus("Google login failed.");
+          return;
+        }
+        setGoogleToken(response.access_token);
+        try {
+          const profileRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+            headers: { Authorization: `Bearer ${response.access_token}` },
+          });
+          const profile = await profileRes.json();
+          setGoogleProfile({
+            name: profile?.name || "Google User",
+            email: profile?.email || "",
+            picture: profile?.picture || "",
+          });
+          setGoogleSyncStatus("Signed in. Auto-sync enabled.");
+        } catch {
+          setGoogleProfile({ name: "Google User", email: "", picture: "" });
+          setGoogleSyncStatus("Signed in.");
+        }
+      },
+    });
+  }, [googleReady]);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem(THEME_KEY);
@@ -1662,6 +1861,21 @@ ${base}`,
       }
     })();
   }, [characters, hydrated]);
+
+  useEffect(() => {
+    if (!googleToken || !hydrated) return;
+    const payloadText = JSON.stringify(buildSyncPayload());
+    if (payloadText === lastUploadedSnapshotRef.current) return;
+    const t = window.setTimeout(async () => {
+      try {
+        await uploadSyncToGoogleDrive(googleToken);
+        setGoogleSyncStatus(`Auto-synced at ${new Date().toLocaleTimeString()}.`);
+      } catch {
+        setGoogleSyncStatus("Auto-sync failed. You can retry manually.");
+      }
+    }, 1500);
+    return () => window.clearTimeout(t);
+  }, [googleToken, hydrated, characters, characterCards, stories, lorebooks, chatSessions, theme, proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt, proxyStreamingEnabled, personaText]);
 
 
   useEffect(() => {
@@ -2181,6 +2395,50 @@ ${base}`,
 
   function navigateTo(next: Page) {
     setPage(next);
+  }
+
+  function startGoogleLogin() {
+    if (!GOOGLE_CLIENT_ID) {
+      alert("Google login is not configured. Add VITE_GOOGLE_CLIENT_ID in your environment.");
+      return;
+    }
+    if (!googleTokenClientRef.current) {
+      alert("Google Identity is still loading. Please try again.");
+      return;
+    }
+    googleTokenClientRef.current.requestAccessToken({ prompt: "consent" });
+  }
+
+  function signOutGoogle() {
+    setGoogleToken("");
+    setGoogleProfile(null);
+    setGoogleSyncStatus("Signed out.");
+  }
+
+  async function syncNowToGoogle() {
+    if (!googleToken) return alert("Please sign in with Google first.");
+    try {
+      setGoogleSyncBusy(true);
+      setGoogleSyncStatus("Syncing to Google Drive...");
+      await uploadSyncToGoogleDrive(googleToken);
+      setGoogleSyncStatus(`Synced to Google Drive at ${new Date().toLocaleTimeString()}.`);
+    } catch (e: any) {
+      setGoogleSyncStatus(e?.message ? String(e.message) : "Sync failed.");
+    } finally {
+      setGoogleSyncBusy(false);
+    }
+  }
+
+  async function syncFromGoogle() {
+    if (!googleToken) return alert("Please sign in with Google first.");
+    try {
+      setGoogleSyncBusy(true);
+      setGoogleSyncStatus("Downloading from Google Drive...");
+      await downloadSyncFromGoogleDrive(googleToken);
+    } catch (e: any) {
+      setGoogleSyncStatus(e?.message ? String(e.message) : "Download failed.");
+      setGoogleSyncBusy(false);
+    }
   }
 
   function loadCharacterIntoForm(c: Character) {
@@ -4822,10 +5080,28 @@ ${feedback}`,
             <Button variant="secondary" onClick={() => setProxyOpen(true)}>
               <SlidersHorizontal className="h-4 w-4" /> Proxy Settings
             </Button>
+            {googleProfile ? (
+              <>
+                <Button variant="secondary" onClick={syncNowToGoogle} disabled={googleSyncBusy}>
+                  <Upload className="h-4 w-4" /> Sync Up
+                </Button>
+                <Button variant="secondary" onClick={syncFromGoogle} disabled={googleSyncBusy}>
+                  <Download className="h-4 w-4" /> Sync Down
+                </Button>
+                <Button variant="secondary" onClick={signOutGoogle}>
+                  <X className="h-4 w-4" /> {googleProfile.email || "Google"}
+                </Button>
+              </>
+            ) : (
+              <Button variant="secondary" onClick={startGoogleLogin}>
+                <Upload className="h-4 w-4" /> Google Login
+              </Button>
+            )}
             <Button variant="secondary" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}>
               {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
             </Button>
           </div>
+          {googleSyncStatus ? <div className="px-4 pb-3 text-xs text-[hsl(var(--muted-foreground))] md:px-8">{googleSyncStatus}</div> : null}
           </div>
         </header>
 
