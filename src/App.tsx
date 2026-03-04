@@ -218,37 +218,12 @@ type CharacterCardExportPayload = {
 };
 
 
-type GoogleProfile = {
-  name: string;
-  email: string;
-  picture: string;
+type AccountRecord = {
+  username: string;
+  passwordHash: string;
+  payload: any;
+  updatedAt: string;
 };
-
-type GoogleTokenResponse = {
-  access_token: string;
-  expires_in: number;
-  error?: string;
-};
-
-type GoogleTokenClient = {
-  requestAccessToken: (args?: { prompt?: string }) => void;
-};
-
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        oauth2: {
-          initTokenClient: (config: {
-            client_id: string;
-            scope: string;
-            callback: (response: GoogleTokenResponse) => void;
-          }) => GoogleTokenClient;
-        };
-      };
-    };
-  }
-}
 
 const STORAGE_KEY = "mastercreator_characters_v5";
 const IDB_NAME = "mastercreator_db";
@@ -260,10 +235,8 @@ const CHAT_SESSIONS_KEY = "mastercreator_chat_sessions_v1";
 const STORIES_KEY = "mastercreator_stories_v1";
 const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
 const CHARACTER_CARDS_KEY = "mastercreator_character_cards_v1";
-const GOOGLE_CLIENT_ID = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || "";
-const GOOGLE_CLIENT_ID_KEY = "mastercreator_google_client_id";
-const GOOGLE_SYNC_FILE = "mastercreator_sync_v1.json";
-const GOOGLE_SYNC_SCOPE = "https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
+const ACCOUNTS_KEY = "mastercreator_accounts_v1";
+const CURRENT_ACCOUNT_KEY = "mastercreator_current_account_v1";
 const SYNC_KEYS = [
   STORAGE_KEY,
   CHARACTER_CARDS_KEY,
@@ -389,6 +362,15 @@ function safeParseJSON(text: string) {
   } catch {
     return null;
   }
+}
+
+function hashCredential(username: string, password: string) {
+  const source = `${username}::${password}`;
+  let hash = 5381;
+  for (let i = 0; i < source.length; i += 1) {
+    hash = (hash * 33) ^ source.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(16);
 }
 
 function normalizeStringArray(v: any): string[] {
@@ -1154,14 +1136,13 @@ export default function CharacterCreatorApp() {
   const [genError, setGenError] = useState<string | null>(null);
   const [proxyProgress, setProxyProgress] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
-  const [googleReady, setGoogleReady] = useState(false);
-  const [googleClientId, setGoogleClientId] = useState(GOOGLE_CLIENT_ID);
-  const [googleToken, setGoogleToken] = useState("");
-  const [googleProfile, setGoogleProfile] = useState<GoogleProfile | null>(null);
-  const [googleSyncBusy, setGoogleSyncBusy] = useState(false);
-  const [googleSyncStatus, setGoogleSyncStatus] = useState("");
-  const googleTokenClientRef = useRef<GoogleTokenClient | null>(null);
-  const lastUploadedSnapshotRef = useRef("");
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authUsernameInput, setAuthUsernameInput] = useState("");
+  const [authPasswordInput, setAuthPasswordInput] = useState("");
+  const [activeAccountUsername, setActiveAccountUsername] = useState<string | null>(null);
+  const [accountSyncStatus, setAccountSyncStatus] = useState("");
+  const lastAccountSnapshotRef = useRef("");
 
   useEffect(() => {
     const sync = () => setIsMobile(window.innerWidth < 768);
@@ -1360,79 +1341,47 @@ ${base}`,
     const data = payload.data;
     if (!data || typeof data !== "object") throw new Error("Sync payload is missing data.");
 
+    let changed = false;
     for (const key of SYNC_KEYS) {
       const value = typeof data[key] === "string" ? data[key] : "";
+      if ((localStorage.getItem(key) || "") !== value) changed = true;
       localStorage.setItem(key, value);
     }
+    if (!changed) return;
     window.location.reload();
   }
 
-  async function googleApi(path: string, token: string, init?: RequestInit) {
-    const res = await fetch(`https://www.googleapis.com${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(init?.headers || {}),
-      },
-    });
-    if (!res.ok) {
-      const message = await res.text();
-      throw new Error(message || `Google API error (${res.status})`);
-    }
-    return res;
+  function readAccounts(): AccountRecord[] {
+    const parsed = safeParseJSON(localStorage.getItem(ACCOUNTS_KEY) || "");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((a) => a && typeof a === "object" && typeof a.username === "string" && typeof a.passwordHash === "string");
   }
 
-  async function findGoogleSyncFileId(token: string): Promise<string | null> {
-    const q = encodeURIComponent(`name='${GOOGLE_SYNC_FILE}' and 'appDataFolder' in parents and trashed=false`);
-    const res = await googleApi(`/drive/v3/files?q=${q}&spaces=appDataFolder&fields=files(id,name,modifiedTime)`, token);
-    const json = await res.json();
-    return json?.files?.[0]?.id || null;
+  function writeAccounts(accounts: AccountRecord[]) {
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
   }
 
-  async function uploadSyncToGoogleDrive(token: string) {
+  function saveCurrentDataToAccount(username: string) {
+    const uname = collapseWhitespace(username).toLowerCase();
+    if (!uname) return;
     const payload = buildSyncPayload();
     const payloadText = JSON.stringify(payload);
-    const boundary = `mastercreator_${Date.now()}`;
-    const metadata = {
-      name: GOOGLE_SYNC_FILE,
-      parents: ["appDataFolder"],
-      mimeType: "application/json",
-    };
-    const multipartBody =
-      `--${boundary}
-Content-Type: application/json; charset=UTF-8
-
-${JSON.stringify(metadata)}
-` +
-      `--${boundary}
-Content-Type: application/json
-
-${payloadText}
-` +
-      `--${boundary}--`;
-
-    const fileId = await findGoogleSyncFileId(token);
-    const method = fileId ? "PATCH" : "POST";
-    const path = fileId
-      ? `/upload/drive/v3/files/${fileId}?uploadType=multipart`
-      : `/upload/drive/v3/files?uploadType=multipart`;
-
-    await googleApi(path, token, {
-      method,
-      headers: {
-        "Content-Type": `multipart/related; boundary=${boundary}`,
-      },
-      body: multipartBody,
-    });
-    lastUploadedSnapshotRef.current = payloadText;
+    lastAccountSnapshotRef.current = payloadText;
+    const now = new Date().toISOString();
+    const accounts = readAccounts();
+    const idx = accounts.findIndex((a) => a.username.toLowerCase() === uname);
+    if (idx < 0) return;
+    accounts[idx] = { ...accounts[idx], payload, updatedAt: now };
+    writeAccounts(accounts);
+    setAccountSyncStatus(`Synced account data at ${new Date().toLocaleTimeString()}.`);
   }
 
-  async function downloadSyncFromGoogleDrive(token: string) {
-    const fileId = await findGoogleSyncFileId(token);
-    if (!fileId) throw new Error("No sync file found for this Google account yet.");
-    const res = await googleApi(`/drive/v3/files/${fileId}?alt=media`, token);
-    const payload = await res.json();
-    applySyncPayload(payload);
+  function loadAccountData(username: string) {
+    const uname = collapseWhitespace(username).toLowerCase();
+    if (!uname) return;
+    const account = readAccounts().find((a) => a.username.toLowerCase() === uname);
+    if (!account) return;
+    if (account.payload) applySyncPayload(account.payload);
   }
 
   useEffect(() => {
@@ -1440,61 +1389,13 @@ ${payloadText}
   }, []);
 
   useEffect(() => {
-    const savedClientId = collapseWhitespace(localStorage.getItem(GOOGLE_CLIENT_ID_KEY) || "");
-    if (!GOOGLE_CLIENT_ID && savedClientId) {
-      setGoogleClientId(savedClientId);
+    const remembered = collapseWhitespace(localStorage.getItem(CURRENT_ACCOUNT_KEY) || "");
+    if (remembered) {
+      setActiveAccountUsername(remembered);
+      setAccountSyncStatus(`Signed in as ${remembered}.`);
+      loadAccountData(remembered);
     }
-
-    if (!GOOGLE_CLIENT_ID && !savedClientId) {
-      setGoogleSyncStatus("Google sync is not configured yet. Click Google Login to enter a Client ID.");
-      return;
-    }
-
-    const existing = document.querySelector('script[data-google-identity="1"]') as HTMLScriptElement | null;
-    if (existing) {
-      setGoogleReady(!!window.google?.accounts?.oauth2);
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.defer = true;
-    script.dataset.googleIdentity = "1";
-    script.onload = () => setGoogleReady(true);
-    script.onerror = () => setGoogleSyncStatus("Failed to load Google Identity Services.");
-    document.head.appendChild(script);
   }, []);
-
-  useEffect(() => {
-    if (!googleReady || !googleClientId || !window.google?.accounts?.oauth2) return;
-    googleTokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
-      client_id: googleClientId,
-      scope: GOOGLE_SYNC_SCOPE,
-      callback: async (response) => {
-        if (response?.error || !response?.access_token) {
-          setGoogleSyncStatus("Google login failed.");
-          return;
-        }
-        setGoogleToken(response.access_token);
-        try {
-          const profileRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-            headers: { Authorization: `Bearer ${response.access_token}` },
-          });
-          const profile = await profileRes.json();
-          setGoogleProfile({
-            name: profile?.name || "Google User",
-            email: profile?.email || "",
-            picture: profile?.picture || "",
-          });
-          setGoogleSyncStatus("Signed in. Auto-sync enabled.");
-        } catch {
-          setGoogleProfile({ name: "Google User", email: "", picture: "" });
-          setGoogleSyncStatus("Signed in.");
-        }
-      },
-    });
-  }, [googleReady, googleClientId]);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem(THEME_KEY);
@@ -1870,19 +1771,14 @@ ${payloadText}
   }, [characters, hydrated]);
 
   useEffect(() => {
-    if (!googleToken || !hydrated) return;
+    if (!activeAccountUsername || !hydrated) return;
     const payloadText = JSON.stringify(buildSyncPayload());
-    if (payloadText === lastUploadedSnapshotRef.current) return;
-    const t = window.setTimeout(async () => {
-      try {
-        await uploadSyncToGoogleDrive(googleToken);
-        setGoogleSyncStatus(`Auto-synced at ${new Date().toLocaleTimeString()}.`);
-      } catch {
-        setGoogleSyncStatus("Auto-sync failed. You can retry manually.");
-      }
-    }, 1500);
+    if (payloadText === lastAccountSnapshotRef.current) return;
+    const t = window.setTimeout(() => {
+      saveCurrentDataToAccount(activeAccountUsername);
+    }, 1000);
     return () => window.clearTimeout(t);
-  }, [googleToken, hydrated, characters, characterCards, stories, lorebooks, chatSessions, theme, proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt, proxyStreamingEnabled, personaText]);
+  }, [activeAccountUsername, hydrated, characters, characterCards, stories, lorebooks, chatSessions, theme, proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt, proxyStreamingEnabled, personaText]);
 
 
   useEffect(() => {
@@ -2404,52 +2300,51 @@ ${payloadText}
     setPage(next);
   }
 
-  function startGoogleLogin() {
-    if (!googleClientId) {
-      const entered = collapseWhitespace(window.prompt("Paste your Google OAuth Client ID (Web app):") || "");
-      if (!entered) return;
-      setGoogleClientId(entered);
-      localStorage.setItem(GOOGLE_CLIENT_ID_KEY, entered);
-      setGoogleSyncStatus("Google Client ID saved. Click Google Login again.");
+  function openAccountAuth(mode: "login" | "register") {
+    setAuthMode(mode);
+    setAuthOpen(true);
+  }
+
+  function submitAccountAuth() {
+    const username = collapseWhitespace(authUsernameInput).toLowerCase();
+    const password = authPasswordInput;
+    if (!username || !password) return alert("Enter username and password.");
+
+    const accounts = readAccounts();
+    const idx = accounts.findIndex((a) => a.username.toLowerCase() === username);
+    const passwordHash = hashCredential(username, password);
+
+    if (authMode === "register") {
+      if (idx >= 0) return alert("That username already exists.");
+      const payload = buildSyncPayload();
+      accounts.unshift({ username, passwordHash, payload, updatedAt: new Date().toISOString() });
+      writeAccounts(accounts);
+      localStorage.setItem(CURRENT_ACCOUNT_KEY, username);
+      setActiveAccountUsername(username);
+      setAccountSyncStatus(`Registered and signed in as ${username}.`);
+      setAuthOpen(false);
       return;
     }
-    if (!googleTokenClientRef.current) {
-      alert("Google Identity is still loading. Please try again.");
-      return;
-    }
-    googleTokenClientRef.current.requestAccessToken({ prompt: "consent" });
+
+    if (idx < 0) return alert("Account not found.");
+    if (accounts[idx].passwordHash !== passwordHash) return alert("Incorrect password.");
+
+    localStorage.setItem(CURRENT_ACCOUNT_KEY, username);
+    setActiveAccountUsername(username);
+    setAccountSyncStatus(`Signed in as ${username}. Loading synced data...`);
+    setAuthOpen(false);
+    loadAccountData(username);
   }
 
-  function signOutGoogle() {
-    setGoogleToken("");
-    setGoogleProfile(null);
-    setGoogleSyncStatus("Signed out.");
+  function signOutAccount() {
+    localStorage.removeItem(CURRENT_ACCOUNT_KEY);
+    setActiveAccountUsername(null);
+    setAccountSyncStatus("Signed out.");
   }
 
-  async function syncNowToGoogle() {
-    if (!googleToken) return alert("Please sign in with Google first.");
-    try {
-      setGoogleSyncBusy(true);
-      setGoogleSyncStatus("Syncing to Google Drive...");
-      await uploadSyncToGoogleDrive(googleToken);
-      setGoogleSyncStatus(`Synced to Google Drive at ${new Date().toLocaleTimeString()}.`);
-    } catch (e: any) {
-      setGoogleSyncStatus(e?.message ? String(e.message) : "Sync failed.");
-    } finally {
-      setGoogleSyncBusy(false);
-    }
-  }
-
-  async function syncFromGoogle() {
-    if (!googleToken) return alert("Please sign in with Google first.");
-    try {
-      setGoogleSyncBusy(true);
-      setGoogleSyncStatus("Downloading from Google Drive...");
-      await downloadSyncFromGoogleDrive(googleToken);
-    } catch (e: any) {
-      setGoogleSyncStatus(e?.message ? String(e.message) : "Download failed.");
-      setGoogleSyncBusy(false);
-    }
+  function syncNowToAccount() {
+    if (!activeAccountUsername) return alert("Please log in first.");
+    saveCurrentDataToAccount(activeAccountUsername);
   }
 
   function loadCharacterIntoForm(c: Character) {
@@ -5091,28 +4986,30 @@ ${feedback}`,
             <Button variant="secondary" onClick={() => setProxyOpen(true)}>
               <SlidersHorizontal className="h-4 w-4" /> Proxy Settings
             </Button>
-            {googleProfile ? (
+            {activeAccountUsername ? (
               <>
-                <Button variant="secondary" onClick={syncNowToGoogle} disabled={googleSyncBusy}>
-                  <Upload className="h-4 w-4" /> Sync Up
+                <Button variant="secondary" onClick={syncNowToAccount}>
+                  <Upload className="h-4 w-4" /> Sync Account
                 </Button>
-                <Button variant="secondary" onClick={syncFromGoogle} disabled={googleSyncBusy}>
-                  <Download className="h-4 w-4" /> Sync Down
-                </Button>
-                <Button variant="secondary" onClick={signOutGoogle}>
-                  <X className="h-4 w-4" /> {googleProfile.email || "Google"}
+                <Button variant="secondary" onClick={signOutAccount}>
+                  <X className="h-4 w-4" /> {activeAccountUsername}
                 </Button>
               </>
             ) : (
-              <Button variant="secondary" onClick={startGoogleLogin}>
-                <Upload className="h-4 w-4" /> Google Login
-              </Button>
+              <>
+                <Button variant="secondary" onClick={() => openAccountAuth("login")}>
+                  Login
+                </Button>
+                <Button variant="secondary" onClick={() => openAccountAuth("register")}>
+                  Register
+                </Button>
+              </>
             )}
             <Button variant="secondary" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}>
               {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
             </Button>
           </div>
-          {googleSyncStatus ? <div className="px-4 pb-3 text-xs text-[hsl(var(--muted-foreground))] md:px-8">{googleSyncStatus}</div> : null}
+          {accountSyncStatus ? <div className="px-4 pb-3 text-xs text-[hsl(var(--muted-foreground))] md:px-8">{accountSyncStatus}</div> : null}
           </div>
         </header>
 
@@ -7510,6 +7407,28 @@ ${feedback}`,
           </div>
           <div className="mt-4 flex justify-end">
             <Button variant="primary" onClick={() => setStoryLorebookPickerOpen(false)}>Done</Button>
+          </div>
+        </Modal>
+
+        <Modal
+          open={authOpen}
+          onClose={() => setAuthOpen(false)}
+          title={authMode === "login" ? "Account Login" : "Create Account"}
+          widthClass="max-w-md"
+        >
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <div className="text-sm">Username</div>
+              <Input value={authUsernameInput} onChange={(e) => setAuthUsernameInput(e.target.value)} placeholder="username" />
+            </div>
+            <div className="space-y-1">
+              <div className="text-sm">Password</div>
+              <Input type="password" value={authPasswordInput} onChange={(e) => setAuthPasswordInput(e.target.value)} placeholder="password" />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setAuthOpen(false)}>Cancel</Button>
+              <Button variant="primary" onClick={submitAccountAuth}>{authMode === "login" ? "Login" : "Register"}</Button>
+            </div>
           </div>
         </Modal>
 
