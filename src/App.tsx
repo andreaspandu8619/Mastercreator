@@ -215,8 +215,11 @@ type CharacterCard = {
   updatedAt: string;
 };
 
-type ImageEditorTool = "move" | "marquee" | "lasso" | "freehand" | "crop" | "eyedropper" | "hand" | "zoom";
+type ImageEditorTool = "move" | "marquee" | "lasso" | "polyLasso" | "freehand" | "transformSelection" | "crop" | "eyedropper" | "hand" | "zoom";
 type ImageResizeMode = "free" | "fixed" | "skew" | "perspective";
+
+type ImageRect = { x: number; y: number; width: number; height: number };
+type TransformHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "inside";
 
 type ImageLayer = {
   id: string;
@@ -425,6 +428,41 @@ function normalizeTextArray(v: any): string[] {
     return [v.replace(/\r\n/g, "\n")];
   }
   return [];
+}
+
+
+function clampRectToCanvas(rect: ImageRect, width: number, height: number): ImageRect {
+  const x1 = Math.max(0, Math.min(width, rect.x));
+  const y1 = Math.max(0, Math.min(height, rect.y));
+  const x2 = Math.max(0, Math.min(width, rect.x + rect.width));
+  const y2 = Math.max(0, Math.min(height, rect.y + rect.height));
+  return { x: Math.min(x1, x2), y: Math.min(y1, y2), width: Math.max(1, Math.abs(x2 - x1)), height: Math.max(1, Math.abs(y2 - y1)) };
+}
+
+function rectFromPoints(a: { x: number; y: number }, b: { x: number; y: number }): ImageRect {
+  return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.max(1, Math.abs(b.x - a.x)), height: Math.max(1, Math.abs(b.y - a.y)) };
+}
+
+function getSelectionCombineMode(shift: boolean, alt: boolean): "replace" | "add" | "subtract" | "intersect" {
+  if (shift && alt) return "intersect";
+  if (shift) return "add";
+  if (alt) return "subtract";
+  return "replace";
+}
+
+function getResizeCursor(handle: TransformHandle | null) {
+  switch (handle) {
+    case "nw":
+    case "se": return "nwse-resize";
+    case "ne":
+    case "sw": return "nesw-resize";
+    case "n":
+    case "s": return "ns-resize";
+    case "e":
+    case "w": return "ew-resize";
+    case "inside": return "move";
+    default: return "default";
+  }
 }
 
 function normalizeTextMatrix(v: any): string[][] {
@@ -1185,10 +1223,17 @@ export default function CharacterCreatorApp() {
   const [imageWorkspaceZoom, setImageWorkspaceZoom] = useState(1);
   const [imageIsPanning, setImageIsPanning] = useState(false);
   const [imageSelectionPoints, setImageSelectionPoints] = useState<Array<{ x: number; y: number }>>([]);
-  const [imageCropRect, setImageCropRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [imageSelectionRect, setImageSelectionRect] = useState<ImageRect | null>(null);
+  const [imageSelectionMaskDataUrl, setImageSelectionMaskDataUrl] = useState<string>("");
+  const [selectionCombineMode, setSelectionCombineMode] = useState<"replace" | "add" | "subtract" | "intersect">("replace");
+  const [imageTransformMode, setImageTransformMode] = useState(false);
+  const [imageCropRect, setImageCropRect] = useState<ImageRect | null>(null);
+  const [imageCropDragging, setImageCropDragging] = useState<TransformHandle | null>(null);
   const [imageSampledColor, setImageSampledColor] = useState<string>("#000000");
+  const [imageShowAnts, setImageShowAnts] = useState(0);
   const dragLayerRef = useRef<{ layerId: string; lastX: number; lastY: number } | null>(null);
   const drawStartRef = useRef<{ x: number; y: number } | null>(null);
+  const transformStartRef = useRef<{ rect: ImageRect; pointer: { x: number; y: number }; handle: TransformHandle } | null>(null);
   const [imageHistoryBySpaceId, setImageHistoryBySpaceId] = useState<Record<string, string[]>>({});
   const [imageHistoryIndexBySpaceId, setImageHistoryIndexBySpaceId] = useState<Record<string, number>>({});
   const activeImageSpace = useMemo(
@@ -1844,19 +1889,47 @@ ${base}`,
   }, [characters, hydrated]);
 
   useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      setImageShowAnts((v) => (v + 1) % 1000);
+      raf = window.requestAnimationFrame(tick);
+    };
+    raf = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(raf);
+  }, []);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && key === "z" && e.shiftKey) {
         e.preventDefault();
         redoImageEditor();
-      } else if ((e.ctrlKey || e.metaKey) && key === "z") {
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && key === "z") {
         e.preventDefault();
         undoImageEditor();
+        return;
+      }
+      if (key === "escape") {
+        if (imageTransformMode) setImageTransformMode(false);
+        setImageCropRect(null);
+        setImageSelectionPoints([]);
+      }
+      if (key === "enter") {
+        if (imageTool === "crop" && imageCropRect) {
+          e.preventDefault();
+          applyImageCrop();
+        }
+        if (imageSelectionRect) {
+          setImageTransformMode(true);
+          setImageTool("transformSelection");
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeImageSpace, imageHistoryBySpaceId, imageHistoryIndexBySpaceId]);
+  }, [activeImageSpace, imageHistoryBySpaceId, imageHistoryIndexBySpaceId, imageTool, imageCropRect, imageSelectionRect, imageTransformMode]);
 
   useEffect(() => {
     const canvas = imageEditorCanvasRef.current;
@@ -2473,6 +2546,69 @@ ${base}`,
     saveCurrentDataToAccount(activeAccountUsername);
   }
 
+  function getCanvasPointFromMouse(e: React.MouseEvent<HTMLDivElement, MouseEvent>, space: ImageEditorSpace) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - rect.left - imageWorkspacePan.x) / imageWorkspaceZoom;
+    const y = (e.clientY - rect.top - imageWorkspacePan.y) / imageWorkspaceZoom;
+    return { x: Math.max(0, Math.min(space.canvasWidth, x)), y: Math.max(0, Math.min(space.canvasHeight, y)) };
+  }
+
+  function getTransformHandleAtPoint(rect: ImageRect, x: number, y: number): TransformHandle | null {
+    const hs = 8;
+    const handles: Array<[TransformHandle, number, number]> = [
+      ["nw", rect.x, rect.y], ["n", rect.x + rect.width / 2, rect.y], ["ne", rect.x + rect.width, rect.y],
+      ["e", rect.x + rect.width, rect.y + rect.height / 2], ["se", rect.x + rect.width, rect.y + rect.height],
+      ["s", rect.x + rect.width / 2, rect.y + rect.height], ["sw", rect.x, rect.y + rect.height],
+      ["w", rect.x, rect.y + rect.height / 2],
+    ];
+    for (const [id, hx, hy] of handles) {
+      if (Math.abs(x - hx) <= hs && Math.abs(y - hy) <= hs) return id;
+    }
+    if (x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height) return "inside";
+    return null;
+  }
+
+  function applySelectionRectWithMode(newRect: ImageRect, mode: "replace" | "add" | "subtract" | "intersect") {
+    if (!activeImageSpace) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(activeImageSpace.canvasWidth));
+    canvas.height = Math.max(1, Math.round(activeImageSpace.canvasHeight));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    if (imageSelectionMaskDataUrl) {
+      const img = new Image();
+      img.src = imageSelectionMaskDataUrl;
+      img.onload = () => {
+        if (mode !== "replace") {
+          ctx.drawImage(img, 0, 0);
+        }
+        ctx.globalCompositeOperation = mode === "subtract" ? "destination-out" : mode === "intersect" ? "destination-in" : "source-over";
+        ctx.fillStyle = "rgba(255,255,255,1)";
+        ctx.fillRect(newRect.x, newRect.y, newRect.width, newRect.height);
+        if (mode === "replace") {
+          ctx.globalCompositeOperation = "source-over";
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.fillRect(newRect.x, newRect.y, newRect.width, newRect.height);
+        }
+        setImageSelectionMaskDataUrl(canvas.toDataURL("image/png"));
+        setImageSelectionRect(newRect);
+      };
+      img.onerror = () => {
+        ctx.fillStyle = "rgba(255,255,255,1)";
+        ctx.fillRect(newRect.x, newRect.y, newRect.width, newRect.height);
+        setImageSelectionMaskDataUrl(canvas.toDataURL("image/png"));
+        setImageSelectionRect(newRect);
+      };
+      return;
+    }
+
+    ctx.fillStyle = "rgba(255,255,255,1)";
+    ctx.fillRect(newRect.x, newRect.y, newRect.width, newRect.height);
+    setImageSelectionMaskDataUrl(canvas.toDataURL("image/png"));
+    setImageSelectionRect(newRect);
+  }
+
   function persistImageHistory(space: ImageEditorSpace) {
     const snap = JSON.stringify(space);
     setImageHistoryBySpaceId((prev) => {
@@ -2626,6 +2762,9 @@ ${base}`,
       canvasHeight: cropH,
       layers: s.layers.map((l) => ({ ...l, x: l.x - cropX, y: l.y - cropY })),
     }));
+    if (imageSelectionRect) {
+      setImageSelectionRect(clampRectToCanvas({ x: imageSelectionRect.x - cropX, y: imageSelectionRect.y - cropY, width: imageSelectionRect.width, height: imageSelectionRect.height }, cropW, cropH));
+    }
     setImageCropRect(null);
   }
 
@@ -5186,7 +5325,7 @@ ${feedback}`,
 
   return (
     <div
-      className="min-h-screen w-full bg-[hsl(var(--background))] p-4 text-[hsl(var(--foreground))] md:p-8"
+      className={cn("w-full bg-[hsl(var(--background))] p-4 text-[hsl(var(--foreground))] md:p-8", page === "image_editor" ? "h-screen overflow-hidden" : "min-h-screen")}
       style={themeVars(theme)}
     >
       <style>{`
@@ -5327,7 +5466,9 @@ ${feedback}`,
                     { id: "move", label: "Move", icon: <MousePointer2 className="h-4 w-4" /> },
                     { id: "marquee", label: "Marquee", icon: <RectangleHorizontal className="h-4 w-4" /> },
                     { id: "lasso", label: "Lasso", icon: <Lasso className="h-4 w-4" /> },
+                    { id: "polyLasso", label: "Poly Lasso", icon: <Lasso className="h-4 w-4" /> },
                     { id: "freehand", label: "Freehand", icon: <Pencil className="h-4 w-4" /> },
+                    { id: "transformSelection", label: "Transform", icon: <MousePointer2 className="h-4 w-4" /> },
                     { id: "crop", label: "Crop", icon: <Crop className="h-4 w-4" /> },
                     { id: "eyedropper", label: "Eyedropper", icon: <Pipette className="h-4 w-4" /> },
                     { id: "hand", label: "Hand", icon: <Hand className="h-4 w-4" /> },
@@ -5396,26 +5537,37 @@ ${feedback}`,
 
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
                 <div
-                  className="relative h-[70vh] overflow-hidden rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))]"
+                  className="relative h-[calc(100vh-220px)] min-h-[620px] overflow-hidden rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))]"
                   onWheel={(e) => {
                     e.preventDefault();
-                    const delta = imageTool === "zoom" ? 0.2 : 0.1;
-                    const next = Math.max(0.1, Math.min(4, imageWorkspaceZoom + (e.deltaY < 0 ? delta : -delta)));
+                    const delta = imageTool === "zoom" ? 0.2 : 0.08;
+                    const next = Math.max(0.1, Math.min(8, imageWorkspaceZoom + (e.deltaY < 0 ? delta : -delta)));
                     setImageWorkspaceZoom(next);
                   }}
                   onMouseDown={(e) => {
                     if (!activeImageSpace) return;
-                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                    const x = (e.clientX - rect.left - imageWorkspacePan.x) / imageWorkspaceZoom;
-                    const y = (e.clientY - rect.top - imageWorkspacePan.y) / imageWorkspaceZoom;
+                    const { x, y } = getCanvasPointFromMouse(e, activeImageSpace);
+                    const mode = getSelectionCombineMode(e.shiftKey, e.altKey);
+                    setSelectionCombineMode(mode);
 
-                    if (imageTool === "hand" || e.button === 1 || e.altKey) {
+                    if (e.button === 1 || imageTool === "hand") {
+                      e.preventDefault();
                       setImageIsPanning(true);
                       return;
                     }
 
+                    if (imageSelectionRect && (imageTool === "move" || imageTool === "transformSelection")) {
+                      const handle = getTransformHandleAtPoint(imageSelectionRect, x, y);
+                      if (handle) {
+                        transformStartRef.current = { rect: imageSelectionRect, pointer: { x, y }, handle };
+                        setImageTransformMode(true);
+                        setImageTool("transformSelection");
+                        return;
+                      }
+                    }
+
                     if (imageTool === "zoom") {
-                      setImageWorkspaceZoom((prev) => Math.max(0.1, Math.min(4, prev + (e.shiftKey ? -0.2 : 0.2))));
+                      setImageWorkspaceZoom((prev) => Math.max(0.1, Math.min(8, prev + (e.shiftKey ? -0.2 : 0.2))));
                       return;
                     }
 
@@ -5427,8 +5579,7 @@ ${feedback}`,
                       const px = Math.max(0, Math.min(canvas.width - 1, Math.round(x)));
                       const py = Math.max(0, Math.min(canvas.height - 1, Math.round(y)));
                       const pixel = ctx.getImageData(px, py, 1, 1).data;
-                      const hex = `#${[pixel[0], pixel[1], pixel[2]].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
-                      setImageSampledColor(hex);
+                      setImageSampledColor(`#${[pixel[0], pixel[1], pixel[2]].map((n) => n.toString(16).padStart(2, "0")).join("")}`);
                       return;
                     }
 
@@ -5436,30 +5587,67 @@ ${feedback}`,
                       const hit = [...activeImageSpace.layers].reverse().find((l) => x >= l.x && x <= l.x + l.width && y >= l.y && y <= l.y + l.height) || null;
                       if (hit) {
                         dragLayerRef.current = { layerId: hit.id, lastX: x, lastY: y };
-                        updateActiveImageSpace((s) => ({ ...s, activeLayerId: hit.id }));
+                        updateActiveImageSpace((sp) => ({ ...sp, activeLayerId: hit.id }));
+                        return;
                       }
-                      return;
                     }
 
                     drawStartRef.current = { x, y };
-                    setImageSelectionPoints([{ x, y }]);
-                    if (imageTool === "crop") setImageCropRect({ x, y, width: 1, height: 1 });
+                    if (imageTool === "polyLasso") {
+                      setImageSelectionPoints((prev) => [...prev, { x, y }]);
+                    } else {
+                      setImageSelectionPoints([{ x, y }]);
+                    }
+                    if (imageTool === "crop") {
+                      const seed = imageCropRect || { x, y, width: Math.max(1, Math.round(activeImageSpace.canvasWidth * 0.7)), height: Math.max(1, Math.round(activeImageSpace.canvasHeight * 0.7)) };
+                      const handle = getTransformHandleAtPoint(seed, x, y);
+                      if (handle) {
+                        setImageCropDragging(handle);
+                        transformStartRef.current = { rect: seed, pointer: { x, y }, handle };
+                        setImageCropRect(seed);
+                      } else {
+                        setImageCropRect({ x, y, width: 1, height: 1 });
+                      }
+                    }
                   }}
                   onMouseUp={() => {
+                    if (!activeImageSpace) return;
                     setImageIsPanning(false);
+                    setImageCropDragging(null);
                     dragLayerRef.current = null;
+
+                    if (drawStartRef.current && imageSelectionPoints.length > 1 && (imageTool === "marquee" || imageTool === "lasso" || imageTool === "freehand")) {
+                      const a = imageSelectionPoints[0];
+                      const b = imageSelectionPoints[imageSelectionPoints.length - 1];
+                      const rect = clampRectToCanvas(rectFromPoints(a, b), activeImageSpace.canvasWidth, activeImageSpace.canvasHeight);
+                      applySelectionRectWithMode(rect, selectionCombineMode);
+                      setImageTransformMode(true);
+                    }
+
+                    if (drawStartRef.current && imageTool === "polyLasso" && imageSelectionPoints.length >= 3) {
+                      const a = imageSelectionPoints[0];
+                      const b = imageSelectionPoints[imageSelectionPoints.length - 1];
+                      if (Math.hypot(b.x - a.x, b.y - a.y) <= 10) {
+                        const xs = imageSelectionPoints.map((p) => p.x);
+                        const ys = imageSelectionPoints.map((p) => p.y);
+                        const rect = clampRectToCanvas({ x: Math.min(...xs), y: Math.min(...ys), width: Math.max(1, Math.max(...xs) - Math.min(...xs)), height: Math.max(1, Math.max(...ys) - Math.min(...ys)) }, activeImageSpace.canvasWidth, activeImageSpace.canvasHeight);
+                        applySelectionRectWithMode(rect, selectionCombineMode);
+                        setImageTransformMode(true);
+                        setImageSelectionPoints([]);
+                      }
+                    }
+
                     drawStartRef.current = null;
                   }}
                   onMouseLeave={() => {
                     setImageIsPanning(false);
+                    setImageCropDragging(null);
                     dragLayerRef.current = null;
-                    drawStartRef.current = null;
+                    transformStartRef.current = null;
                   }}
                   onMouseMove={(e) => {
                     if (!activeImageSpace) return;
-                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                    const x = (e.clientX - rect.left - imageWorkspacePan.x) / imageWorkspaceZoom;
-                    const y = (e.clientY - rect.top - imageWorkspacePan.y) / imageWorkspaceZoom;
+                    const { x, y } = getCanvasPointFromMouse(e, activeImageSpace);
                     if (imageIsPanning) {
                       setImageWorkspacePan((prev) => ({ x: prev.x + e.movementX, y: prev.y + e.movementY }));
                       return;
@@ -5469,33 +5657,78 @@ ${feedback}`,
                       const dx = x - lastX;
                       const dy = y - lastY;
                       dragLayerRef.current = { layerId, lastX: x, lastY: y };
-                      updateActiveImageSpace((s) => ({
-                        ...s,
-                        layers: s.layers.map((l) => l.id !== layerId ? l : { ...l, x: l.x + dx, y: l.y + dy }),
-                      }));
+                      updateActiveImageSpace((sp) => ({ ...sp, layers: sp.layers.map((l) => l.id !== layerId ? l : { ...l, x: l.x + dx, y: l.y + dy }) }));
                       return;
                     }
-                    if ((e.buttons & 1) !== 1) return;
+                    if (transformStartRef.current && imageSelectionRect && (imageTool === "transformSelection" || imageTransformMode)) {
+                      const t = transformStartRef.current;
+                      const dx = x - t.pointer.x;
+                      const dy = y - t.pointer.y;
+                      let next = { ...t.rect };
+                      if (t.handle === "inside") {
+                        next = { ...t.rect, x: t.rect.x + dx, y: t.rect.y + dy };
+                      } else {
+                        const x1 = t.rect.x;
+                        const y1 = t.rect.y;
+                        const x2 = t.rect.x + t.rect.width;
+                        const y2 = t.rect.y + t.rect.height;
+                        const alt = e.altKey;
+                        if (t.handle.includes("w")) next.x = x1 + dx;
+                        if (t.handle.includes("n")) next.y = y1 + dy;
+                        if (t.handle.includes("e")) next.width = Math.max(1, x2 + dx - next.x);
+                        else next.width = Math.max(1, x2 - next.x);
+                        if (t.handle.includes("s")) next.height = Math.max(1, y2 + dy - next.y);
+                        else next.height = Math.max(1, y2 - next.y);
+                        if (alt) {
+                          const cx = x1 + t.rect.width / 2;
+                          const cy = y1 + t.rect.height / 2;
+                          next.x = cx - next.width / 2;
+                          next.y = cy - next.height / 2;
+                        }
+                        if (e.shiftKey) {
+                          const ratio = t.rect.width / Math.max(1, t.rect.height);
+                          next.height = Math.max(1, next.width / Math.max(0.0001, ratio));
+                        }
+                      }
+                      setImageSelectionRect(clampRectToCanvas(next, activeImageSpace.canvasWidth, activeImageSpace.canvasHeight));
+                      return;
+                    }
+                    if (imageCropDragging && transformStartRef.current && imageCropRect) {
+                      const t = transformStartRef.current;
+                      const dx = x - t.pointer.x;
+                      const dy = y - t.pointer.y;
+                      let next = { ...t.rect };
+                      if (t.handle === "inside") next = { ...t.rect, x: t.rect.x + dx, y: t.rect.y + dy };
+                      else {
+                        if (t.handle.includes("w")) { next.x = t.rect.x + dx; next.width = t.rect.width - dx; }
+                        if (t.handle.includes("e")) next.width = t.rect.width + dx;
+                        if (t.handle.includes("n")) { next.y = t.rect.y + dy; next.height = t.rect.height - dy; }
+                        if (t.handle.includes("s")) next.height = t.rect.height + dy;
+                        next.width = Math.max(1, next.width);
+                        next.height = Math.max(1, next.height);
+                      }
+                      setImageCropRect(clampRectToCanvas(next, activeImageSpace.canvasWidth, activeImageSpace.canvasHeight));
+                      return;
+                    }
+                    if ((e.buttons & 1) !== 1 || !drawStartRef.current) return;
                     setImageSelectionPoints((prev) => {
                       if (imageTool === "marquee" || imageTool === "crop") return prev.length ? [prev[0], { x, y }] : [{ x, y }];
+                      if (imageTool === "polyLasso") return prev;
                       return [...prev, { x, y }];
                     });
                     if (imageTool === "crop" && drawStartRef.current) {
                       const sx = drawStartRef.current.x;
                       const sy = drawStartRef.current.y;
-                      setImageCropRect({ x: Math.min(sx, x), y: Math.min(sy, y), width: Math.abs(x - sx), height: Math.abs(y - sy) });
+                      setImageCropRect(clampRectToCanvas({ x: Math.min(sx, x), y: Math.min(sy, y), width: Math.abs(x - sx), height: Math.abs(y - sy) }, activeImageSpace.canvasWidth, activeImageSpace.canvasHeight));
                     }
                   }}
-                  onMouseUpCapture={() => {
-                    if (!activeImageSpace) return;
-                    if (imageTool === "marquee" || imageTool === "lasso" || imageTool === "freehand") {
-                      if (imageSelectionPoints.length) {
-                        const p = imageSelectionPoints[imageSelectionPoints.length - 1];
-                        const hit = [...activeImageSpace.layers].reverse().find((l) => p.x >= l.x && p.x <= l.x + l.width && p.y >= l.y && p.y <= l.y + l.height) || null;
-                        if (hit) updateActiveImageSpace((s) => ({ ...s, activeLayerId: hit.id }));
-                      }
-                    }
-                    if (imageTool !== "crop" && imageTool !== "lasso" && imageTool !== "freehand") {
+                  onDoubleClick={() => {
+                    if (imageTool === "polyLasso" && activeImageSpace && imageSelectionPoints.length >= 3) {
+                      const xs = imageSelectionPoints.map((p) => p.x);
+                      const ys = imageSelectionPoints.map((p) => p.y);
+                      const rect = clampRectToCanvas({ x: Math.min(...xs), y: Math.min(...ys), width: Math.max(1, Math.max(...xs) - Math.min(...xs)), height: Math.max(1, Math.max(...ys) - Math.min(...ys)) }, activeImageSpace.canvasWidth, activeImageSpace.canvasHeight);
+                      applySelectionRectWithMode(rect, selectionCombineMode);
+                      setImageTransformMode(true);
                       setImageSelectionPoints([]);
                     }
                   }}
@@ -5505,29 +5738,37 @@ ${feedback}`,
                     const f = e.dataTransfer.files?.[0];
                     if (f) handleImageEditorFile(f);
                   }}
+                  style={{ cursor: imageSelectionRect && (imageTool === "move" || imageTool === "transformSelection") ? getResizeCursor(getTransformHandleAtPoint(imageSelectionRect, (imageSelectionPoints.length ? imageSelectionPoints[imageSelectionPoints.length - 1].x : imageSelectionRect.x), (imageSelectionPoints.length ? imageSelectionPoints[imageSelectionPoints.length - 1].y : imageSelectionRect.y))) : (imageTool === "hand" ? "grab" : "crosshair") }}
                 >
-                  <div style={{ transform: `translate(${imageWorkspacePan.x}px, ${imageWorkspacePan.y}px) scale(${imageWorkspaceZoom})`, transformOrigin: "0 0" }}>
+                  <div className="absolute inset-0" style={{ transform: `translate(${imageWorkspacePan.x}px, ${imageWorkspacePan.y}px) scale(${imageWorkspaceZoom})`, transformOrigin: "0 0" }}>
                     <canvas ref={imageEditorCanvasRef} className="block" style={{ background: "white" }} />
-                    {imageSelectionPoints.length > 1 ? (
-                      <svg className="pointer-events-none absolute left-0 top-0" width={activeImageSpace?.canvasWidth || 1} height={activeImageSpace?.canvasHeight || 1}>
-                        {(imageTool === "marquee" || imageTool === "crop") ? (
-                          <rect
-                            x={Math.min(imageSelectionPoints[0].x, imageSelectionPoints[1].x)}
-                            y={Math.min(imageSelectionPoints[0].y, imageSelectionPoints[1].y)}
-                            width={Math.abs(imageSelectionPoints[1].x - imageSelectionPoints[0].x)}
-                            height={Math.abs(imageSelectionPoints[1].y - imageSelectionPoints[0].y)}
-                            fill="none"
-                            stroke="#36c"
-                            strokeDasharray="6 4"
-                          />
+                    <svg className="pointer-events-none absolute left-0 top-0" width={activeImageSpace?.canvasWidth || 1} height={activeImageSpace?.canvasHeight || 1}>
+                      {imageSelectionPoints.length > 1 ? (
+                        (imageTool === "marquee" || imageTool === "crop") ? (
+                          <rect x={Math.min(imageSelectionPoints[0].x, imageSelectionPoints[1].x)} y={Math.min(imageSelectionPoints[0].y, imageSelectionPoints[1].y)} width={Math.abs(imageSelectionPoints[1].x - imageSelectionPoints[0].x)} height={Math.abs(imageSelectionPoints[1].y - imageSelectionPoints[0].y)} fill="none" stroke="#36c" strokeDasharray="6 4" />
                         ) : (
                           <polyline points={imageSelectionPoints.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke="#36c" strokeDasharray="6 4" />
-                        )}
-                        {imageCropRect ? (
+                        )
+                      ) : null}
+                      {imageSelectionRect ? (
+                        <>
+                          <rect x={imageSelectionRect.x} y={imageSelectionRect.y} width={imageSelectionRect.width} height={imageSelectionRect.height} fill="none" stroke="#111" strokeDasharray="6 6" strokeDashoffset={-imageShowAnts * 0.5} />
+                          <rect x={imageSelectionRect.x} y={imageSelectionRect.y} width={imageSelectionRect.width} height={imageSelectionRect.height} fill="none" stroke="#fff" strokeDasharray="6 6" strokeDashoffset={6 - imageShowAnts * 0.5} />
+                          {[{x:imageSelectionRect.x,y:imageSelectionRect.y},{x:imageSelectionRect.x+imageSelectionRect.width/2,y:imageSelectionRect.y},{x:imageSelectionRect.x+imageSelectionRect.width,y:imageSelectionRect.y},{x:imageSelectionRect.x+imageSelectionRect.width,y:imageSelectionRect.y+imageSelectionRect.height/2},{x:imageSelectionRect.x+imageSelectionRect.width,y:imageSelectionRect.y+imageSelectionRect.height},{x:imageSelectionRect.x+imageSelectionRect.width/2,y:imageSelectionRect.y+imageSelectionRect.height},{x:imageSelectionRect.x,y:imageSelectionRect.y+imageSelectionRect.height},{x:imageSelectionRect.x,y:imageSelectionRect.y+imageSelectionRect.height/2}].map((h, i) => <rect key={i} x={h.x-4} y={h.y-4} width={8} height={8} fill="#fff" stroke="#000" />)}
+                        </>
+                      ) : null}
+                      {imageCropRect ? (
+                        <>
+                          <rect x={0} y={0} width={activeImageSpace?.canvasWidth || 1} height={activeImageSpace?.canvasHeight || 1} fill="rgba(0,0,0,0.45)" />
                           <rect x={imageCropRect.x} y={imageCropRect.y} width={imageCropRect.width} height={imageCropRect.height} fill="none" stroke="#ff5252" strokeDasharray="8 5" />
-                        ) : null}
-                      </svg>
-                    ) : null}
+                          <rect x={imageCropRect.x} y={imageCropRect.y} width={imageCropRect.width} height={imageCropRect.height} fill="rgba(0,0,0,0)" />
+                          <line x1={imageCropRect.x + imageCropRect.width / 3} y1={imageCropRect.y} x2={imageCropRect.x + imageCropRect.width / 3} y2={imageCropRect.y + imageCropRect.height} stroke="rgba(255,255,255,0.7)" strokeDasharray="4 4" />
+                          <line x1={imageCropRect.x + (imageCropRect.width * 2) / 3} y1={imageCropRect.y} x2={imageCropRect.x + (imageCropRect.width * 2) / 3} y2={imageCropRect.y + imageCropRect.height} stroke="rgba(255,255,255,0.7)" strokeDasharray="4 4" />
+                          <line x1={imageCropRect.x} y1={imageCropRect.y + imageCropRect.height / 3} x2={imageCropRect.x + imageCropRect.width} y2={imageCropRect.y + imageCropRect.height / 3} stroke="rgba(255,255,255,0.7)" strokeDasharray="4 4" />
+                          <line x1={imageCropRect.x} y1={imageCropRect.y + (imageCropRect.height * 2) / 3} x2={imageCropRect.x + imageCropRect.width} y2={imageCropRect.y + (imageCropRect.height * 2) / 3} stroke="rgba(255,255,255,0.7)" strokeDasharray="4 4" />
+                        </>
+                      ) : null}
+                    </svg>
                   </div>
                 </div>
               </div>
