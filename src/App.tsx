@@ -1,21 +1,28 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  Crop,
   ChevronLeft,
   ChevronRight,
   Download,
+  Hand,
+  MousePointer2,
   Moon,
   Pencil,
+  Pipette,
   Plus,
+  RectangleHorizontal,
   Search,
   SlidersHorizontal,
   Sun,
   Trash2,
   MessageCircle,
   BookOpen,
+  Lasso,
   Library,
   Upload,
   X,
+  ZoomIn,
   Sparkles,
 } from "lucide-react";
 
@@ -208,7 +215,7 @@ type CharacterCard = {
   updatedAt: string;
 };
 
-type ImageSelectionTool = "rectangle" | "lasso" | "freehand";
+type ImageEditorTool = "move" | "marquee" | "lasso" | "freehand" | "crop" | "eyedropper" | "hand" | "zoom";
 type ImageResizeMode = "free" | "fixed" | "skew" | "perspective";
 
 type ImageLayer = {
@@ -1172,12 +1179,16 @@ export default function CharacterCreatorApp() {
   const imageEditorCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [imageSpaces, setImageSpaces] = useState<ImageEditorSpace[]>([]);
   const [activeImageSpaceId, setActiveImageSpaceId] = useState<string | null>(null);
-  const [imageSelectionTool, setImageSelectionTool] = useState<ImageSelectionTool>("rectangle");
+  const [imageTool, setImageTool] = useState<ImageEditorTool>("move");
   const [imageResizeMode, setImageResizeMode] = useState<ImageResizeMode>("free");
   const [imageWorkspacePan, setImageWorkspacePan] = useState({ x: 0, y: 0 });
   const [imageWorkspaceZoom, setImageWorkspaceZoom] = useState(1);
   const [imageIsPanning, setImageIsPanning] = useState(false);
   const [imageSelectionPoints, setImageSelectionPoints] = useState<Array<{ x: number; y: number }>>([]);
+  const [imageCropRect, setImageCropRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [imageSampledColor, setImageSampledColor] = useState<string>("#000000");
+  const dragLayerRef = useRef<{ layerId: string; lastX: number; lastY: number } | null>(null);
+  const drawStartRef = useRef<{ x: number; y: number } | null>(null);
   const [imageHistoryBySpaceId, setImageHistoryBySpaceId] = useState<Record<string, string[]>>({});
   const [imageHistoryIndexBySpaceId, setImageHistoryIndexBySpaceId] = useState<Record<string, number>>({});
   const activeImageSpace = useMemo(
@@ -2601,6 +2612,21 @@ ${base}`,
     a.href = url;
     a.download = `${filenameSafe(space.name || "space") || "space"}.${type}`;
     a.click();
+  }
+
+  function applyImageCrop() {
+    if (!activeImageSpace || !imageCropRect) return;
+    const cropX = Math.max(0, Math.round(imageCropRect.x));
+    const cropY = Math.max(0, Math.round(imageCropRect.y));
+    const cropW = Math.max(1, Math.round(imageCropRect.width));
+    const cropH = Math.max(1, Math.round(imageCropRect.height));
+    updateActiveImageSpace((s) => ({
+      ...s,
+      canvasWidth: cropW,
+      canvasHeight: cropH,
+      layers: s.layers.map((l) => ({ ...l, x: l.x - cropX, y: l.y - cropY })),
+    }));
+    setImageCropRect(null);
   }
 
   function loadCharacterIntoForm(c: Character) {
@@ -5295,12 +5321,29 @@ ${feedback}`,
                   ))}
                   {!imageSpaces.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No spaces yet.</div> : null}
                 </div>
-                <div className="text-sm font-semibold">Select Tool</div>
-                <Select value={imageSelectionTool} onChange={(e) => setImageSelectionTool(e.target.value as ImageSelectionTool)}>
-                  <option value="rectangle">Rectangle</option>
-                  <option value="lasso">Lasso</option>
-                  <option value="freehand">Freehand</option>
-                </Select>
+                <div className="text-sm font-semibold">Tools</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { id: "move", label: "Move", icon: <MousePointer2 className="h-4 w-4" /> },
+                    { id: "marquee", label: "Marquee", icon: <RectangleHorizontal className="h-4 w-4" /> },
+                    { id: "lasso", label: "Lasso", icon: <Lasso className="h-4 w-4" /> },
+                    { id: "freehand", label: "Freehand", icon: <Pencil className="h-4 w-4" /> },
+                    { id: "crop", label: "Crop", icon: <Crop className="h-4 w-4" /> },
+                    { id: "eyedropper", label: "Eyedropper", icon: <Pipette className="h-4 w-4" /> },
+                    { id: "hand", label: "Hand", icon: <Hand className="h-4 w-4" /> },
+                    { id: "zoom", label: "Zoom", icon: <ZoomIn className="h-4 w-4" /> },
+                  ] as Array<{ id: ImageEditorTool; label: string; icon: React.ReactNode }>).map((tool) => (
+                    <button
+                      key={tool.id}
+                      type="button"
+                      onClick={() => setImageTool(tool.id)}
+                      className={cn("flex items-center gap-2 rounded-lg border px-2 py-1 text-xs", imageTool === tool.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))]")}
+                    >
+                      {tool.icon}
+                      {tool.label}
+                    </button>
+                  ))}
+                </div>
                 <div className="text-sm font-semibold">Resize Tool</div>
                 <Select value={imageResizeMode} onChange={(e) => setImageResizeMode(e.target.value as ImageResizeMode)}>
                   <option value="free">Free Resize</option>
@@ -5340,6 +5383,15 @@ ${feedback}`,
                     })}>Perspective +Y</Button>
                   </div>
                 ) : null}
+                {imageTool === "crop" && imageCropRect ? (
+                  <Button variant="primary" onClick={applyImageCrop}>Apply Crop</Button>
+                ) : null}
+                {imageTool === "eyedropper" ? (
+                  <div className="flex items-center gap-2 rounded border border-[hsl(var(--border))] px-2 py-1 text-xs">
+                    <div className="h-4 w-4 rounded" style={{ background: imageSampledColor }} />
+                    {imageSampledColor}
+                  </div>
+                ) : null}
               </div>
 
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
@@ -5347,43 +5399,104 @@ ${feedback}`,
                   className="relative h-[70vh] overflow-hidden rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))]"
                   onWheel={(e) => {
                     e.preventDefault();
-                    const next = Math.max(0.1, Math.min(4, imageWorkspaceZoom + (e.deltaY < 0 ? 0.1 : -0.1)));
+                    const delta = imageTool === "zoom" ? 0.2 : 0.1;
+                    const next = Math.max(0.1, Math.min(4, imageWorkspaceZoom + (e.deltaY < 0 ? delta : -delta)));
                     setImageWorkspaceZoom(next);
                   }}
                   onMouseDown={(e) => {
-                    if (e.button !== 1 && !e.altKey) return;
-                    setImageIsPanning(true);
+                    if (!activeImageSpace) return;
+                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                    const x = (e.clientX - rect.left - imageWorkspacePan.x) / imageWorkspaceZoom;
+                    const y = (e.clientY - rect.top - imageWorkspacePan.y) / imageWorkspaceZoom;
+
+                    if (imageTool === "hand" || e.button === 1 || e.altKey) {
+                      setImageIsPanning(true);
+                      return;
+                    }
+
+                    if (imageTool === "zoom") {
+                      setImageWorkspaceZoom((prev) => Math.max(0.1, Math.min(4, prev + (e.shiftKey ? -0.2 : 0.2))));
+                      return;
+                    }
+
+                    if (imageTool === "eyedropper") {
+                      const canvas = imageEditorCanvasRef.current;
+                      if (!canvas) return;
+                      const ctx = canvas.getContext("2d");
+                      if (!ctx) return;
+                      const px = Math.max(0, Math.min(canvas.width - 1, Math.round(x)));
+                      const py = Math.max(0, Math.min(canvas.height - 1, Math.round(y)));
+                      const pixel = ctx.getImageData(px, py, 1, 1).data;
+                      const hex = `#${[pixel[0], pixel[1], pixel[2]].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
+                      setImageSampledColor(hex);
+                      return;
+                    }
+
+                    if (imageTool === "move") {
+                      const hit = [...activeImageSpace.layers].reverse().find((l) => x >= l.x && x <= l.x + l.width && y >= l.y && y <= l.y + l.height) || null;
+                      if (hit) {
+                        dragLayerRef.current = { layerId: hit.id, lastX: x, lastY: y };
+                        updateActiveImageSpace((s) => ({ ...s, activeLayerId: hit.id }));
+                      }
+                      return;
+                    }
+
+                    drawStartRef.current = { x, y };
+                    setImageSelectionPoints([{ x, y }]);
+                    if (imageTool === "crop") setImageCropRect({ x, y, width: 1, height: 1 });
                   }}
-                  onMouseUp={() => setImageIsPanning(false)}
-                  onMouseLeave={() => setImageIsPanning(false)}
+                  onMouseUp={() => {
+                    setImageIsPanning(false);
+                    dragLayerRef.current = null;
+                    drawStartRef.current = null;
+                  }}
+                  onMouseLeave={() => {
+                    setImageIsPanning(false);
+                    dragLayerRef.current = null;
+                    drawStartRef.current = null;
+                  }}
                   onMouseMove={(e) => {
+                    if (!activeImageSpace) return;
+                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                    const x = (e.clientX - rect.left - imageWorkspacePan.x) / imageWorkspaceZoom;
+                    const y = (e.clientY - rect.top - imageWorkspacePan.y) / imageWorkspaceZoom;
                     if (imageIsPanning) {
                       setImageWorkspacePan((prev) => ({ x: prev.x + e.movementX, y: prev.y + e.movementY }));
                       return;
                     }
-                    if (!activeImageSpace) return;
+                    if (dragLayerRef.current && imageTool === "move") {
+                      const { layerId, lastX, lastY } = dragLayerRef.current;
+                      const dx = x - lastX;
+                      const dy = y - lastY;
+                      dragLayerRef.current = { layerId, lastX: x, lastY: y };
+                      updateActiveImageSpace((s) => ({
+                        ...s,
+                        layers: s.layers.map((l) => l.id !== layerId ? l : { ...l, x: l.x + dx, y: l.y + dy }),
+                      }));
+                      return;
+                    }
                     if ((e.buttons & 1) !== 1) return;
-                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                    const x = (e.clientX - rect.left - imageWorkspacePan.x) / imageWorkspaceZoom;
-                    const y = (e.clientY - rect.top - imageWorkspacePan.y) / imageWorkspaceZoom;
                     setImageSelectionPoints((prev) => {
-                      if (imageSelectionTool === "rectangle") return prev.length ? [prev[0], { x, y }] : [{ x, y }];
+                      if (imageTool === "marquee" || imageTool === "crop") return prev.length ? [prev[0], { x, y }] : [{ x, y }];
                       return [...prev, { x, y }];
                     });
-                  }}
-                  onMouseDownCapture={(e) => {
-                    if (e.button !== 0 || !activeImageSpace) return;
-                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                    const x = (e.clientX - rect.left - imageWorkspacePan.x) / imageWorkspaceZoom;
-                    const y = (e.clientY - rect.top - imageWorkspacePan.y) / imageWorkspaceZoom;
-                    setImageSelectionPoints([{ x, y }]);
+                    if (imageTool === "crop" && drawStartRef.current) {
+                      const sx = drawStartRef.current.x;
+                      const sy = drawStartRef.current.y;
+                      setImageCropRect({ x: Math.min(sx, x), y: Math.min(sy, y), width: Math.abs(x - sx), height: Math.abs(y - sy) });
+                    }
                   }}
                   onMouseUpCapture={() => {
                     if (!activeImageSpace) return;
-                    if (imageSelectionPoints.length) {
-                      const p = imageSelectionPoints[imageSelectionPoints.length - 1];
-                      const hit = [...activeImageSpace.layers].reverse().find((l) => p.x >= l.x && p.x <= l.x + l.width && p.y >= l.y && p.y <= l.y + l.height) || null;
-                      if (hit) updateActiveImageSpace((s) => ({ ...s, activeLayerId: hit.id }));
+                    if (imageTool === "marquee" || imageTool === "lasso" || imageTool === "freehand") {
+                      if (imageSelectionPoints.length) {
+                        const p = imageSelectionPoints[imageSelectionPoints.length - 1];
+                        const hit = [...activeImageSpace.layers].reverse().find((l) => p.x >= l.x && p.x <= l.x + l.width && p.y >= l.y && p.y <= l.y + l.height) || null;
+                        if (hit) updateActiveImageSpace((s) => ({ ...s, activeLayerId: hit.id }));
+                      }
+                    }
+                    if (imageTool !== "crop" && imageTool !== "lasso" && imageTool !== "freehand") {
+                      setImageSelectionPoints([]);
                     }
                   }}
                   onDragOver={(e) => e.preventDefault()}
@@ -5397,7 +5510,7 @@ ${feedback}`,
                     <canvas ref={imageEditorCanvasRef} className="block" style={{ background: "white" }} />
                     {imageSelectionPoints.length > 1 ? (
                       <svg className="pointer-events-none absolute left-0 top-0" width={activeImageSpace?.canvasWidth || 1} height={activeImageSpace?.canvasHeight || 1}>
-                        {imageSelectionTool === "rectangle" ? (
+                        {(imageTool === "marquee" || imageTool === "crop") ? (
                           <rect
                             x={Math.min(imageSelectionPoints[0].x, imageSelectionPoints[1].x)}
                             y={Math.min(imageSelectionPoints[0].y, imageSelectionPoints[1].y)}
@@ -5410,6 +5523,9 @@ ${feedback}`,
                         ) : (
                           <polyline points={imageSelectionPoints.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke="#36c" strokeDasharray="6 4" />
                         )}
+                        {imageCropRect ? (
+                          <rect x={imageCropRect.x} y={imageCropRect.y} width={imageCropRect.width} height={imageCropRect.height} fill="none" stroke="#ff5252" strokeDasharray="8 5" />
+                        ) : null}
                       </svg>
                     ) : null}
                   </div>
