@@ -1,34 +1,27 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
-  Crop,
   ChevronLeft,
   ChevronRight,
   Download,
-  Hand,
-  MousePointer2,
   Moon,
   Pencil,
-  Pipette,
   Plus,
-  RectangleHorizontal,
   Search,
   SlidersHorizontal,
   Sun,
   Trash2,
   MessageCircle,
   BookOpen,
-  Lasso,
   Library,
   Upload,
   X,
-  ZoomIn,
   Sparkles,
 } from "lucide-react";
 
 type ThemeMode = "light" | "dark";
 type Gender = "Male" | "Female" | "";
-type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board" | "lorebooks" | "lorebook_create" | "image_editor";
+type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board" | "lorebooks" | "lorebook_create";
 type CreateTab = "overview" | "personality" | "behavior" | "definition" | "system" | "intro" | "synopsis" | "relationships";
 type StoryTab = "scenario" | "first_message" | "system_rules" | "relationships" | "synopsis";
 type LorebookTab = "overview" | "world" | "locations" | "factions" | "rules" | "items" | "specials";
@@ -209,52 +202,7 @@ type CharacterCard = {
   selectedSystemRuleIds: string[];
   firstMessageMessages: string[];
   selectedFirstMessageIndex: number;
-  firstMessageVersionHistories: string[][];
-  firstMessageVersionIndices: number[];
   createdAt: string;
-  updatedAt: string;
-};
-
-type ImageEditorTool = "move" | "marquee" | "lasso" | "polyLasso" | "freehand" | "transformSelection" | "crop" | "eyedropper" | "hand" | "zoom";
-type ImageResizeMode = "free" | "fixed" | "skew" | "perspective";
-
-type ImageRect = { x: number; y: number; width: number; height: number };
-type TransformHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "inside";
-
-type ImageLayer = {
-  id: string;
-  name: string;
-  imageDataUrl: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-type ImageEditorSpace = {
-  id: string;
-  name: string;
-  canvasWidth: number;
-  canvasHeight: number;
-  layers: ImageLayer[];
-  activeLayerId: string | null;
-  updatedAt: string;
-};
-
-type CharacterCardExportPayload = {
-  format: "mastercreator_character_card";
-  version: 1;
-  exportedAt: string;
-  card: CharacterCard;
-  characters: Character[];
-  relationshipStory: StoryProject | null;
-};
-
-
-type AccountRecord = {
-  username: string;
-  passwordHash: string;
-  payload: any;
   updatedAt: string;
 };
 
@@ -268,20 +216,6 @@ const CHAT_SESSIONS_KEY = "mastercreator_chat_sessions_v1";
 const STORIES_KEY = "mastercreator_stories_v1";
 const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
 const CHARACTER_CARDS_KEY = "mastercreator_character_cards_v1";
-const ACCOUNTS_KEY = "mastercreator_accounts_v1";
-const CURRENT_ACCOUNT_KEY = "mastercreator_current_account_v1";
-const IMAGE_EDITOR_SPACES_KEY = "mastercreator_image_editor_spaces_v1";
-const SYNC_KEYS = [
-  STORAGE_KEY,
-  CHARACTER_CARDS_KEY,
-  STORIES_KEY,
-  LOREBOOKS_KEY,
-  CHAT_SESSIONS_KEY,
-  THEME_KEY,
-  PROXY_KEY,
-  PERSONA_KEY,
-  IMAGE_EDITOR_SPACES_KEY,
-] as const;
 
 const DEFAULT_PROXY: ProxyConfig = {
   chatUrl: "https://llm.chutes.ai/v1/chat/completions",
@@ -399,15 +333,6 @@ function safeParseJSON(text: string) {
   }
 }
 
-function hashCredential(username: string, password: string) {
-  const source = `${username}::${password}`;
-  let hash = 5381;
-  for (let i = 0; i < source.length; i += 1) {
-    hash = (hash * 33) ^ source.charCodeAt(i);
-  }
-  return (hash >>> 0).toString(16);
-}
-
 function normalizeStringArray(v: any): string[] {
   if (Array.isArray(v)) return v.map((x) => collapseWhitespace(x)).filter(Boolean);
   if (typeof v === "string") {
@@ -415,62 +340,6 @@ function normalizeStringArray(v: any): string[] {
     return s ? [s] : [];
   }
   return [];
-}
-
-function normalizeTextArray(v: any): string[] {
-  if (Array.isArray(v)) {
-    return v
-      .map((x) => (typeof x === "string" ? x : x == null ? "" : String(x)))
-      .map((x) => x.replace(/\r\n/g, "\n"))
-      .filter((x) => x.length > 0);
-  }
-  if (typeof v === "string") {
-    return [v.replace(/\r\n/g, "\n")];
-  }
-  return [];
-}
-
-
-function clampRectToCanvas(rect: ImageRect, width: number, height: number): ImageRect {
-  const x1 = Math.max(0, Math.min(width, rect.x));
-  const y1 = Math.max(0, Math.min(height, rect.y));
-  const x2 = Math.max(0, Math.min(width, rect.x + rect.width));
-  const y2 = Math.max(0, Math.min(height, rect.y + rect.height));
-  return { x: Math.min(x1, x2), y: Math.min(y1, y2), width: Math.max(1, Math.abs(x2 - x1)), height: Math.max(1, Math.abs(y2 - y1)) };
-}
-
-function rectFromPoints(a: { x: number; y: number }, b: { x: number; y: number }): ImageRect {
-  return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.max(1, Math.abs(b.x - a.x)), height: Math.max(1, Math.abs(b.y - a.y)) };
-}
-
-function getSelectionCombineMode(shift: boolean, alt: boolean): "replace" | "add" | "subtract" | "intersect" {
-  if (shift && alt) return "intersect";
-  if (shift) return "add";
-  if (alt) return "subtract";
-  return "replace";
-}
-
-function getResizeCursor(handle: TransformHandle | null) {
-  switch (handle) {
-    case "nw":
-    case "se": return "nwse-resize";
-    case "ne":
-    case "sw": return "nesw-resize";
-    case "n":
-    case "s": return "ns-resize";
-    case "e":
-    case "w": return "ew-resize";
-    case "inside": return "move";
-    default: return "default";
-  }
-}
-
-function normalizeTextMatrix(v: any): string[][] {
-  if (!Array.isArray(v)) return [];
-  return v.map((entry) => {
-    const normalized = normalizeTextArray(entry);
-    return normalized.length ? normalized : [""];
-  });
 }
 
 function normalizeGender(v: any): Gender {
@@ -652,43 +521,36 @@ async function idbDeleteCharacter(id: string): Promise<void> {
 }
 
 
-function characterToTxt(c: Character, options?: { includeIntro?: boolean }) {
+function xmlEscape(input: string) {
+  return String(input || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function characterToTxt(c: Character) {
   const selectedBackstory = (c.backstory || []).length
     ? (c.backstory || [])[Math.max(0, Math.min((c.backstory || []).length - 1, (c as any).selectedBackstoryIndex || 0))] || ""
     : "";
-  const selectedIntro = (c.introMessages || []).length
-    ? (c.introMessages || [])[Math.max(0, Math.min((c.introMessages || []).length - 1, c.selectedIntroIndex || 0))] || ""
-    : "";
-  const includeIntro = options?.includeIntro ?? true;
 
-  const lines = [
-    `### Character: ${collapseWhitespace(c.name) || "(Unnamed)"}`,
-    `ID: ${c.id || "-"}`,
-    `Gender: ${c.gender || "-"}`,
-    `Age: ${c.age === "" ? "-" : String(c.age)}`,
-    `Height: ${collapseWhitespace(c.height) || "-"}`,
-    `Origin: ${collapseWhitespace(c.origins) || "-"}`,
-    `Race: ${collapseWhitespace(c.race) || "-"}`,
-    `Personality: ${(c.personalities || []).length ? (c.personalities || []).join(", ") : "-"}`,
-    `Physical Appearance: ${(c.physicalAppearance || []).length ? (c.physicalAppearance || []).join(", ") : "-"}`,
-    `Unique Traits: ${(c.uniqueTraits || []).length ? (c.uniqueTraits || []).join(", ") : "-"}`,
-    `Behavior: ${([...(c.respondToProblems || []), ...(c.sexualBehavior || [])].length) ? [...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", ") : "-"}`,
-    `Speech Patterns: ${(c.speechPatterns || []).length ? (c.speechPatterns || []).join(", ") : "-"}`,
-    "",
-    "Backstory:",
-    selectedBackstory || "-",
-  ];
-
-  if (includeIntro) {
-    lines.push(
-      "",
-      `* Intro ${Math.max(0, Math.min((c.introMessages || []).length - 1, c.selectedIntroIndex || 0)) + 1}:`,
-      selectedIntro || "-"
-    );
-  }
-
-  lines.push("", "***");
-  return lines.join("\n");
+  return [
+    `  <character id="${xmlEscape(c.id || "")}">`,
+    `    <name>${xmlEscape(c.name || "")}</name>`,
+    `    <gender>${xmlEscape(c.gender || "")}</gender>`,
+    `    <age>${xmlEscape(c.age === "" ? "" : String(c.age))}</age>`,
+    `    <height>${xmlEscape(c.height || "")}</height>`,
+    `    <origin>${xmlEscape(c.origins || "")}</origin>`,
+    `    <race>${xmlEscape(c.race || "")}</race>`,
+    `    <personality>${xmlEscape((c.personalities || []).join(", "))}</personality>`,
+    `    <physical_appearance>${xmlEscape((c.physicalAppearance || []).join(", "))}</physical_appearance>`,
+    `    <unique_traits>${xmlEscape((c.uniqueTraits || []).join(", "))}</unique_traits>`,
+    `    <behavior>${xmlEscape([...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", "))}</behavior>`,
+    `    <speech_patterns>${xmlEscape((c.speechPatterns || []).join(", "))}</speech_patterns>`,
+    `    <backstory>${xmlEscape(selectedBackstory)}</backstory>`,
+    `  </character>`,
+  ].join("\n");
 }
 
 function normalizeCharacter(x: any): Character | null {
@@ -698,9 +560,9 @@ function normalizeCharacter(x: any): Character | null {
   const now = new Date().toISOString();
 
   const introMessages = (() => {
-    const arr = normalizeTextArray(x.introMessages);
+    const arr = normalizeStringArray(x.introMessages);
     if (arr.length) return arr;
-    const legacy = typeof x.introMessage === "string" ? x.introMessage.replace(/\r\n/g, "\n") : "";
+    const legacy = collapseWhitespace(x.introMessage);
     return legacy ? [legacy] : [""];
   })();
 
@@ -740,7 +602,7 @@ function normalizeCharacter(x: any): Character | null {
     respondToProblems: normalizeStringArray(x.respondToProblems),
     sexualBehavior: normalizeStringArray(x.sexualBehavior),
     speechPatterns: normalizeStringArray((x as any).speechPatterns),
-    backstory: normalizeTextArray(x.backstory),
+    backstory: normalizeStringArray(x.backstory),
     selectedBackstoryIndex: Number.isFinite(Number(x.selectedBackstoryIndex)) ? Math.max(0, Number(x.selectedBackstoryIndex)) : 0,
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
     selectedSystemRuleIds: normalizeStringArray(x.selectedSystemRuleIds),
@@ -954,7 +816,7 @@ function runTests() {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
-  if (!t.includes("### Character: A")) throw new Error("TXT export header missing");
+  if (!t.includes("# A")) throw new Error("TXT export header missing");
   if (!t.includes("Personality: Brave")) throw new Error("TXT export personality missing");
   if (!t.includes("* Intro 2:")) throw new Error("TXT export selected intro marker missing");
 }
@@ -1192,11 +1054,6 @@ export default function CharacterCreatorApp() {
   }, [storywritingDragPreview]);
 
   const [introRevisionPrompt, setIntroRevisionPrompt] = useState("");
-  const [cardExportModalOpen, setCardExportModalOpen] = useState(false);
-  const [cardExportAsJson, setCardExportAsJson] = useState(true);
-  const [cardExportAsTxt, setCardExportAsTxt] = useState(true);
-  const [cardExportIncludeDefinition, setCardExportIncludeDefinition] = useState(true);
-  const [cardExportIncludeFirstMessage, setCardExportIncludeFirstMessage] = useState(true);
   const [relationshipDetailsPrompt, setRelationshipDetailsPrompt] = useState("");
   const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
   const [generatedTextStates, setGeneratedTextStates] = useState<Record<string, GeneratedTextState>>({});
@@ -1206,40 +1063,6 @@ export default function CharacterCreatorApp() {
   const [genError, setGenError] = useState<string | null>(null);
   const [proxyProgress, setProxyProgress] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
-  const [authOpen, setAuthOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [authUsernameInput, setAuthUsernameInput] = useState("");
-  const [authPasswordInput, setAuthPasswordInput] = useState("");
-  const [activeAccountUsername, setActiveAccountUsername] = useState<string | null>(null);
-  const [accountSyncStatus, setAccountSyncStatus] = useState("");
-  const lastAccountSnapshotRef = useRef("");
-  const imageEditorFileRef = useRef<HTMLInputElement | null>(null);
-  const imageEditorCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [imageSpaces, setImageSpaces] = useState<ImageEditorSpace[]>([]);
-  const [activeImageSpaceId, setActiveImageSpaceId] = useState<string | null>(null);
-  const [imageTool, setImageTool] = useState<ImageEditorTool>("move");
-  const [imageResizeMode, setImageResizeMode] = useState<ImageResizeMode>("free");
-  const [imageWorkspacePan, setImageWorkspacePan] = useState({ x: 0, y: 0 });
-  const [imageWorkspaceZoom, setImageWorkspaceZoom] = useState(1);
-  const [imageIsPanning, setImageIsPanning] = useState(false);
-  const [imageSelectionPoints, setImageSelectionPoints] = useState<Array<{ x: number; y: number }>>([]);
-  const [imageSelectionRect, setImageSelectionRect] = useState<ImageRect | null>(null);
-  const [imageSelectionMaskDataUrl, setImageSelectionMaskDataUrl] = useState<string>("");
-  const [selectionCombineMode, setSelectionCombineMode] = useState<"replace" | "add" | "subtract" | "intersect">("replace");
-  const [imageTransformMode, setImageTransformMode] = useState(false);
-  const [imageCropRect, setImageCropRect] = useState<ImageRect | null>(null);
-  const [imageCropDragging, setImageCropDragging] = useState<TransformHandle | null>(null);
-  const [imageSampledColor, setImageSampledColor] = useState<string>("#000000");
-  const [imageShowAnts, setImageShowAnts] = useState(0);
-  const dragLayerRef = useRef<{ layerId: string; lastX: number; lastY: number } | null>(null);
-  const drawStartRef = useRef<{ x: number; y: number } | null>(null);
-  const transformStartRef = useRef<{ rect: ImageRect; pointer: { x: number; y: number }; handle: TransformHandle } | null>(null);
-  const [imageHistoryBySpaceId, setImageHistoryBySpaceId] = useState<Record<string, string[]>>({});
-  const [imageHistoryIndexBySpaceId, setImageHistoryIndexBySpaceId] = useState<Record<string, number>>({});
-  const activeImageSpace = useMemo(
-    () => imageSpaces.find((s) => s.id === activeImageSpaceId) || null,
-    [imageSpaces, activeImageSpaceId]
-  );
 
   useEffect(() => {
     const sync = () => setIsMobile(window.innerWidth < 768);
@@ -1249,7 +1072,7 @@ export default function CharacterCreatorApp() {
   }, []);
 
   useEffect(() => {
-    if (page !== "characters" && page !== "create" && page !== "story_relationship_board" && page !== "lorebooks" && page !== "lorebook_create" && page !== "image_editor") {
+    if (page !== "characters" && page !== "create" && page !== "story_relationship_board" && page !== "lorebooks" && page !== "lorebook_create") {
       setPage("characters");
     }
   }, [page]);
@@ -1293,30 +1116,6 @@ export default function CharacterCreatorApp() {
     onCommit(text);
   }
 
-  async function continueGeneratedText(fieldKey: string, currentText: string, onCommit: (next: string) => void) {
-    const base = String(currentText || "");
-    if (!collapseWhitespace(base) || genLoading) return;
-    setGenError(null);
-    setGenLoading(true);
-    startGeneratedTextPage(fieldKey);
-    try {
-      const out = await callProxyChatCompletion({
-        system: "Continue the provided text from exactly where it stops. Keep the same tone, perspective, and formatting. Return only the continuation text.",
-        user: `Continue this text:
-
-${base}`,
-        maxTokens: proxyMaxTokens,
-        stream: proxyStreamingEnabled,
-        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, `${base}${partial}`, onCommit),
-      });
-      commitGeneratedText(fieldKey, `${base}${out}`, onCommit, true);
-    } catch (e: any) {
-      setGenError(e?.message ? String(e.message) : "Continue generation failed.");
-    } finally {
-      setGenLoading(false);
-    }
-  }
-
   function renderGeneratedTextarea(args: {
     fieldKey: string;
     value: string;
@@ -1337,7 +1136,7 @@ ${base}`,
     return (
       <div className="space-y-2">
         {pages.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center justify-between gap-2">
             <Button
               variant="secondary"
               type="button"
@@ -1363,29 +1162,8 @@ ${base}`,
             >
               Roll forward <ChevronRight className="h-4 w-4" />
             </Button>
-            <Button
-              variant="secondary"
-              type="button"
-              disabled={genLoading || !collapseWhitespace(effectiveValue)}
-              className="ml-auto border-[hsl(var(--hover-accent))] text-[hsl(var(--hover-accent))]"
-              onClick={() => continueGeneratedText(args.fieldKey, effectiveValue, args.onChange)}
-            >
-              Continue <ChevronRight className="h-5 w-5" />
-            </Button>
           </div>
-        ) : (
-          <div className="flex justify-end">
-            <Button
-              variant="secondary"
-              type="button"
-              disabled={genLoading || !collapseWhitespace(effectiveValue)}
-              className="border-[hsl(var(--hover-accent))] text-[hsl(var(--hover-accent))]"
-              onClick={() => continueGeneratedText(args.fieldKey, effectiveValue, args.onChange)}
-            >
-              Continue <ChevronRight className="h-5 w-5" />
-            </Button>
-          </div>
-        )}
+        ) : null}
         <label className="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
           <input
             type="checkbox"
@@ -1417,81 +1195,9 @@ ${base}`,
   const lorebookCoverFileRef = useRef<HTMLInputElement | null>(null);
   const factionImageFileRef = useRef<HTMLInputElement | null>(null);
   const sexualBehaviorImportRef = useRef<HTMLInputElement | null>(null);
-  const cardJsonImportRef = useRef<HTMLInputElement | null>(null);
-
-  function buildSyncPayload() {
-    const data: Record<string, string> = {};
-    for (const key of SYNC_KEYS) {
-      data[key] = localStorage.getItem(key) || "";
-    }
-    return {
-      format: "mastercreator_sync",
-      version: 1,
-      updatedAt: new Date().toISOString(),
-      data,
-    };
-  }
-
-  function applySyncPayload(payload: any) {
-    if (!payload || typeof payload !== "object") throw new Error("Invalid sync payload.");
-    if (payload.format !== "mastercreator_sync") throw new Error("Unsupported sync file format.");
-    const data = payload.data;
-    if (!data || typeof data !== "object") throw new Error("Sync payload is missing data.");
-
-    let changed = false;
-    for (const key of SYNC_KEYS) {
-      const value = typeof data[key] === "string" ? data[key] : "";
-      if ((localStorage.getItem(key) || "") !== value) changed = true;
-      localStorage.setItem(key, value);
-    }
-    if (!changed) return;
-    window.location.reload();
-  }
-
-  function readAccounts(): AccountRecord[] {
-    const parsed = safeParseJSON(localStorage.getItem(ACCOUNTS_KEY) || "");
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((a) => a && typeof a === "object" && typeof a.username === "string" && typeof a.passwordHash === "string");
-  }
-
-  function writeAccounts(accounts: AccountRecord[]) {
-    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-  }
-
-  function saveCurrentDataToAccount(username: string) {
-    const uname = collapseWhitespace(username).toLowerCase();
-    if (!uname) return;
-    const payload = buildSyncPayload();
-    const payloadText = JSON.stringify(payload);
-    lastAccountSnapshotRef.current = payloadText;
-    const now = new Date().toISOString();
-    const accounts = readAccounts();
-    const idx = accounts.findIndex((a) => a.username.toLowerCase() === uname);
-    if (idx < 0) return;
-    accounts[idx] = { ...accounts[idx], payload, updatedAt: now };
-    writeAccounts(accounts);
-    setAccountSyncStatus(`Synced account data at ${new Date().toLocaleTimeString()}.`);
-  }
-
-  function loadAccountData(username: string) {
-    const uname = collapseWhitespace(username).toLowerCase();
-    if (!uname) return;
-    const account = readAccounts().find((a) => a.username.toLowerCase() === uname);
-    if (!account) return;
-    if (account.payload) applySyncPayload(account.payload);
-  }
 
   useEffect(() => {
     if (import.meta.env.MODE === "test") runTests();
-  }, []);
-
-  useEffect(() => {
-    const remembered = collapseWhitespace(localStorage.getItem(CURRENT_ACCOUNT_KEY) || "");
-    if (remembered) {
-      setActiveAccountUsername(remembered);
-      setAccountSyncStatus(`Signed in as ${remembered}.`);
-      loadAccountData(remembered);
-    }
   }, []);
 
   useEffect(() => {
@@ -1719,12 +1425,8 @@ ${base}`,
             relationshipStoryId: typeof card.relationshipStoryId === "string" ? card.relationshipStoryId : undefined,
             systemRules: typeof card.systemRules === "string" ? card.systemRules : "",
             selectedSystemRuleIds: normalizeStringArray(card.selectedSystemRuleIds),
-            firstMessageMessages: normalizeTextArray(card.firstMessageMessages).length ? normalizeTextArray(card.firstMessageMessages) : [""],
+            firstMessageMessages: normalizeStringArray(card.firstMessageMessages).length ? normalizeStringArray(card.firstMessageMessages) : [""],
             selectedFirstMessageIndex: Number.isFinite(Number(card.selectedFirstMessageIndex)) ? Math.max(0, Number(card.selectedFirstMessageIndex)) : 0,
-            firstMessageVersionHistories: normalizeTextMatrix(card.firstMessageVersionHistories),
-            firstMessageVersionIndices: Array.isArray(card.firstMessageVersionIndices)
-              ? card.firstMessageVersionIndices.map((x: any) => (Number.isFinite(Number(x)) ? Math.max(0, Number(x)) : 0))
-              : [],
             createdAt: typeof card.createdAt === "string" ? card.createdAt : now,
             updatedAt: typeof card.updatedAt === "string" ? card.updatedAt : now,
           } as CharacterCard;
@@ -1740,12 +1442,10 @@ ${base}`,
 
     (async () => {
       try {
-        const fromIdbRaw = await idbGetAllCharacters();
-        const fromIdb = fromIdbRaw.map(normalizeCharacter).filter(Boolean) as Character[];
+        const fromIdb = await idbGetAllCharacters();
         const raw = localStorage.getItem(STORAGE_KEY);
-        const parsedLocal = raw ? safeParseJSON(raw) : null;
-        const fromLocal = Array.isArray(parsedLocal)
-          ? parsedLocal.map(normalizeCharacter).filter(Boolean) as Character[]
+        const fromLocal = raw && Array.isArray(safeParseJSON(raw))
+          ? (safeParseJSON(raw) as any[]).map(normalizeCharacter).filter(Boolean) as Character[]
           : [];
 
         const mergedById = new Map<string, Character>();
@@ -1755,7 +1455,7 @@ ${base}`,
             mergedById.set(ch.id, ch);
           }
         }
-        const merged = Array.from(mergedById.values()).sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+        const merged = Array.from(mergedById.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
         if (merged.length) {
           setCharacters(merged);
           try {
@@ -1851,27 +1551,6 @@ ${base}`,
   }, [characterCards]);
 
   useEffect(() => {
-    const parsed = safeParseJSON(localStorage.getItem(IMAGE_EDITOR_SPACES_KEY) || "");
-    if (!Array.isArray(parsed)) return;
-    const normalized = parsed.filter((s) => s && typeof s === "object" && typeof s.id === "string") as ImageEditorSpace[];
-    if (!normalized.length) return;
-    setImageSpaces(normalized);
-    setActiveImageSpaceId(normalized[0].id);
-    const historyObj: Record<string, string[]> = {};
-    const indexObj: Record<string, number> = {};
-    for (const s of normalized) {
-      historyObj[s.id] = [JSON.stringify(s)];
-      indexObj[s.id] = 0;
-    }
-    setImageHistoryBySpaceId(historyObj);
-    setImageHistoryIndexBySpaceId(indexObj);
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(IMAGE_EDITOR_SPACES_KEY, JSON.stringify(imageSpaces));
-  }, [imageSpaces]);
-
-  useEffect(() => {
     if (!hydrated) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(characters));
   }, [characters, hydrated]);
@@ -1888,97 +1567,6 @@ ${base}`,
     })();
   }, [characters, hydrated]);
 
-  useEffect(() => {
-    let raf = 0;
-    const tick = () => {
-      setImageShowAnts((v) => (v + 1) % 1000);
-      raf = window.requestAnimationFrame(tick);
-    };
-    raf = window.requestAnimationFrame(tick);
-    return () => window.cancelAnimationFrame(raf);
-  }, []);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const key = e.key.toLowerCase();
-      if ((e.ctrlKey || e.metaKey) && key === "z" && e.shiftKey) {
-        e.preventDefault();
-        redoImageEditor();
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && key === "z") {
-        e.preventDefault();
-        undoImageEditor();
-        return;
-      }
-      if (key === "escape") {
-        if (imageTransformMode) setImageTransformMode(false);
-        setImageCropRect(null);
-        setImageSelectionPoints([]);
-      }
-      if (key === "enter") {
-        if (imageTool === "crop" && imageCropRect) {
-          e.preventDefault();
-          applyImageCrop();
-        }
-        if (imageSelectionRect) {
-          setImageTransformMode(true);
-          setImageTool("transformSelection");
-        }
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [activeImageSpace, imageHistoryBySpaceId, imageHistoryIndexBySpaceId, imageTool, imageCropRect, imageSelectionRect, imageTransformMode]);
-
-  useEffect(() => {
-    const canvas = imageEditorCanvasRef.current;
-    const space = activeImageSpace;
-    if (!canvas || !space) return;
-    canvas.width = Math.max(1, Math.round(space.canvasWidth));
-    canvas.height = Math.max(1, Math.round(space.canvasHeight));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    let cancelled = false;
-    (async () => {
-      for (const layer of space.layers) {
-        try {
-          const img = new Image();
-          img.src = layer.imageDataUrl;
-          await new Promise<void>((resolve, reject) => {
-            img.onload = () => resolve();
-            img.onerror = () => reject(new Error("layer failed"));
-          });
-          if (cancelled) return;
-          ctx.drawImage(img, layer.x, layer.y, layer.width, layer.height);
-        } catch {}
-      }
-      if (!cancelled && space.activeLayerId) {
-        const active = space.layers.find((l) => l.id === space.activeLayerId);
-        if (active) {
-          ctx.save();
-          ctx.strokeStyle = "#ff5252";
-          ctx.lineWidth = 1;
-          ctx.setLineDash([6, 4]);
-          ctx.strokeRect(active.x, active.y, active.width, active.height);
-          ctx.restore();
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [activeImageSpace]);
-
-  useEffect(() => {
-    if (!activeAccountUsername || !hydrated) return;
-    const payloadText = JSON.stringify(buildSyncPayload());
-    if (payloadText === lastAccountSnapshotRef.current) return;
-    const t = window.setTimeout(() => {
-      saveCurrentDataToAccount(activeAccountUsername);
-    }, 1000);
-    return () => window.clearTimeout(t);
-  }, [activeAccountUsername, hydrated, characters, characterCards, stories, lorebooks, chatSessions, theme, proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt, proxyStreamingEnabled, personaText]);
-
 
   useEffect(() => {
     const card = characterCards.find((c) => c.id === activeCharacterCardId);
@@ -1986,21 +1574,10 @@ ${base}`,
     setCardSystemRules(card.systemRules || "");
     setCardSelectedSystemRuleIds(card.selectedSystemRuleIds || []);
     const msgs = card.firstMessageMessages?.length ? [...card.firstMessageMessages] : [""];
-    const historiesBase = normalizeTextMatrix(card.firstMessageVersionHistories);
-    const histories = msgs.map((msg, idx) => {
-      const existing = historiesBase[idx];
-      if (!existing || !existing.length) return [msg || ""];
-      return existing;
-    });
-    const indices = msgs.map((_, idx) => {
-      const history = histories[idx] || [""];
-      const raw = card.firstMessageVersionIndices?.[idx] ?? 0;
-      return clampIndex(raw, history.length);
-    });
     setIntroMessages(msgs);
     setIntroIndex(clampIndex(card.selectedFirstMessageIndex || 0, msgs.length));
-    setIntroVersionHistories(histories);
-    setIntroVersionIndices(indices);
+    setIntroVersionHistories(msgs.map((m) => [m || ""]));
+    setIntroVersionIndices(msgs.map(() => 0));
   }, [activeCharacterCardId]);
 
   useEffect(() => {
@@ -2011,17 +1588,15 @@ ${base}`,
       selectedSystemRuleIds: cardSelectedSystemRuleIds,
       firstMessageMessages: introMessages,
       selectedFirstMessageIndex: introIndex,
-      firstMessageVersionHistories: introVersionHistories,
-      firstMessageVersionIndices: introVersionIndices,
       updatedAt: new Date().toISOString(),
     }));
-  }, [hydrated, activeCharacterCardId, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex, introVersionHistories, introVersionIndices]);
+  }, [hydrated, activeCharacterCardId, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex]);
 
   useEffect(() => {
     if (!hydrated) return;
     if (!characterCards.length) {
       const now = new Date().toISOString();
-      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, firstMessageVersionHistories: [[""]], firstMessageVersionIndices: [0], createdAt: now, updatedAt: now };
+      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
       setCharacterCards([card]);
       setActiveCharacterCardId(card.id);
       setCharacterCardNameInput(card.name);
@@ -2499,275 +2074,6 @@ ${base}`,
     setPage(next);
   }
 
-  function openAccountAuth(mode: "login" | "register") {
-    setAuthMode(mode);
-    setAuthOpen(true);
-  }
-
-  function submitAccountAuth() {
-    const username = collapseWhitespace(authUsernameInput).toLowerCase();
-    const password = authPasswordInput;
-    if (!username || !password) return alert("Enter username and password.");
-
-    const accounts = readAccounts();
-    const idx = accounts.findIndex((a) => a.username.toLowerCase() === username);
-    const passwordHash = hashCredential(username, password);
-
-    if (authMode === "register") {
-      if (idx >= 0) return alert("That username already exists.");
-      const payload = buildSyncPayload();
-      accounts.unshift({ username, passwordHash, payload, updatedAt: new Date().toISOString() });
-      writeAccounts(accounts);
-      localStorage.setItem(CURRENT_ACCOUNT_KEY, username);
-      setActiveAccountUsername(username);
-      setAccountSyncStatus(`Registered and signed in as ${username}.`);
-      setAuthOpen(false);
-      return;
-    }
-
-    if (idx < 0) return alert("Account not found.");
-    if (accounts[idx].passwordHash !== passwordHash) return alert("Incorrect password.");
-
-    localStorage.setItem(CURRENT_ACCOUNT_KEY, username);
-    setActiveAccountUsername(username);
-    setAccountSyncStatus(`Signed in as ${username}. Loading synced data...`);
-    setAuthOpen(false);
-    loadAccountData(username);
-  }
-
-  function signOutAccount() {
-    localStorage.removeItem(CURRENT_ACCOUNT_KEY);
-    setActiveAccountUsername(null);
-    setAccountSyncStatus("Signed out.");
-  }
-
-  function syncNowToAccount() {
-    if (!activeAccountUsername) return alert("Please log in first.");
-    saveCurrentDataToAccount(activeAccountUsername);
-  }
-
-  function getCanvasPointFromMouse(e: React.MouseEvent<HTMLDivElement, MouseEvent>, space: ImageEditorSpace) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - rect.left - imageWorkspacePan.x) / imageWorkspaceZoom;
-    const y = (e.clientY - rect.top - imageWorkspacePan.y) / imageWorkspaceZoom;
-    return { x: Math.max(0, Math.min(space.canvasWidth, x)), y: Math.max(0, Math.min(space.canvasHeight, y)) };
-  }
-
-  function getTransformHandleAtPoint(rect: ImageRect, x: number, y: number): TransformHandle | null {
-    const hs = 8;
-    const handles: Array<[TransformHandle, number, number]> = [
-      ["nw", rect.x, rect.y], ["n", rect.x + rect.width / 2, rect.y], ["ne", rect.x + rect.width, rect.y],
-      ["e", rect.x + rect.width, rect.y + rect.height / 2], ["se", rect.x + rect.width, rect.y + rect.height],
-      ["s", rect.x + rect.width / 2, rect.y + rect.height], ["sw", rect.x, rect.y + rect.height],
-      ["w", rect.x, rect.y + rect.height / 2],
-    ];
-    for (const [id, hx, hy] of handles) {
-      if (Math.abs(x - hx) <= hs && Math.abs(y - hy) <= hs) return id;
-    }
-    if (x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height) return "inside";
-    return null;
-  }
-
-  function applySelectionRectWithMode(newRect: ImageRect, mode: "replace" | "add" | "subtract" | "intersect") {
-    if (!activeImageSpace) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(activeImageSpace.canvasWidth));
-    canvas.height = Math.max(1, Math.round(activeImageSpace.canvasHeight));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    if (imageSelectionMaskDataUrl) {
-      const img = new Image();
-      img.src = imageSelectionMaskDataUrl;
-      img.onload = () => {
-        if (mode !== "replace") {
-          ctx.drawImage(img, 0, 0);
-        }
-        ctx.globalCompositeOperation = mode === "subtract" ? "destination-out" : mode === "intersect" ? "destination-in" : "source-over";
-        ctx.fillStyle = "rgba(255,255,255,1)";
-        ctx.fillRect(newRect.x, newRect.y, newRect.width, newRect.height);
-        if (mode === "replace") {
-          ctx.globalCompositeOperation = "source-over";
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.fillRect(newRect.x, newRect.y, newRect.width, newRect.height);
-        }
-        setImageSelectionMaskDataUrl(canvas.toDataURL("image/png"));
-        setImageSelectionRect(newRect);
-      };
-      img.onerror = () => {
-        ctx.fillStyle = "rgba(255,255,255,1)";
-        ctx.fillRect(newRect.x, newRect.y, newRect.width, newRect.height);
-        setImageSelectionMaskDataUrl(canvas.toDataURL("image/png"));
-        setImageSelectionRect(newRect);
-      };
-      return;
-    }
-
-    ctx.fillStyle = "rgba(255,255,255,1)";
-    ctx.fillRect(newRect.x, newRect.y, newRect.width, newRect.height);
-    setImageSelectionMaskDataUrl(canvas.toDataURL("image/png"));
-    setImageSelectionRect(newRect);
-  }
-
-  function persistImageHistory(space: ImageEditorSpace) {
-    const snap = JSON.stringify(space);
-    setImageHistoryBySpaceId((prev) => {
-      const existing = prev[space.id] || [];
-      const idx = imageHistoryIndexBySpaceId[space.id] ?? existing.length - 1;
-      const sliced = existing.slice(0, idx + 1);
-      if (sliced[sliced.length - 1] === snap) return prev;
-      return { ...prev, [space.id]: [...sliced, snap].slice(-120) };
-    });
-    setImageHistoryIndexBySpaceId((prev) => {
-      const existing = imageHistoryBySpaceId[space.id] || [];
-      const idx = prev[space.id] ?? existing.length - 1;
-      const next = Math.min(idx + 1, 119);
-      return { ...prev, [space.id]: next };
-    });
-  }
-
-  function updateActiveImageSpace(mutator: (s: ImageEditorSpace) => ImageEditorSpace) {
-    if (!activeImageSpaceId) return;
-    setImageSpaces((prev) => {
-      const idx = prev.findIndex((s) => s.id === activeImageSpaceId);
-      if (idx < 0) return prev;
-      const next = [...prev];
-      const updated = { ...mutator(next[idx]), updatedAt: new Date().toISOString() };
-      next[idx] = updated;
-      persistImageHistory(updated);
-      return next;
-    });
-  }
-
-  function createImageSpace() {
-    const now = new Date().toISOString();
-    const space: ImageEditorSpace = {
-      id: uid(),
-      name: `Space ${imageSpaces.length + 1}`,
-      canvasWidth: 1600,
-      canvasHeight: 1000,
-      layers: [],
-      activeLayerId: null,
-      updatedAt: now,
-    };
-    setImageSpaces((prev) => [space, ...prev]);
-    setActiveImageSpaceId(space.id);
-    setImageWorkspacePan({ x: 0, y: 0 });
-    setImageWorkspaceZoom(1);
-    setImageHistoryBySpaceId((prev) => ({ ...prev, [space.id]: [JSON.stringify(space)] }));
-    setImageHistoryIndexBySpaceId((prev) => ({ ...prev, [space.id]: 0 }));
-  }
-
-  function insertLayerFromImageDataUrl(dataUrl: string, imageWidth: number, imageHeight: number) {
-    let targetId = activeImageSpaceId || (imageSpaces[0]?.id ?? null);
-    if (!targetId) {
-      const now = new Date().toISOString();
-      const space: ImageEditorSpace = {
-        id: uid(),
-        name: "Space 1",
-        canvasWidth: imageWidth,
-        canvasHeight: imageHeight,
-        layers: [],
-        activeLayerId: null,
-        updatedAt: now,
-      };
-      setImageSpaces([space]);
-      setActiveImageSpaceId(space.id);
-      setImageHistoryBySpaceId({ [space.id]: [JSON.stringify(space)] });
-      setImageHistoryIndexBySpaceId({ [space.id]: 0 });
-      targetId = space.id;
-    }
-    setImageSpaces((prev) => prev.map((space) => {
-      if (space.id !== targetId) return space;
-      const layer: ImageLayer = {
-        id: uid(),
-        name: `Layer ${space.layers.length + 1}`,
-        imageDataUrl: dataUrl,
-        width: imageWidth,
-        height: imageHeight,
-        x: Math.max(0, Math.round((space.canvasWidth - imageWidth) / 2)),
-        y: Math.max(0, Math.round((space.canvasHeight - imageHeight) / 2)),
-      };
-      const nextSpace = {
-        ...space,
-        canvasWidth: space.layers.length ? space.canvasWidth : imageWidth,
-        canvasHeight: space.layers.length ? space.canvasHeight : imageHeight,
-        layers: [...space.layers, layer],
-        activeLayerId: layer.id,
-        updatedAt: new Date().toISOString(),
-      };
-      persistImageHistory(nextSpace);
-      return nextSpace;
-    }));
-  }
-
-  async function handleImageEditorFile(file: File) {
-    if (!file.type.startsWith("image/")) return;
-    const dataUrl = await readFileAsDataUrl(file);
-    const img = new Image();
-    img.src = dataUrl;
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error("Failed to load image."));
-    });
-    insertLayerFromImageDataUrl(dataUrl, img.naturalWidth || 1, img.naturalHeight || 1);
-  }
-
-  function undoImageEditor() {
-    if (!activeImageSpace) return;
-    const history = imageHistoryBySpaceId[activeImageSpace.id] || [];
-    const idx = imageHistoryIndexBySpaceId[activeImageSpace.id] ?? history.length - 1;
-    if (idx <= 0 || !history.length) return;
-    const nextIdx = idx - 1;
-    const snapshot = safeParseJSON(history[nextIdx] || "");
-    if (!snapshot) return;
-    setImageSpaces((prev) => prev.map((s) => s.id === activeImageSpace.id ? snapshot as ImageEditorSpace : s));
-    setImageHistoryIndexBySpaceId((prev) => ({ ...prev, [activeImageSpace.id]: nextIdx }));
-  }
-
-  function redoImageEditor() {
-    if (!activeImageSpace) return;
-    const history = imageHistoryBySpaceId[activeImageSpace.id] || [];
-    const idx = imageHistoryIndexBySpaceId[activeImageSpace.id] ?? history.length - 1;
-    if (idx >= history.length - 1 || !history.length) return;
-    const nextIdx = idx + 1;
-    const snapshot = safeParseJSON(history[nextIdx] || "");
-    if (!snapshot) return;
-    setImageSpaces((prev) => prev.map((s) => s.id === activeImageSpace.id ? snapshot as ImageEditorSpace : s));
-    setImageHistoryIndexBySpaceId((prev) => ({ ...prev, [activeImageSpace.id]: nextIdx }));
-  }
-
-  function exportImageEditor(type: "png" | "jpg") {
-    const canvas = imageEditorCanvasRef.current;
-    const space = activeImageSpace;
-    if (!canvas || !space) return;
-    const mime = type === "png" ? "image/png" : "image/jpeg";
-    const quality = type === "png" ? 1 : 0.92;
-    const url = canvas.toDataURL(mime, quality);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${filenameSafe(space.name || "space") || "space"}.${type}`;
-    a.click();
-  }
-
-  function applyImageCrop() {
-    if (!activeImageSpace || !imageCropRect) return;
-    const cropX = Math.max(0, Math.round(imageCropRect.x));
-    const cropY = Math.max(0, Math.round(imageCropRect.y));
-    const cropW = Math.max(1, Math.round(imageCropRect.width));
-    const cropH = Math.max(1, Math.round(imageCropRect.height));
-    updateActiveImageSpace((s) => ({
-      ...s,
-      canvasWidth: cropW,
-      canvasHeight: cropH,
-      layers: s.layers.map((l) => ({ ...l, x: l.x - cropX, y: l.y - cropY })),
-    }));
-    if (imageSelectionRect) {
-      setImageSelectionRect(clampRectToCanvas({ x: imageSelectionRect.x - cropX, y: imageSelectionRect.y - cropY, width: imageSelectionRect.width, height: imageSelectionRect.height }, cropW, cropH));
-    }
-    setImageCropRect(null);
-  }
-
   function loadCharacterIntoForm(c: Character) {
     setSelectedId(c.id);
 
@@ -2790,33 +2096,7 @@ ${base}`,
     setProblemBehavior(Array.isArray(c.respondToProblems) ? [...c.respondToProblems] : []);
     setSexualBehavior(Array.isArray(c.sexualBehavior) ? [...c.sexualBehavior] : []);
     setSpeechPatterns(Array.isArray(c.speechPatterns) ? [...c.speechPatterns] : []);
-    const loadedBackstory = Array.isArray(c.backstory) ? [...c.backstory] : [];
-    const loadedBackstoryIndex = loadedBackstory.length
-      ? clampIndex(c.selectedBackstoryIndex ?? loadedBackstory.length - 1, loadedBackstory.length)
-      : 0;
-    const loadedBackstoryText = loadedBackstory[loadedBackstoryIndex] || "";
-    setBackstory(loadedBackstory);
-    setBackstoryText(loadedBackstoryText);
-    setGeneratedTextStates((prev) => {
-      const next = { ...prev };
-      if (loadedBackstory.length) {
-        next["character:backstory"] = {
-          pages: loadedBackstory.map((text, idx) => ({
-            id: `character-backstory:${c.id}:${idx}`,
-            text,
-            isFinal: true,
-          })),
-          activeIndex: loadedBackstoryIndex,
-        };
-      } else {
-        delete next["character:backstory"];
-      }
-      return next;
-    });
-    setIterationSelections((prev) => ({
-      ...prev,
-      "character:backstory": loadedBackstory.length ? `character-backstory:${c.id}:${loadedBackstoryIndex}` : "",
-    }));
+    setBackstory(Array.isArray(c.backstory) ? [...c.backstory] : []);
     setTraitInput("");
     setAppearanceInput("");
     setSexualBehaviorInput("");
@@ -3935,23 +3215,6 @@ Write the character's next reply to the latest user message.`;
       .join("\n\n");
   }
 
-  function getPromptFocusContext(prompt: string) {
-    const chars = getActiveCardCharacters();
-    const lowerPrompt = collapseWhitespace(prompt).toLowerCase();
-    const focused = chars.filter((c) => {
-      const n = collapseWhitespace(c.name).toLowerCase();
-      return !!n && lowerPrompt.includes(n);
-    });
-    if (!focused.length) {
-      return "No specific character explicitly mentioned in prompt. Keep balanced focus across ALL character entries in this card.";
-    }
-    return [
-      `Prompt-mentioned focus characters (${focused.length}):`,
-      ...focused.map((c) => `- ${collapseWhitespace(c.name) || "(unnamed)"}`),
-      "Prioritize these characters while still preserving context of all entries in this card.",
-    ].join("\n");
-  }
-
   function getCharacterSummaryForLLM() {
     return [
       `Name: ${collapseWhitespace(name) || "(unnamed)"}`,
@@ -4384,24 +3647,6 @@ ${more}`.trim();
     return clean;
   }
 
-  function beginIntroRevisionIteration(targetIndex: number, seedText: string) {
-    setIntroVersionHistories((prev) => {
-      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
-      while (base.length <= targetIndex) base.push([""]);
-      const history = [...base[targetIndex]];
-      if (!history.length || history[history.length - 1] !== seedText) history.push(seedText);
-      history.push("");
-      base[targetIndex] = history;
-      setIntroVersionIndices((old) => {
-        const next = old.length ? [...old] : [0];
-        while (next.length <= targetIndex) next.push(0);
-        next[targetIndex] = history.length - 1;
-        return next;
-      });
-      return base;
-    });
-  }
-
   async function generateSelectedIntro() {
     setGenError(null);
     const userPrompt = collapseWhitespace(introPrompt);
@@ -4411,24 +3656,9 @@ ${more}`.trim();
     }
 
     const system =
-      "You write ONE shared FIRST MESSAGE for a character card that can contain multiple character entries. Follow the user prompt exactly. Use the whole card context. If the user prompt explicitly mentions one or more characters, make those the focus while retaining continuity with the rest of the card cast. Write only the first message content, no meta commentary. Internal format rule: narration/action text must be wrapped in *asterisks* and spoken dialogue must be in double quotes.";
+      "You write an INTRO MESSAGE for a roleplay character. Write a compelling opening message that starts the roleplay immediately. Keep it in-character, vivid, and usable as the first message. Do not add explanations or meta commentary.";
 
-    const user = `User prompt (highest priority):
-${userPrompt}
-
-Prompt focus analysis:
-${getPromptFocusContext(userPrompt)}
-
-Current selected character entry (supporting details only):
-${getCharacterSummaryForLLM()}
-
-All character entries in THIS SAME card (required global context):
-${getActiveCardCharactersContext()}
-
-Card system rules:
-${cardSystemRules || "(none)"}
-
-Return ONLY the first message text.`;
+    const user = `Character info:\n${getCharacterSummaryForLLM()}\n\nUser prompt:\n${userPrompt}\n\nReturn ONLY the intro message text.`;
 
     const targetIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
     const existing = introMessages[targetIndex] || "";
@@ -4439,7 +3669,20 @@ Return ONLY the first message text.`;
       if (!ok) return;
     }
 
-    beginIntroRevisionIteration(targetIndex, existing || "");
+    const baseline = existing;
+    setIntroVersionHistories((prev) => {
+      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      while (base.length <= targetIndex) base.push([""]);
+      const history = base[targetIndex];
+      history.push(baseline);
+      return base;
+    });
+    setIntroVersionIndices((prev) => {
+      const base = prev.length ? [...prev] : [0];
+      while (base.length <= targetIndex) base.push(0);
+      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
+      return base;
+    });
     setGenLoading(true);
     try {
       const text = await callProxyChatCompletion({
@@ -4533,30 +3776,36 @@ Return ONLY the first message text.`;
     }
 
     const system =
-      "You revise ONE shared first message for a character card. Follow user feedback exactly, preserve immediate continuity from the current message text, and keep the whole card cast context. If feedback mentions specific characters, prioritize them while retaining card-wide coherence. Return ONLY the revised first message text. Internal format rule: narration/action text must be wrapped in *asterisks* and spoken dialogue must be in double quotes.";
+      "You revise exactly ONE roleplay intro message based on feedback. Only use overview/system context and the provided current intro. Do not use other intros. Keep it in-character and ready to use. Return ONLY the revised intro text.";
 
-    const user = `Revision feedback (highest priority):
-${feedback}
-
-Prompt focus analysis:
-${getPromptFocusContext(feedback)}
-
-Current first message (continue/refine this text):
-${currentIntro}
-
-Current selected character entry (supporting details only):
-${getCharacterSummaryForLLM()}
-
-All character entries in THIS SAME card (required global context):
+    const user = `Overview and system context:
 ${getActiveCardCharactersContext()}
 
 Card system rules:
 ${cardSystemRules || "(none)"}
 
-Return only the revised first message.`;
+Current intro message (only this one should be revised):
+${currentIntro}
+
+User revision feedback:
+${feedback}
+
+Return only the revised intro message.`;
 
     const targetIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
-    beginIntroRevisionIteration(targetIndex, currentIntro);
+    setIntroVersionHistories((prev) => {
+      const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
+      while (base.length <= targetIndex) base.push([""]);
+      const history = base[targetIndex];
+      history.push(currentIntro);
+      return base;
+    });
+    setIntroVersionIndices((prev) => {
+      const base = prev.length ? [...prev] : [0];
+      while (base.length <= targetIndex) base.push(0);
+      base[targetIndex] = Math.max(0, (base[targetIndex] || 0) + 1);
+      return base;
+    });
     setGenLoading(true);
     try {
       const text = await callProxyChatCompletion({
@@ -5025,7 +4274,7 @@ ${feedback}`,
   }
 
 
-  function exportCurrentCardInfoTxt(fallbackCharacter?: Character) {
+  function exportCurrentCardTxt(fallbackCharacter?: Character) {
     const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
     const cardChars = activeCard
       ? (activeCard.characterIds || []).map((id) => characters.find((c) => c.id === id)).filter((c): c is Character => !!c)
@@ -5038,283 +4287,36 @@ ${feedback}`,
     const relationships = (cardStory?.relationships || []).map((r) => {
       const from = cardChars.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
       const to = cardChars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
-      return `- ${from} -> ${to} | Alignment: ${r.alignment || "-"} | Type: ${r.relationType || "-"}${r.details ? ` | Details: ${r.details}` : ""}`;
+      return `    <relationship from="${xmlEscape(from)}" to="${xmlEscape(to)}" alignment="${xmlEscape(r.alignment)}" type="${xmlEscape(r.relationType)}">${xmlEscape(r.details || "")}</relationship>`;
     });
 
     const selectedRuleTexts = STORY_SYSTEM_RULE_CARDS
       .filter((r) => cardSelectedSystemRuleIds.includes(r.id))
-      .map((r) => `${r.label}: ${r.text}`);
+      .map((r) => r.text);
 
-    const text = [
-      `### Character Card: ${collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card"}`,
-      "",
-      "***",
-      "",
-      "### Individual Character Info",
-      "",
-      ...(cardChars.length ? cardChars.flatMap((c) => [characterToTxt(c, { includeIntro: false }), ""]) : ["- No characters in this card.", ""]),
-      "### Relationships",
-      ...(relationships.length ? relationships : ["- None"]),
-      "",
-      "### System Rules",
-      "",
-      "Selected Rule Cards:",
-      ...(selectedRuleTexts.length ? selectedRuleTexts.map((rule) => `- ${rule}`) : ["- None"]),
-      "",
-      "Custom Rules:",
-      cardSystemRules || "-",
+    const xml = [
+      `<character_card name="${xmlEscape(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card")}">`,
+      `  <individual_character_info>`,
+      ...(cardChars.length ? cardChars.map((c) => characterToTxt(c)) : ["    <character />"]),
+      `  </individual_character_info>`,
+      `  <relationships>`,
+      ...(relationships.length ? relationships : ["    <relationship />"]),
+      `  </relationships>`,
+      `  <system_rules>`,
+      `    <selected_rule_cards>${xmlEscape(selectedRuleTexts.join(" | "))}</selected_rule_cards>`,
+      `    <custom_rules>${xmlEscape(cardSystemRules || "")}</custom_rules>`,
+      `  </system_rules>`,
+      `</character_card>`,
       "",
     ].join("\n");
 
     const exportName = filenameSafe(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "character_card") || "character_card";
-    downloadText(`${exportName}_info_system.txt`, text);
+    downloadText(`${exportName}.txt`, xml);
   }
 
-  function exportCurrentCardIntroTxt(fallbackCharacter?: Character) {
-    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
-    const selectedMsgIndex = clampIndex(introIndex, Math.max(1, introMessages.length));
-    const selectedHistory = introVersionHistories[selectedMsgIndex] || [introMessages[selectedMsgIndex] || ""];
-    const selectedVersionIndex = clampIndex(introVersionIndices[selectedMsgIndex] || 0, Math.max(1, selectedHistory.length));
-    const selectedIntro = selectedHistory[selectedVersionIndex] || introMessages[selectedMsgIndex] || "";
-    const text = [
-      `### Character Card Intro: ${collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card"}`,
-      "",
-      "***",
-      "",
-      "### Intro Message",
-      `Message Index: ${selectedMsgIndex + 1}`,
-      `Version: ${selectedVersionIndex + 1} / ${Math.max(1, selectedHistory.length)}`,
-      "",
-      "Content:",
-      selectedIntro || "-",
-      "",
-    ].join("\n");
-    const exportName = filenameSafe(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "character_card") || "character_card";
-    downloadText(`${exportName}_intro_messages.txt`, text);
-  }
-
-  function buildCurrentCardExportPayload(fallbackCharacter?: Character): CharacterCardExportPayload | null {
-    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
-    if (!activeCard && !fallbackCharacter) return null;
-
-    const now = new Date().toISOString();
-    const fallbackId = fallbackCharacter?.id || uid();
-    const card: CharacterCard = activeCard
-      ? {
-          ...activeCard,
-          name: collapseWhitespace(characterCardNameInput) || activeCard.name || "Character Card",
-          systemRules: cardSystemRules,
-          selectedSystemRuleIds: cardSelectedSystemRuleIds,
-          firstMessageMessages: introMessages,
-          selectedFirstMessageIndex: introIndex,
-          firstMessageVersionHistories: introVersionHistories,
-          firstMessageVersionIndices: introVersionIndices,
-          updatedAt: now,
-        }
-      : {
-          id: uid(),
-          name: collapseWhitespace(characterCardNameInput) || fallbackCharacter?.name || "Character Card",
-          characterIds: [fallbackId],
-          systemRules: cardSystemRules,
-          selectedSystemRuleIds: cardSelectedSystemRuleIds,
-          firstMessageMessages: introMessages.length ? introMessages : [""],
-          selectedFirstMessageIndex: clampIndex(introIndex, Math.max(1, introMessages.length || 1)),
-          firstMessageVersionHistories: introVersionHistories.length ? introVersionHistories : [[""]],
-          firstMessageVersionIndices: introVersionIndices.length ? introVersionIndices : [0],
-          createdAt: now,
-          updatedAt: now,
-        };
-
-    const scopedCharacters = card.characterIds
-      .map((id) => characters.find((c) => c.id === id))
-      .filter((c): c is Character => !!c);
-
-    if (!scopedCharacters.length && fallbackCharacter) scopedCharacters.push(fallbackCharacter);
-
-    const relationshipStory = card.relationshipStoryId
-      ? stories.find((s) => s.id === card.relationshipStoryId) || null
-      : null;
-
-    return {
-      format: "mastercreator_character_card",
-      version: 1,
-      exportedAt: now,
-      card,
-      characters: scopedCharacters,
-      relationshipStory,
-    };
-  }
-
-  function exportCurrentCardSelection(fallbackCharacter?: Character) {
-    const payload = buildCurrentCardExportPayload(fallbackCharacter);
-    if (!payload) {
-      alert("Please add a character card or character entry before exporting.");
-      return;
-    }
-
-    if (!cardExportAsJson && !cardExportAsTxt) {
-      alert("Select at least one format: JSON and/or TXT.");
-      return;
-    }
-
-    if (!cardExportIncludeDefinition && !cardExportIncludeFirstMessage) {
-      alert("Select at least one section: Definition and/or First Message.");
-      return;
-    }
-
-    const exportName = filenameSafe(payload.card.name || "character_card") || "character_card";
-
-    if (cardExportAsJson) {
-      downloadJSON(`${exportName}.json`, payload);
-    }
-
-    if (cardExportAsTxt) {
-      if (cardExportIncludeDefinition) exportCurrentCardInfoTxt(fallbackCharacter);
-      if (cardExportIncludeFirstMessage) exportCurrentCardIntroTxt(fallbackCharacter);
-    }
-
-    setCardExportModalOpen(false);
-  }
-
-  async function importCharacterCardFromJSON(file: File) {
-    try {
-      const raw = await file.text();
-      const parsed = safeParseJSON(raw);
-      if (!parsed || typeof parsed !== "object") throw new Error("Invalid JSON payload.");
-
-      const payload = parsed as Partial<CharacterCardExportPayload>;
-      if (payload.format !== "mastercreator_character_card") {
-        throw new Error("Unsupported file type. Please import a Mastercreator character card JSON export.");
-      }
-
-      const importedCharacters = Array.isArray(payload.characters)
-        ? payload.characters.map(normalizeCharacter).filter((x): x is Character => !!x)
-        : [];
-      if (!importedCharacters.length) throw new Error("No valid character entries were found in this file.");
-
-      const cardRaw = payload.card as any;
-      if (!cardRaw || typeof cardRaw !== "object") throw new Error("Character card data is missing.");
-
-      const now = new Date().toISOString();
-      const normalizedCard: CharacterCard = {
-        id: typeof cardRaw.id === "string" ? cardRaw.id : uid(),
-        name: collapseWhitespace(cardRaw.name || "Character Card"),
-        characterIds: normalizeStringArray(cardRaw.characterIds),
-        relationshipStoryId: typeof cardRaw.relationshipStoryId === "string" ? cardRaw.relationshipStoryId : undefined,
-        systemRules: typeof cardRaw.systemRules === "string" ? cardRaw.systemRules : "",
-        selectedSystemRuleIds: normalizeStringArray(cardRaw.selectedSystemRuleIds),
-        firstMessageMessages: normalizeTextArray(cardRaw.firstMessageMessages).length ? normalizeTextArray(cardRaw.firstMessageMessages) : [""],
-        selectedFirstMessageIndex: Number.isFinite(Number(cardRaw.selectedFirstMessageIndex)) ? Math.max(0, Number(cardRaw.selectedFirstMessageIndex)) : 0,
-        firstMessageVersionHistories: normalizeTextMatrix(cardRaw.firstMessageVersionHistories),
-        firstMessageVersionIndices: Array.isArray(cardRaw.firstMessageVersionIndices)
-          ? cardRaw.firstMessageVersionIndices.map((x: any) => (Number.isFinite(Number(x)) ? Math.max(0, Number(x)) : 0))
-          : [],
-        createdAt: typeof cardRaw.createdAt === "string" ? cardRaw.createdAt : now,
-        updatedAt: now,
-      };
-
-      const characterIds = importedCharacters.map((c) => c.id);
-      normalizedCard.characterIds = characterIds;
-
-      setCharacters((prev) => {
-        const map = new Map(prev.map((c) => [c.id, c] as const));
-        for (const c of importedCharacters) map.set(c.id, c);
-        return Array.from(map.values()).sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
-      });
-
-      const relationshipStoryRaw = (payload as any).relationshipStory;
-      if (relationshipStoryRaw && typeof relationshipStoryRaw === "object") {
-        const storyId = typeof relationshipStoryRaw.id === "string" ? relationshipStoryRaw.id : uid();
-        const importedStory: StoryProject = {
-          id: storyId,
-          title: typeof relationshipStoryRaw.title === "string" ? relationshipStoryRaw.title : `${normalizedCard.name} Relationships`,
-          characterIds,
-          imageDataUrl: typeof relationshipStoryRaw.imageDataUrl === "string" ? relationshipStoryRaw.imageDataUrl : "",
-          scenario: typeof relationshipStoryRaw.scenario === "string" ? relationshipStoryRaw.scenario : "",
-          firstMessage: typeof relationshipStoryRaw.firstMessage === "string" ? relationshipStoryRaw.firstMessage : "",
-          firstMessageVersions: normalizeTextArray(relationshipStoryRaw.firstMessageVersions).length ? normalizeTextArray(relationshipStoryRaw.firstMessageVersions) : [""],
-          selectedFirstMessageIndex: Number.isFinite(Number(relationshipStoryRaw.selectedFirstMessageIndex)) ? Math.max(0, Number(relationshipStoryRaw.selectedFirstMessageIndex)) : 0,
-          firstMessageStyle: relationshipStoryRaw.firstMessageStyle === "dramatic" || relationshipStoryRaw.firstMessageStyle === "melancholic" ? relationshipStoryRaw.firstMessageStyle : "realistic",
-          systemRules: typeof relationshipStoryRaw.systemRules === "string" ? relationshipStoryRaw.systemRules : "",
-          selectedSystemRuleIds: normalizeStringArray(relationshipStoryRaw.selectedSystemRuleIds),
-          synopsis: typeof relationshipStoryRaw.synopsis === "string" ? relationshipStoryRaw.synopsis : "",
-          synopsisStyle: relationshipStoryRaw.synopsisStyle === "dramatic" || relationshipStoryRaw.synopsisStyle === "melancholic" ? relationshipStoryRaw.synopsisStyle : "realistic",
-          relationships: Array.isArray(relationshipStoryRaw.relationships)
-            ? relationshipStoryRaw.relationships
-                .filter((r: any) => r && typeof r === "object")
-                .map((r: any) => ({
-                  id: typeof r.id === "string" ? r.id : uid(),
-                  fromCharacterId: typeof r.fromCharacterId === "string" ? r.fromCharacterId : "",
-                  toCharacterId: typeof r.toCharacterId === "string" ? r.toCharacterId : "",
-                  alignment: typeof r.alignment === "string" ? r.alignment : "Neutral",
-                  relationType: typeof r.relationType === "string" ? r.relationType : "Platonic",
-                  details: typeof r.details === "string" ? r.details : "",
-                  createdAt: typeof r.createdAt === "string" ? r.createdAt : now,
-                }))
-                .filter((r: StoryRelationship) => r.fromCharacterId && r.toCharacterId)
-            : [],
-          boardNodes: Array.isArray(relationshipStoryRaw.boardNodes)
-            ? relationshipStoryRaw.boardNodes
-                .filter((n: any) => n && typeof n === "object")
-                .map((n: any) => ({
-                  characterId: typeof n.characterId === "string" ? n.characterId : "",
-                  x: Number.isFinite(Number(n.x)) ? Number(n.x) : 0,
-                  y: Number.isFinite(Number(n.y)) ? Number(n.y) : 0,
-                }))
-                .filter((n: StoryBoardNode) => !!n.characterId)
-            : [],
-          assignedLorebookIds: normalizeStringArray(relationshipStoryRaw.assignedLorebookIds),
-          createdAt: typeof relationshipStoryRaw.createdAt === "string" ? relationshipStoryRaw.createdAt : now,
-          updatedAt: now,
-        };
-
-        normalizedCard.relationshipStoryId = importedStory.id;
-        setStories((prev) => {
-          const idx = prev.findIndex((s) => s.id === importedStory.id);
-          if (idx < 0) return [importedStory, ...prev];
-          const next = [...prev];
-          next[idx] = importedStory;
-          return next;
-        });
-      }
-
-      setCharacterCards((prev) => {
-        const idx = prev.findIndex((c) => c.id === normalizedCard.id);
-        if (idx < 0) return [normalizedCard, ...prev];
-        const next = [...prev];
-        next[idx] = normalizedCard;
-        return next;
-      });
-
-      setActiveCharacterCardId(normalizedCard.id);
-      setCharacterCardNameInput(normalizedCard.name);
-      setCardSystemRules(normalizedCard.systemRules);
-      setCardSelectedSystemRuleIds(normalizedCard.selectedSystemRuleIds);
-      setIntroMessages(normalizedCard.firstMessageMessages);
-      setIntroIndex(clampIndex(normalizedCard.selectedFirstMessageIndex, normalizedCard.firstMessageMessages.length));
-      const introHistories = normalizeTextMatrix(normalizedCard.firstMessageVersionHistories).length
-        ? normalizeTextMatrix(normalizedCard.firstMessageVersionHistories)
-        : normalizedCard.firstMessageMessages.map((msg) => [msg || ""]);
-      setIntroVersionHistories(introHistories);
-      setIntroVersionIndices(
-        normalizedCard.firstMessageMessages.map((_, idx) => {
-          const history = introHistories[idx] || [""];
-          return clampIndex(normalizedCard.firstMessageVersionIndices[idx] || 0, history.length);
-        })
-      );
-
-      const firstCharacter = importedCharacters[0];
-      setSelectedId(firstCharacter.id);
-      loadCharacterIntoForm(firstCharacter);
-      alert(`Imported character card "${normalizedCard.name}" with ${importedCharacters.length} character entr${importedCharacters.length === 1 ? "y" : "ies"}.`);
-    } catch (e: any) {
-      alert(e?.message ? String(e.message) : "Failed to import character card JSON.");
-    }
-  }
 
 
   const draft = getDraftCharacter();
-
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
     { id: "definition", label: "Characters" },
@@ -5325,7 +4327,7 @@ ${feedback}`,
 
   return (
     <div
-      className={cn("w-full bg-[hsl(var(--background))] p-4 text-[hsl(var(--foreground))] md:p-8", page === "image_editor" ? "h-screen overflow-hidden" : "min-h-screen")}
+      className="min-h-screen w-full bg-[hsl(var(--background))] p-4 text-[hsl(var(--foreground))] md:p-8"
       style={themeVars(theme)}
     >
       <style>{`
@@ -5404,377 +4406,17 @@ ${feedback}`,
             <Button variant="secondary" onClick={() => navigateTo("lorebooks")}>
               <BookOpen className="h-4 w-4" /> Lorebook List
             </Button>
-            <Button variant="secondary" onClick={() => navigateTo("image_editor")}>
-              <Pencil className="h-4 w-4" /> Image Editing
-            </Button>
             <Button variant="secondary" onClick={() => setProxyOpen(true)}>
               <SlidersHorizontal className="h-4 w-4" /> Proxy Settings
             </Button>
-            {activeAccountUsername ? (
-              <>
-                <Button variant="secondary" onClick={syncNowToAccount}>
-                  <Upload className="h-4 w-4" /> Sync Account
-                </Button>
-                <Button variant="secondary" onClick={signOutAccount}>
-                  <X className="h-4 w-4" /> {activeAccountUsername}
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button variant="secondary" onClick={() => openAccountAuth("login")}>
-                  Login
-                </Button>
-                <Button variant="secondary" onClick={() => openAccountAuth("register")}>
-                  Register
-                </Button>
-              </>
-            )}
             <Button variant="secondary" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}>
               {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
             </Button>
           </div>
-          {accountSyncStatus ? <div className="px-4 pb-3 text-xs text-[hsl(var(--muted-foreground))] md:px-8">{accountSyncStatus}</div> : null}
           </div>
         </header>
 
-        {page === "image_editor" ? (
-          <div className="anim-page mt-6 space-y-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="secondary" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Dashboard</Button>
-              <Button variant="primary" onClick={createImageSpace}><Plus className="h-4 w-4" /> New Space</Button>
-              <Button variant="secondary" onClick={() => imageEditorFileRef.current?.click()}><Upload className="h-4 w-4" /> Import Image</Button>
-              <Button variant="secondary" onClick={undoImageEditor}><ChevronLeft className="h-4 w-4" /> Undo</Button>
-              <Button variant="secondary" onClick={redoImageEditor}>Redo <ChevronRight className="h-4 w-4" /></Button>
-              <Button variant="secondary" onClick={() => localStorage.setItem(IMAGE_EDITOR_SPACES_KEY, JSON.stringify(imageSpaces))}><Download className="h-4 w-4" /> Save Spaces</Button>
-              <Button variant="secondary" onClick={() => exportImageEditor("png")}><Download className="h-4 w-4" /> Export PNG</Button>
-              <Button variant="secondary" onClick={() => exportImageEditor("jpg")}><Download className="h-4 w-4" /> Export JPG</Button>
-              <input ref={imageEditorFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageEditorFile(f); e.currentTarget.value = ""; }} />
-            </div>
-
-            <div className="grid gap-4 lg:grid-cols-[280px,1fr]">
-              <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                <div className="text-sm font-semibold">Spaces</div>
-                <div className="max-h-40 space-y-2 overflow-auto">
-                  {imageSpaces.map((space) => (
-                    <button key={space.id} type="button" onClick={() => setActiveImageSpaceId(space.id)} className={cn("w-full rounded-lg border px-2 py-1 text-left text-sm", activeImageSpaceId === space.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{space.name}</button>
-                  ))}
-                  {!imageSpaces.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No spaces yet.</div> : null}
-                </div>
-                <div className="text-sm font-semibold">Tools</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {([
-                    { id: "move", label: "Move", icon: <MousePointer2 className="h-4 w-4" /> },
-                    { id: "marquee", label: "Marquee", icon: <RectangleHorizontal className="h-4 w-4" /> },
-                    { id: "lasso", label: "Lasso", icon: <Lasso className="h-4 w-4" /> },
-                    { id: "polyLasso", label: "Poly Lasso", icon: <Lasso className="h-4 w-4" /> },
-                    { id: "freehand", label: "Freehand", icon: <Pencil className="h-4 w-4" /> },
-                    { id: "transformSelection", label: "Transform", icon: <MousePointer2 className="h-4 w-4" /> },
-                    { id: "crop", label: "Crop", icon: <Crop className="h-4 w-4" /> },
-                    { id: "eyedropper", label: "Eyedropper", icon: <Pipette className="h-4 w-4" /> },
-                    { id: "hand", label: "Hand", icon: <Hand className="h-4 w-4" /> },
-                    { id: "zoom", label: "Zoom", icon: <ZoomIn className="h-4 w-4" /> },
-                  ] as Array<{ id: ImageEditorTool; label: string; icon: React.ReactNode }>).map((tool) => (
-                    <button
-                      key={tool.id}
-                      type="button"
-                      onClick={() => setImageTool(tool.id)}
-                      className={cn("flex items-center gap-2 rounded-lg border px-2 py-1 text-xs", imageTool === tool.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))]")}
-                    >
-                      {tool.icon}
-                      {tool.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="text-sm font-semibold">Resize Tool</div>
-                <Select value={imageResizeMode} onChange={(e) => setImageResizeMode(e.target.value as ImageResizeMode)}>
-                  <option value="free">Free Resize</option>
-                  <option value="fixed">Fixed Resize (1:1)</option>
-                  <option value="skew">Skew</option>
-                  <option value="perspective">Perspective</option>
-                </Select>
-                {activeImageSpace?.activeLayerId ? (
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <Button variant="secondary" onClick={() => updateActiveImageSpace((s) => {
-                      const layer = s.layers.find((l) => l.id === s.activeLayerId);
-                      if (!layer) return s;
-                      const nextLayers = s.layers.map((l) => l.id !== layer.id ? l : {
-                        ...l,
-                        width: imageResizeMode === "fixed" ? Math.max(1, l.width + 40) : Math.max(1, l.width + 40),
-                        height: imageResizeMode === "fixed" ? Math.max(1, l.width + 40) : Math.max(1, l.height + 40),
-                      });
-                      return { ...s, layers: nextLayers };
-                    })}>Grow</Button>
-                    <Button variant="secondary" onClick={() => updateActiveImageSpace((s) => {
-                      const layer = s.layers.find((l) => l.id === s.activeLayerId);
-                      if (!layer) return s;
-                      const nextLayers = s.layers.map((l) => l.id !== layer.id ? l : {
-                        ...l,
-                        width: Math.max(1, l.width - 40),
-                        height: imageResizeMode === "fixed" ? Math.max(1, l.width - 40) : Math.max(1, l.height - 40),
-                      });
-                      return { ...s, layers: nextLayers };
-                    })}>Shrink</Button>
-                    <Button variant="secondary" onClick={() => updateActiveImageSpace((s) => {
-                      const nextLayers = s.layers.map((l) => l.id !== s.activeLayerId ? l : { ...l, x: l.x + 20 });
-                      return { ...s, layers: nextLayers };
-                    })}>Skew +X</Button>
-                    <Button variant="secondary" onClick={() => updateActiveImageSpace((s) => {
-                      const nextLayers = s.layers.map((l) => l.id !== s.activeLayerId ? l : { ...l, y: l.y + 20 });
-                      return { ...s, layers: nextLayers };
-                    })}>Perspective +Y</Button>
-                  </div>
-                ) : null}
-                {imageTool === "crop" && imageCropRect ? (
-                  <Button variant="primary" onClick={applyImageCrop}>Apply Crop</Button>
-                ) : null}
-                {imageTool === "eyedropper" ? (
-                  <div className="flex items-center gap-2 rounded border border-[hsl(var(--border))] px-2 py-1 text-xs">
-                    <div className="h-4 w-4 rounded" style={{ background: imageSampledColor }} />
-                    {imageSampledColor}
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                <div
-                  className="relative h-[calc(100vh-220px)] min-h-[620px] overflow-hidden rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))]"
-                  onWheel={(e) => {
-                    e.preventDefault();
-                    const delta = imageTool === "zoom" ? 0.2 : 0.08;
-                    const next = Math.max(0.1, Math.min(8, imageWorkspaceZoom + (e.deltaY < 0 ? delta : -delta)));
-                    setImageWorkspaceZoom(next);
-                  }}
-                  onMouseDown={(e) => {
-                    if (!activeImageSpace) return;
-                    const { x, y } = getCanvasPointFromMouse(e, activeImageSpace);
-                    const mode = getSelectionCombineMode(e.shiftKey, e.altKey);
-                    setSelectionCombineMode(mode);
-
-                    if (e.button === 1 || imageTool === "hand") {
-                      e.preventDefault();
-                      setImageIsPanning(true);
-                      return;
-                    }
-
-                    if (imageSelectionRect && (imageTool === "move" || imageTool === "transformSelection")) {
-                      const handle = getTransformHandleAtPoint(imageSelectionRect, x, y);
-                      if (handle) {
-                        transformStartRef.current = { rect: imageSelectionRect, pointer: { x, y }, handle };
-                        setImageTransformMode(true);
-                        setImageTool("transformSelection");
-                        return;
-                      }
-                    }
-
-                    if (imageTool === "zoom") {
-                      setImageWorkspaceZoom((prev) => Math.max(0.1, Math.min(8, prev + (e.shiftKey ? -0.2 : 0.2))));
-                      return;
-                    }
-
-                    if (imageTool === "eyedropper") {
-                      const canvas = imageEditorCanvasRef.current;
-                      if (!canvas) return;
-                      const ctx = canvas.getContext("2d");
-                      if (!ctx) return;
-                      const px = Math.max(0, Math.min(canvas.width - 1, Math.round(x)));
-                      const py = Math.max(0, Math.min(canvas.height - 1, Math.round(y)));
-                      const pixel = ctx.getImageData(px, py, 1, 1).data;
-                      setImageSampledColor(`#${[pixel[0], pixel[1], pixel[2]].map((n) => n.toString(16).padStart(2, "0")).join("")}`);
-                      return;
-                    }
-
-                    if (imageTool === "move") {
-                      const hit = [...activeImageSpace.layers].reverse().find((l) => x >= l.x && x <= l.x + l.width && y >= l.y && y <= l.y + l.height) || null;
-                      if (hit) {
-                        dragLayerRef.current = { layerId: hit.id, lastX: x, lastY: y };
-                        updateActiveImageSpace((sp) => ({ ...sp, activeLayerId: hit.id }));
-                        return;
-                      }
-                    }
-
-                    drawStartRef.current = { x, y };
-                    if (imageTool === "polyLasso") {
-                      setImageSelectionPoints((prev) => [...prev, { x, y }]);
-                    } else {
-                      setImageSelectionPoints([{ x, y }]);
-                    }
-                    if (imageTool === "crop") {
-                      const seed = imageCropRect || { x, y, width: Math.max(1, Math.round(activeImageSpace.canvasWidth * 0.7)), height: Math.max(1, Math.round(activeImageSpace.canvasHeight * 0.7)) };
-                      const handle = getTransformHandleAtPoint(seed, x, y);
-                      if (handle) {
-                        setImageCropDragging(handle);
-                        transformStartRef.current = { rect: seed, pointer: { x, y }, handle };
-                        setImageCropRect(seed);
-                      } else {
-                        setImageCropRect({ x, y, width: 1, height: 1 });
-                      }
-                    }
-                  }}
-                  onMouseUp={() => {
-                    if (!activeImageSpace) return;
-                    setImageIsPanning(false);
-                    setImageCropDragging(null);
-                    dragLayerRef.current = null;
-
-                    if (drawStartRef.current && imageSelectionPoints.length > 1 && (imageTool === "marquee" || imageTool === "lasso" || imageTool === "freehand")) {
-                      const a = imageSelectionPoints[0];
-                      const b = imageSelectionPoints[imageSelectionPoints.length - 1];
-                      const rect = clampRectToCanvas(rectFromPoints(a, b), activeImageSpace.canvasWidth, activeImageSpace.canvasHeight);
-                      applySelectionRectWithMode(rect, selectionCombineMode);
-                      setImageTransformMode(true);
-                    }
-
-                    if (drawStartRef.current && imageTool === "polyLasso" && imageSelectionPoints.length >= 3) {
-                      const a = imageSelectionPoints[0];
-                      const b = imageSelectionPoints[imageSelectionPoints.length - 1];
-                      if (Math.hypot(b.x - a.x, b.y - a.y) <= 10) {
-                        const xs = imageSelectionPoints.map((p) => p.x);
-                        const ys = imageSelectionPoints.map((p) => p.y);
-                        const rect = clampRectToCanvas({ x: Math.min(...xs), y: Math.min(...ys), width: Math.max(1, Math.max(...xs) - Math.min(...xs)), height: Math.max(1, Math.max(...ys) - Math.min(...ys)) }, activeImageSpace.canvasWidth, activeImageSpace.canvasHeight);
-                        applySelectionRectWithMode(rect, selectionCombineMode);
-                        setImageTransformMode(true);
-                        setImageSelectionPoints([]);
-                      }
-                    }
-
-                    drawStartRef.current = null;
-                  }}
-                  onMouseLeave={() => {
-                    setImageIsPanning(false);
-                    setImageCropDragging(null);
-                    dragLayerRef.current = null;
-                    transformStartRef.current = null;
-                  }}
-                  onMouseMove={(e) => {
-                    if (!activeImageSpace) return;
-                    const { x, y } = getCanvasPointFromMouse(e, activeImageSpace);
-                    if (imageIsPanning) {
-                      setImageWorkspacePan((prev) => ({ x: prev.x + e.movementX, y: prev.y + e.movementY }));
-                      return;
-                    }
-                    if (dragLayerRef.current && imageTool === "move") {
-                      const { layerId, lastX, lastY } = dragLayerRef.current;
-                      const dx = x - lastX;
-                      const dy = y - lastY;
-                      dragLayerRef.current = { layerId, lastX: x, lastY: y };
-                      updateActiveImageSpace((sp) => ({ ...sp, layers: sp.layers.map((l) => l.id !== layerId ? l : { ...l, x: l.x + dx, y: l.y + dy }) }));
-                      return;
-                    }
-                    if (transformStartRef.current && imageSelectionRect && (imageTool === "transformSelection" || imageTransformMode)) {
-                      const t = transformStartRef.current;
-                      const dx = x - t.pointer.x;
-                      const dy = y - t.pointer.y;
-                      let next = { ...t.rect };
-                      if (t.handle === "inside") {
-                        next = { ...t.rect, x: t.rect.x + dx, y: t.rect.y + dy };
-                      } else {
-                        const x1 = t.rect.x;
-                        const y1 = t.rect.y;
-                        const x2 = t.rect.x + t.rect.width;
-                        const y2 = t.rect.y + t.rect.height;
-                        const alt = e.altKey;
-                        if (t.handle.includes("w")) next.x = x1 + dx;
-                        if (t.handle.includes("n")) next.y = y1 + dy;
-                        if (t.handle.includes("e")) next.width = Math.max(1, x2 + dx - next.x);
-                        else next.width = Math.max(1, x2 - next.x);
-                        if (t.handle.includes("s")) next.height = Math.max(1, y2 + dy - next.y);
-                        else next.height = Math.max(1, y2 - next.y);
-                        if (alt) {
-                          const cx = x1 + t.rect.width / 2;
-                          const cy = y1 + t.rect.height / 2;
-                          next.x = cx - next.width / 2;
-                          next.y = cy - next.height / 2;
-                        }
-                        if (e.shiftKey) {
-                          const ratio = t.rect.width / Math.max(1, t.rect.height);
-                          next.height = Math.max(1, next.width / Math.max(0.0001, ratio));
-                        }
-                      }
-                      setImageSelectionRect(clampRectToCanvas(next, activeImageSpace.canvasWidth, activeImageSpace.canvasHeight));
-                      return;
-                    }
-                    if (imageCropDragging && transformStartRef.current && imageCropRect) {
-                      const t = transformStartRef.current;
-                      const dx = x - t.pointer.x;
-                      const dy = y - t.pointer.y;
-                      let next = { ...t.rect };
-                      if (t.handle === "inside") next = { ...t.rect, x: t.rect.x + dx, y: t.rect.y + dy };
-                      else {
-                        if (t.handle.includes("w")) { next.x = t.rect.x + dx; next.width = t.rect.width - dx; }
-                        if (t.handle.includes("e")) next.width = t.rect.width + dx;
-                        if (t.handle.includes("n")) { next.y = t.rect.y + dy; next.height = t.rect.height - dy; }
-                        if (t.handle.includes("s")) next.height = t.rect.height + dy;
-                        next.width = Math.max(1, next.width);
-                        next.height = Math.max(1, next.height);
-                      }
-                      setImageCropRect(clampRectToCanvas(next, activeImageSpace.canvasWidth, activeImageSpace.canvasHeight));
-                      return;
-                    }
-                    if ((e.buttons & 1) !== 1 || !drawStartRef.current) return;
-                    setImageSelectionPoints((prev) => {
-                      if (imageTool === "marquee" || imageTool === "crop") return prev.length ? [prev[0], { x, y }] : [{ x, y }];
-                      if (imageTool === "polyLasso") return prev;
-                      return [...prev, { x, y }];
-                    });
-                    if (imageTool === "crop" && drawStartRef.current) {
-                      const sx = drawStartRef.current.x;
-                      const sy = drawStartRef.current.y;
-                      setImageCropRect(clampRectToCanvas({ x: Math.min(sx, x), y: Math.min(sy, y), width: Math.abs(x - sx), height: Math.abs(y - sy) }, activeImageSpace.canvasWidth, activeImageSpace.canvasHeight));
-                    }
-                  }}
-                  onDoubleClick={() => {
-                    if (imageTool === "polyLasso" && activeImageSpace && imageSelectionPoints.length >= 3) {
-                      const xs = imageSelectionPoints.map((p) => p.x);
-                      const ys = imageSelectionPoints.map((p) => p.y);
-                      const rect = clampRectToCanvas({ x: Math.min(...xs), y: Math.min(...ys), width: Math.max(1, Math.max(...xs) - Math.min(...xs)), height: Math.max(1, Math.max(...ys) - Math.min(...ys)) }, activeImageSpace.canvasWidth, activeImageSpace.canvasHeight);
-                      applySelectionRectWithMode(rect, selectionCombineMode);
-                      setImageTransformMode(true);
-                      setImageSelectionPoints([]);
-                    }
-                  }}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const f = e.dataTransfer.files?.[0];
-                    if (f) handleImageEditorFile(f);
-                  }}
-                  style={{ cursor: imageSelectionRect && (imageTool === "move" || imageTool === "transformSelection") ? getResizeCursor(getTransformHandleAtPoint(imageSelectionRect, (imageSelectionPoints.length ? imageSelectionPoints[imageSelectionPoints.length - 1].x : imageSelectionRect.x), (imageSelectionPoints.length ? imageSelectionPoints[imageSelectionPoints.length - 1].y : imageSelectionRect.y))) : (imageTool === "hand" ? "grab" : "crosshair") }}
-                >
-                  <div className="absolute inset-0" style={{ transform: `translate(${imageWorkspacePan.x}px, ${imageWorkspacePan.y}px) scale(${imageWorkspaceZoom})`, transformOrigin: "0 0" }}>
-                    <canvas ref={imageEditorCanvasRef} className="block" style={{ background: "white" }} />
-                    <svg className="pointer-events-none absolute left-0 top-0" width={activeImageSpace?.canvasWidth || 1} height={activeImageSpace?.canvasHeight || 1}>
-                      {imageSelectionPoints.length > 1 ? (
-                        (imageTool === "marquee" || imageTool === "crop") ? (
-                          <rect x={Math.min(imageSelectionPoints[0].x, imageSelectionPoints[1].x)} y={Math.min(imageSelectionPoints[0].y, imageSelectionPoints[1].y)} width={Math.abs(imageSelectionPoints[1].x - imageSelectionPoints[0].x)} height={Math.abs(imageSelectionPoints[1].y - imageSelectionPoints[0].y)} fill="none" stroke="#36c" strokeDasharray="6 4" />
-                        ) : (
-                          <polyline points={imageSelectionPoints.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke="#36c" strokeDasharray="6 4" />
-                        )
-                      ) : null}
-                      {imageSelectionRect ? (
-                        <>
-                          <rect x={imageSelectionRect.x} y={imageSelectionRect.y} width={imageSelectionRect.width} height={imageSelectionRect.height} fill="none" stroke="#111" strokeDasharray="6 6" strokeDashoffset={-imageShowAnts * 0.5} />
-                          <rect x={imageSelectionRect.x} y={imageSelectionRect.y} width={imageSelectionRect.width} height={imageSelectionRect.height} fill="none" stroke="#fff" strokeDasharray="6 6" strokeDashoffset={6 - imageShowAnts * 0.5} />
-                          {[{x:imageSelectionRect.x,y:imageSelectionRect.y},{x:imageSelectionRect.x+imageSelectionRect.width/2,y:imageSelectionRect.y},{x:imageSelectionRect.x+imageSelectionRect.width,y:imageSelectionRect.y},{x:imageSelectionRect.x+imageSelectionRect.width,y:imageSelectionRect.y+imageSelectionRect.height/2},{x:imageSelectionRect.x+imageSelectionRect.width,y:imageSelectionRect.y+imageSelectionRect.height},{x:imageSelectionRect.x+imageSelectionRect.width/2,y:imageSelectionRect.y+imageSelectionRect.height},{x:imageSelectionRect.x,y:imageSelectionRect.y+imageSelectionRect.height},{x:imageSelectionRect.x,y:imageSelectionRect.y+imageSelectionRect.height/2}].map((h, i) => <rect key={i} x={h.x-4} y={h.y-4} width={8} height={8} fill="#fff" stroke="#000" />)}
-                        </>
-                      ) : null}
-                      {imageCropRect ? (
-                        <>
-                          <rect x={0} y={0} width={activeImageSpace?.canvasWidth || 1} height={activeImageSpace?.canvasHeight || 1} fill="rgba(0,0,0,0.45)" />
-                          <rect x={imageCropRect.x} y={imageCropRect.y} width={imageCropRect.width} height={imageCropRect.height} fill="none" stroke="#ff5252" strokeDasharray="8 5" />
-                          <rect x={imageCropRect.x} y={imageCropRect.y} width={imageCropRect.width} height={imageCropRect.height} fill="rgba(0,0,0,0)" />
-                          <line x1={imageCropRect.x + imageCropRect.width / 3} y1={imageCropRect.y} x2={imageCropRect.x + imageCropRect.width / 3} y2={imageCropRect.y + imageCropRect.height} stroke="rgba(255,255,255,0.7)" strokeDasharray="4 4" />
-                          <line x1={imageCropRect.x + (imageCropRect.width * 2) / 3} y1={imageCropRect.y} x2={imageCropRect.x + (imageCropRect.width * 2) / 3} y2={imageCropRect.y + imageCropRect.height} stroke="rgba(255,255,255,0.7)" strokeDasharray="4 4" />
-                          <line x1={imageCropRect.x} y1={imageCropRect.y + imageCropRect.height / 3} x2={imageCropRect.x + imageCropRect.width} y2={imageCropRect.y + imageCropRect.height / 3} stroke="rgba(255,255,255,0.7)" strokeDasharray="4 4" />
-                          <line x1={imageCropRect.x} y1={imageCropRect.y + (imageCropRect.height * 2) / 3} x2={imageCropRect.x + imageCropRect.width} y2={imageCropRect.y + (imageCropRect.height * 2) / 3} stroke="rgba(255,255,255,0.7)" strokeDasharray="4 4" />
-                        </>
-                      ) : null}
-                    </svg>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : page === "chat" ? (
+        {page === "chat" ? (
           <div className="anim-page mt-6 grid gap-4 lg:grid-cols-3">
             <div className="space-y-3 lg:col-span-1">
               <div className="flex items-center justify-between gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
@@ -7233,7 +5875,7 @@ ${feedback}`,
               <div className="text-xl font-semibold">Character Dashboard</div>
               <Button variant="primary" onClick={() => {
                 const now = new Date().toISOString();
-                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, firstMessageVersionHistories: [[""]], firstMessageVersionIndices: [0], createdAt: now, updatedAt: now };
+                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
                 setCharacterCards((prev) => [newCard, ...prev]);
                 setActiveCharacterCardId(newCard.id);
                 setCharacterCardNameInput(newCard.name);
@@ -7270,18 +5912,10 @@ ${feedback}`,
           </div>
         ) : page === "create" ? (
           <div className="anim-page mt-6 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap gap-2">
               {tabs.map((t) => (
                 <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
               ))}
-              <div className="ml-auto flex flex-wrap gap-2">
-                <Button variant="secondary" type="button" onClick={() => setCardExportModalOpen(true)}>
-                  <Download className="h-4 w-4" /> Export
-                </Button>
-                <Button variant="secondary" type="button" onClick={() => cardJsonImportRef.current?.click()}>
-                  <Upload className="h-4 w-4" /> Import
-                </Button>
-              </div>
             </div>
 
             {tab === "relationships" ? (
@@ -7363,121 +5997,7 @@ ${feedback}`,
                   ) : null}
 
                   {tab === "intro" ? (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm">Message {introIndex + 1} / {Math.max(1, introMessages.length)}</div>
-                        <Button
-                          variant="secondary"
-                          onClick={() => {
-                            setIntroMessages((prev) => [...prev, ""]);
-                            setIntroVersionHistories((prev) => [...prev, [""]]);
-                            setIntroVersionIndices((prev) => [...prev, 0]);
-                            setIntroIndex(introMessages.length);
-                          }}
-                        >
-                          <Plus className="h-4 w-4" /> New message
-                        </Button>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-2">
-                        <Button
-                          variant="secondary"
-                          onClick={() => setIntroIndex((i) => Math.max(0, i - 1))}
-                          disabled={introIndex <= 0}
-                        >
-                          <ChevronLeft className="h-4 w-4" /> Prev message
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          onClick={() => setIntroIndex((i) => Math.min(introMessages.length - 1, i + 1))}
-                          disabled={introIndex >= introMessages.length - 1}
-                        >
-                          Next message <ChevronRight className="h-4 w-4" />
-                        </Button>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-2">
-                        <Button
-                          variant="secondary"
-                          onClick={() => {
-                            const i = clampIndex(introIndex, Math.max(1, introMessages.length));
-                            const history = introVersionHistories[i] || [introMessages[i] || ""];
-                            const current = clampIndex(introVersionIndices[i] || 0, history.length);
-                            const nextIdx = Math.max(0, current - 1);
-                            setIntroVersionIndices((prev) => {
-                              const base = prev.length ? [...prev] : [0];
-                              while (base.length <= i) base.push(0);
-                              base[i] = nextIdx;
-                              return base;
-                            });
-                            setIntroMessages((prev) => {
-                              const base = prev.length ? [...prev] : [""];
-                              base[i] = history[nextIdx] || "";
-                              return base;
-                            });
-                          }}
-                          disabled={(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) <= 0}
-                        >
-                          <ChevronLeft className="h-4 w-4" /> Prev iteration
-                        </Button>
-                        <div className="text-sm text-[hsl(var(--muted-foreground))]">
-                          Iteration {(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) + 1} / {Math.max(1, introVersionHistories[clampIndex(introIndex, Math.max(1, introMessages.length))]?.length || 1)}
-                        </div>
-                        <Button
-                          variant="secondary"
-                          onClick={() => {
-                            const i = clampIndex(introIndex, Math.max(1, introMessages.length));
-                            const history = introVersionHistories[i] || [introMessages[i] || ""];
-                            const current = clampIndex(introVersionIndices[i] || 0, history.length);
-                            const nextIdx = Math.min(history.length - 1, current + 1);
-                            setIntroVersionIndices((prev) => {
-                              const base = prev.length ? [...prev] : [0];
-                              while (base.length <= i) base.push(0);
-                              base[i] = nextIdx;
-                              return base;
-                            });
-                            setIntroMessages((prev) => {
-                              const base = prev.length ? [...prev] : [""];
-                              base[i] = history[nextIdx] || "";
-                              return base;
-                            });
-                          }}
-                          disabled={(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) >= Math.max(1, introVersionHistories[clampIndex(introIndex, Math.max(1, introMessages.length))]?.length || 1) - 1}
-                        >
-                          Next iteration <ChevronRight className="h-4 w-4" />
-                        </Button>
-                      </div>
-
-                      <Textarea
-                        value={introMessages[clampIndex(introIndex, Math.max(1, introMessages.length))] || ""}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setIntroMessages((prev) => {
-                            const b = [...prev];
-                            b[clampIndex(introIndex, b.length)] = v;
-                            return b;
-                          });
-                          setIntroVersionHistories((prev) => {
-                            const base = prev.length ? prev.map((h) => (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]];
-                            const i = clampIndex(introIndex, Math.max(1, base.length));
-                            while (base.length <= i) base.push([""]);
-                            const history = base[i];
-                            const vi = clampIndex(introVersionIndices[i] || 0, history.length);
-                            history[vi] = v;
-                            return base;
-                          });
-                        }}
-                        rows={9}
-                        placeholder="Write first message..."
-                      />
-
-                      <Textarea value={introPrompt} onChange={(e) => setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" />
-                      <div className="flex gap-2">
-                        <Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button>
-                        <Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button>
-                      </div>
-                      <Textarea value={introRevisionPrompt} onChange={(e) => setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" />
-                    </div>
+                    <div className="space-y-3"><div className="flex items-center justify-between"><div className="text-sm">Message {introIndex + 1} / {Math.max(1, introMessages.length)}</div><Button variant="secondary" onClick={() => { setIntroMessages((prev)=>[...prev, ""]); setIntroVersionHistories((prev)=>[...prev,[""]]); setIntroVersionIndices((prev)=>[...prev,0]); setIntroIndex(introMessages.length); }}><Plus className="h-4 w-4" /> New</Button></div><div className="flex items-center justify-between gap-2"><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.max(0,i-1))} disabled={introIndex<=0}><ChevronLeft className="h-4 w-4" /> Prev</Button><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.min(introMessages.length-1,i+1))} disabled={introIndex>=introMessages.length-1}>Next <ChevronRight className="h-4 w-4" /></Button></div><Textarea value={introMessages[clampIndex(introIndex, Math.max(1,introMessages.length))] || ""} onChange={(e) => { const v=e.target.value; setIntroMessages((prev)=>{const b=[...prev]; b[clampIndex(introIndex,b.length)] = v; return b;}); setIntroVersionHistories((prev)=>{const base = prev.length ? prev.map((h)=> (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]]; const i = clampIndex(introIndex, Math.max(1, base.length)); while (base.length <= i) base.push([""]); const history = base[i]; const vi = clampIndex(introVersionIndices[i] || 0, history.length); history[vi] = v; return base;}); }} rows={9} placeholder="Write first message..." /><Textarea value={introPrompt} onChange={(e)=>setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" /><div className="flex gap-2"><Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div><Textarea value={introRevisionPrompt} onChange={(e)=>setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" /></div>
                   ) : null}
 
                   {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
@@ -7504,11 +6024,26 @@ ${feedback}`,
                 >
                   Preview
                 </Button>
-                <Button variant="secondary" onClick={() => setCardExportModalOpen(true)}>
-                  <Download className="h-4 w-4" /> Export
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    if (!draft) return alert("Please enter a character name before exporting.");
+                    exportCurrentCardTxt(draft);
+                  }}
+                >
+                  <Download className="h-4 w-4" /> Export TXT
                 </Button>
-                <Button variant="secondary" onClick={() => cardJsonImportRef.current?.click()}>
-                  <Upload className="h-4 w-4" /> Import
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    if (!draft) return alert("Please enter a character name before exporting.");
+                    downloadJSON(
+                      (filenameSafe(draft.name) || "character") + ".json",
+                      draft
+                    );
+                  }}
+                >
+                  <Download className="h-4 w-4" /> Export JSON
                 </Button>
                 <Button variant="primary" onClick={saveCharacter}>
                   <Plus className="h-4 w-4" /> {selectedId ? "Update" : "Save"}
@@ -7678,9 +6213,10 @@ ${feedback}`,
                           variant="secondary"
                           type="button"
                           onClick={() =>
-                            setIntroIndex((i) => Math.max(0, i - 1))
+                            setIntroIndex((i) =>
+                              clampIndex(i - 1, Math.max(1, introMessages.length))
+                            )
                           }
-                          disabled={introIndex <= 0}
                         >
                           <ChevronLeft className="h-4 w-4" /> Prev intro
                         </Button>
@@ -7691,9 +6227,10 @@ ${feedback}`,
                           variant="secondary"
                           type="button"
                           onClick={() =>
-                            setIntroIndex((i) => Math.min(Math.max(1, introMessages.length) - 1, i + 1))
+                            setIntroIndex((i) =>
+                              clampIndex(i + 1, Math.max(1, introMessages.length))
+                            )
                           }
-                          disabled={introIndex >= Math.max(1, introMessages.length) - 1}
                         >
                           Next intro <ChevronRight className="h-4 w-4" />
                         </Button>
@@ -7707,7 +6244,7 @@ ${feedback}`,
                             const i = clampIndex(introIndex, Math.max(1, introMessages.length));
                             const history = introVersionHistories[i] || [introMessages[i] || ""];
                             const current = clampIndex(introVersionIndices[i] || 0, history.length);
-                            const nextIdx = Math.max(0, current - 1);
+                            const nextIdx = clampIndex(current - 1, history.length);
                             setIntroVersionIndices((prev) => {
                               const base = prev.length ? [...prev] : [0];
                               while (base.length <= i) base.push(0);
@@ -7720,7 +6257,6 @@ ${feedback}`,
                               return base;
                             });
                           }}
-                          disabled={(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) <= 0}
                         >
                           <ChevronLeft className="h-4 w-4" /> Roll back
                         </Button>
@@ -7734,7 +6270,7 @@ ${feedback}`,
                             const i = clampIndex(introIndex, Math.max(1, introMessages.length));
                             const history = introVersionHistories[i] || [introMessages[i] || ""];
                             const current = clampIndex(introVersionIndices[i] || 0, history.length);
-                            const nextIdx = Math.min(history.length - 1, current + 1);
+                            const nextIdx = clampIndex(current + 1, history.length);
                             setIntroVersionIndices((prev) => {
                               const base = prev.length ? [...prev] : [0];
                               while (base.length <= i) base.push(0);
@@ -7747,7 +6283,6 @@ ${feedback}`,
                               return base;
                             });
                           }}
-                          disabled={(introVersionIndices[clampIndex(introIndex, Math.max(1, introMessages.length))] || 0) >= Math.max(1, introVersionHistories[clampIndex(introIndex, Math.max(1, introMessages.length))]?.length || 1) - 1}
                         >
                           Roll forward <ChevronRight className="h-4 w-4" />
                         </Button>
@@ -7891,22 +6426,6 @@ ${feedback}`,
                       >
                         <MessageCircle className="h-4 w-4" /> Open Character Chat
                       </Button>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          variant="secondary"
-                          type="button"
-                          onClick={() => setCardExportModalOpen(true)}
-                        >
-                          <Download className="h-4 w-4" /> Export
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          type="button"
-                          onClick={() => cardJsonImportRef.current?.click()}
-                        >
-                          <Upload className="h-4 w-4" /> Import
-                        </Button>
-                      </div>
                       <div className="flex items-center justify-between gap-2">
                       <div className="text-lg font-semibold">Preview</div>
                       <Button variant="secondary" type="button" onClick={() => setShowCreatePreview(false)}>
@@ -7965,6 +6484,16 @@ ${feedback}`,
                     </div>
 
                     <div className="flex gap-2">
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        onClick={() => {
+                          if (!draft) return alert("Enter a character name first.");
+                          exportCurrentCardTxt(draft);
+                        }}
+                      >
+                        <Download className="h-4 w-4" /> Export TXT
+                      </Button>
                       <Button variant="primary" type="button" onClick={saveCharacter}>
                         <Plus className="h-4 w-4" /> Save
                       </Button>
@@ -7982,18 +6511,6 @@ ${feedback}`,
             </div>
           </div>
         )}
-
-        <input
-          ref={cardJsonImportRef}
-          type="file"
-          accept="application/json"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) importCharacterCardFromJSON(f);
-            e.currentTarget.value = "";
-          }}
-        />
 
         <Modal
           open={isMobileViewport && createPreviewOpen}
@@ -8035,40 +6552,18 @@ ${feedback}`,
             </div>
 
             <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="secondary" type="button" onClick={() => setCardExportModalOpen(true)}>
-                <Download className="h-4 w-4" /> Export
-              </Button>
-              <Button variant="secondary" type="button" onClick={() => cardJsonImportRef.current?.click()}>
-                <Upload className="h-4 w-4" /> Import
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => {
+                  if (!draft) return alert("Enter a character name first.");
+                  exportCurrentCardTxt(draft);
+                }}
+              >
+                <Download className="h-4 w-4" /> Export TXT
               </Button>
               <Button variant="primary" type="button" onClick={saveCharacter}>
                 <Plus className="h-4 w-4" /> Save
-              </Button>
-            </div>
-          </div>
-        </Modal>
-
-        <Modal open={cardExportModalOpen} onClose={() => setCardExportModalOpen(false)} title="Export Character Card" widthClass="max-w-md">
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={cardExportAsJson} onChange={(e) => setCardExportAsJson(e.target.checked)} /> JSON
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={cardExportAsTxt} onChange={(e) => setCardExportAsTxt(e.target.checked)} /> TXT
-              </label>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={cardExportIncludeDefinition} onChange={(e) => setCardExportIncludeDefinition(e.target.checked)} /> Definition
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={cardExportIncludeFirstMessage} onChange={(e) => setCardExportIncludeFirstMessage(e.target.checked)} /> First Message
-              </label>
-            </div>
-            <div className="flex justify-end">
-              <Button variant="primary" type="button" onClick={() => exportCurrentCardSelection(draft || undefined)}>
-                <Download className="h-4 w-4" /> Export
               </Button>
             </div>
           </div>
@@ -8168,28 +6663,6 @@ ${feedback}`,
           </div>
           <div className="mt-4 flex justify-end">
             <Button variant="primary" onClick={() => setStoryLorebookPickerOpen(false)}>Done</Button>
-          </div>
-        </Modal>
-
-        <Modal
-          open={authOpen}
-          onClose={() => setAuthOpen(false)}
-          title={authMode === "login" ? "Account Login" : "Create Account"}
-          widthClass="max-w-md"
-        >
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <div className="text-sm">Username</div>
-              <Input value={authUsernameInput} onChange={(e) => setAuthUsernameInput(e.target.value)} placeholder="username" />
-            </div>
-            <div className="space-y-1">
-              <div className="text-sm">Password</div>
-              <Input type="password" value={authPasswordInput} onChange={(e) => setAuthPasswordInput(e.target.value)} placeholder="password" />
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setAuthOpen(false)}>Cancel</Button>
-              <Button variant="primary" onClick={submitAccountAuth}>{authMode === "login" ? "Login" : "Register"}</Button>
-            </div>
           </div>
         </Modal>
 
@@ -8369,18 +6842,10 @@ ${feedback}`,
                   <Button
                     variant="secondary"
                     onClick={() => {
-                      exportCurrentCardInfoTxt(previewChar || undefined);
+                      exportCurrentCardTxt(previewChar);
                     }}
                   >
-                    <Download className="h-4 w-4" /> Info+System TXT
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      exportCurrentCardIntroTxt(previewChar || undefined);
-                    }}
-                  >
-                    <Download className="h-4 w-4" /> Intro TXT
+                    <Download className="h-4 w-4" /> TXT
                   </Button>
                   <Button
                     variant="secondary"
