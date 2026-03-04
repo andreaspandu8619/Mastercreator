@@ -21,7 +21,7 @@ import {
 
 type ThemeMode = "light" | "dark";
 type Gender = "Male" | "Female" | "";
-type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board" | "lorebooks" | "lorebook_create";
+type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board" | "lorebooks" | "lorebook_create" | "image_editor";
 type CreateTab = "overview" | "personality" | "behavior" | "definition" | "system" | "intro" | "synopsis" | "relationships";
 type StoryTab = "scenario" | "first_message" | "system_rules" | "relationships" | "synopsis";
 type LorebookTab = "overview" | "world" | "locations" | "factions" | "rules" | "items" | "specials";
@@ -208,6 +208,29 @@ type CharacterCard = {
   updatedAt: string;
 };
 
+type ImageSelectionTool = "rectangle" | "lasso" | "freehand";
+type ImageResizeMode = "free" | "fixed" | "skew" | "perspective";
+
+type ImageLayer = {
+  id: string;
+  name: string;
+  imageDataUrl: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type ImageEditorSpace = {
+  id: string;
+  name: string;
+  canvasWidth: number;
+  canvasHeight: number;
+  layers: ImageLayer[];
+  activeLayerId: string | null;
+  updatedAt: string;
+};
+
 type CharacterCardExportPayload = {
   format: "mastercreator_character_card";
   version: 1;
@@ -237,6 +260,7 @@ const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
 const CHARACTER_CARDS_KEY = "mastercreator_character_cards_v1";
 const ACCOUNTS_KEY = "mastercreator_accounts_v1";
 const CURRENT_ACCOUNT_KEY = "mastercreator_current_account_v1";
+const IMAGE_EDITOR_SPACES_KEY = "mastercreator_image_editor_spaces_v1";
 const SYNC_KEYS = [
   STORAGE_KEY,
   CHARACTER_CARDS_KEY,
@@ -246,6 +270,7 @@ const SYNC_KEYS = [
   THEME_KEY,
   PROXY_KEY,
   PERSONA_KEY,
+  IMAGE_EDITOR_SPACES_KEY,
 ] as const;
 
 const DEFAULT_PROXY: ProxyConfig = {
@@ -1143,6 +1168,22 @@ export default function CharacterCreatorApp() {
   const [activeAccountUsername, setActiveAccountUsername] = useState<string | null>(null);
   const [accountSyncStatus, setAccountSyncStatus] = useState("");
   const lastAccountSnapshotRef = useRef("");
+  const imageEditorFileRef = useRef<HTMLInputElement | null>(null);
+  const imageEditorCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [imageSpaces, setImageSpaces] = useState<ImageEditorSpace[]>([]);
+  const [activeImageSpaceId, setActiveImageSpaceId] = useState<string | null>(null);
+  const [imageSelectionTool, setImageSelectionTool] = useState<ImageSelectionTool>("rectangle");
+  const [imageResizeMode, setImageResizeMode] = useState<ImageResizeMode>("free");
+  const [imageWorkspacePan, setImageWorkspacePan] = useState({ x: 0, y: 0 });
+  const [imageWorkspaceZoom, setImageWorkspaceZoom] = useState(1);
+  const [imageIsPanning, setImageIsPanning] = useState(false);
+  const [imageSelectionPoints, setImageSelectionPoints] = useState<Array<{ x: number; y: number }>>([]);
+  const [imageHistoryBySpaceId, setImageHistoryBySpaceId] = useState<Record<string, string[]>>({});
+  const [imageHistoryIndexBySpaceId, setImageHistoryIndexBySpaceId] = useState<Record<string, number>>({});
+  const activeImageSpace = useMemo(
+    () => imageSpaces.find((s) => s.id === activeImageSpaceId) || null,
+    [imageSpaces, activeImageSpaceId]
+  );
 
   useEffect(() => {
     const sync = () => setIsMobile(window.innerWidth < 768);
@@ -1152,7 +1193,7 @@ export default function CharacterCreatorApp() {
   }, []);
 
   useEffect(() => {
-    if (page !== "characters" && page !== "create" && page !== "story_relationship_board" && page !== "lorebooks" && page !== "lorebook_create") {
+    if (page !== "characters" && page !== "create" && page !== "story_relationship_board" && page !== "lorebooks" && page !== "lorebook_create" && page !== "image_editor") {
       setPage("characters");
     }
   }, [page]);
@@ -1754,6 +1795,27 @@ ${base}`,
   }, [characterCards]);
 
   useEffect(() => {
+    const parsed = safeParseJSON(localStorage.getItem(IMAGE_EDITOR_SPACES_KEY) || "");
+    if (!Array.isArray(parsed)) return;
+    const normalized = parsed.filter((s) => s && typeof s === "object" && typeof s.id === "string") as ImageEditorSpace[];
+    if (!normalized.length) return;
+    setImageSpaces(normalized);
+    setActiveImageSpaceId(normalized[0].id);
+    const historyObj: Record<string, string[]> = {};
+    const indexObj: Record<string, number> = {};
+    for (const s of normalized) {
+      historyObj[s.id] = [JSON.stringify(s)];
+      indexObj[s.id] = 0;
+    }
+    setImageHistoryBySpaceId(historyObj);
+    setImageHistoryIndexBySpaceId(indexObj);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(IMAGE_EDITOR_SPACES_KEY, JSON.stringify(imageSpaces));
+  }, [imageSpaces]);
+
+  useEffect(() => {
     if (!hydrated) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(characters));
   }, [characters, hydrated]);
@@ -1769,6 +1831,59 @@ ${base}`,
       }
     })();
   }, [characters, hydrated]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && key === "z" && e.shiftKey) {
+        e.preventDefault();
+        redoImageEditor();
+      } else if ((e.ctrlKey || e.metaKey) && key === "z") {
+        e.preventDefault();
+        undoImageEditor();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeImageSpace, imageHistoryBySpaceId, imageHistoryIndexBySpaceId]);
+
+  useEffect(() => {
+    const canvas = imageEditorCanvasRef.current;
+    const space = activeImageSpace;
+    if (!canvas || !space) return;
+    canvas.width = Math.max(1, Math.round(space.canvasWidth));
+    canvas.height = Math.max(1, Math.round(space.canvasHeight));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    let cancelled = false;
+    (async () => {
+      for (const layer of space.layers) {
+        try {
+          const img = new Image();
+          img.src = layer.imageDataUrl;
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = () => reject(new Error("layer failed"));
+          });
+          if (cancelled) return;
+          ctx.drawImage(img, layer.x, layer.y, layer.width, layer.height);
+        } catch {}
+      }
+      if (!cancelled && space.activeLayerId) {
+        const active = space.layers.find((l) => l.id === space.activeLayerId);
+        if (active) {
+          ctx.save();
+          ctx.strokeStyle = "#ff5252";
+          ctx.lineWidth = 1;
+          ctx.setLineDash([6, 4]);
+          ctx.strokeRect(active.x, active.y, active.width, active.height);
+          ctx.restore();
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeImageSpace]);
 
   useEffect(() => {
     if (!activeAccountUsername || !hydrated) return;
@@ -2345,6 +2460,147 @@ ${base}`,
   function syncNowToAccount() {
     if (!activeAccountUsername) return alert("Please log in first.");
     saveCurrentDataToAccount(activeAccountUsername);
+  }
+
+  function persistImageHistory(space: ImageEditorSpace) {
+    const snap = JSON.stringify(space);
+    setImageHistoryBySpaceId((prev) => {
+      const existing = prev[space.id] || [];
+      const idx = imageHistoryIndexBySpaceId[space.id] ?? existing.length - 1;
+      const sliced = existing.slice(0, idx + 1);
+      if (sliced[sliced.length - 1] === snap) return prev;
+      return { ...prev, [space.id]: [...sliced, snap].slice(-120) };
+    });
+    setImageHistoryIndexBySpaceId((prev) => {
+      const existing = imageHistoryBySpaceId[space.id] || [];
+      const idx = prev[space.id] ?? existing.length - 1;
+      const next = Math.min(idx + 1, 119);
+      return { ...prev, [space.id]: next };
+    });
+  }
+
+  function updateActiveImageSpace(mutator: (s: ImageEditorSpace) => ImageEditorSpace) {
+    if (!activeImageSpaceId) return;
+    setImageSpaces((prev) => {
+      const idx = prev.findIndex((s) => s.id === activeImageSpaceId);
+      if (idx < 0) return prev;
+      const next = [...prev];
+      const updated = { ...mutator(next[idx]), updatedAt: new Date().toISOString() };
+      next[idx] = updated;
+      persistImageHistory(updated);
+      return next;
+    });
+  }
+
+  function createImageSpace() {
+    const now = new Date().toISOString();
+    const space: ImageEditorSpace = {
+      id: uid(),
+      name: `Space ${imageSpaces.length + 1}`,
+      canvasWidth: 1600,
+      canvasHeight: 1000,
+      layers: [],
+      activeLayerId: null,
+      updatedAt: now,
+    };
+    setImageSpaces((prev) => [space, ...prev]);
+    setActiveImageSpaceId(space.id);
+    setImageWorkspacePan({ x: 0, y: 0 });
+    setImageWorkspaceZoom(1);
+    setImageHistoryBySpaceId((prev) => ({ ...prev, [space.id]: [JSON.stringify(space)] }));
+    setImageHistoryIndexBySpaceId((prev) => ({ ...prev, [space.id]: 0 }));
+  }
+
+  function insertLayerFromImageDataUrl(dataUrl: string, imageWidth: number, imageHeight: number) {
+    let targetId = activeImageSpaceId || (imageSpaces[0]?.id ?? null);
+    if (!targetId) {
+      const now = new Date().toISOString();
+      const space: ImageEditorSpace = {
+        id: uid(),
+        name: "Space 1",
+        canvasWidth: imageWidth,
+        canvasHeight: imageHeight,
+        layers: [],
+        activeLayerId: null,
+        updatedAt: now,
+      };
+      setImageSpaces([space]);
+      setActiveImageSpaceId(space.id);
+      setImageHistoryBySpaceId({ [space.id]: [JSON.stringify(space)] });
+      setImageHistoryIndexBySpaceId({ [space.id]: 0 });
+      targetId = space.id;
+    }
+    setImageSpaces((prev) => prev.map((space) => {
+      if (space.id !== targetId) return space;
+      const layer: ImageLayer = {
+        id: uid(),
+        name: `Layer ${space.layers.length + 1}`,
+        imageDataUrl: dataUrl,
+        width: imageWidth,
+        height: imageHeight,
+        x: Math.max(0, Math.round((space.canvasWidth - imageWidth) / 2)),
+        y: Math.max(0, Math.round((space.canvasHeight - imageHeight) / 2)),
+      };
+      const nextSpace = {
+        ...space,
+        canvasWidth: space.layers.length ? space.canvasWidth : imageWidth,
+        canvasHeight: space.layers.length ? space.canvasHeight : imageHeight,
+        layers: [...space.layers, layer],
+        activeLayerId: layer.id,
+        updatedAt: new Date().toISOString(),
+      };
+      persistImageHistory(nextSpace);
+      return nextSpace;
+    }));
+  }
+
+  async function handleImageEditorFile(file: File) {
+    if (!file.type.startsWith("image/")) return;
+    const dataUrl = await readFileAsDataUrl(file);
+    const img = new Image();
+    img.src = dataUrl;
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Failed to load image."));
+    });
+    insertLayerFromImageDataUrl(dataUrl, img.naturalWidth || 1, img.naturalHeight || 1);
+  }
+
+  function undoImageEditor() {
+    if (!activeImageSpace) return;
+    const history = imageHistoryBySpaceId[activeImageSpace.id] || [];
+    const idx = imageHistoryIndexBySpaceId[activeImageSpace.id] ?? history.length - 1;
+    if (idx <= 0 || !history.length) return;
+    const nextIdx = idx - 1;
+    const snapshot = safeParseJSON(history[nextIdx] || "");
+    if (!snapshot) return;
+    setImageSpaces((prev) => prev.map((s) => s.id === activeImageSpace.id ? snapshot as ImageEditorSpace : s));
+    setImageHistoryIndexBySpaceId((prev) => ({ ...prev, [activeImageSpace.id]: nextIdx }));
+  }
+
+  function redoImageEditor() {
+    if (!activeImageSpace) return;
+    const history = imageHistoryBySpaceId[activeImageSpace.id] || [];
+    const idx = imageHistoryIndexBySpaceId[activeImageSpace.id] ?? history.length - 1;
+    if (idx >= history.length - 1 || !history.length) return;
+    const nextIdx = idx + 1;
+    const snapshot = safeParseJSON(history[nextIdx] || "");
+    if (!snapshot) return;
+    setImageSpaces((prev) => prev.map((s) => s.id === activeImageSpace.id ? snapshot as ImageEditorSpace : s));
+    setImageHistoryIndexBySpaceId((prev) => ({ ...prev, [activeImageSpace.id]: nextIdx }));
+  }
+
+  function exportImageEditor(type: "png" | "jpg") {
+    const canvas = imageEditorCanvasRef.current;
+    const space = activeImageSpace;
+    if (!canvas || !space) return;
+    const mime = type === "png" ? "image/png" : "image/jpeg";
+    const quality = type === "png" ? 1 : 0.92;
+    const url = canvas.toDataURL(mime, quality);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${filenameSafe(space.name || "space") || "space"}.${type}`;
+    a.click();
   }
 
   function loadCharacterIntoForm(c: Character) {
@@ -4983,6 +5239,9 @@ ${feedback}`,
             <Button variant="secondary" onClick={() => navigateTo("lorebooks")}>
               <BookOpen className="h-4 w-4" /> Lorebook List
             </Button>
+            <Button variant="secondary" onClick={() => navigateTo("image_editor")}>
+              <Pencil className="h-4 w-4" /> Image Editing
+            </Button>
             <Button variant="secondary" onClick={() => setProxyOpen(true)}>
               <SlidersHorizontal className="h-4 w-4" /> Proxy Settings
             </Button>
@@ -5013,7 +5272,152 @@ ${feedback}`,
           </div>
         </header>
 
-        {page === "chat" ? (
+        {page === "image_editor" ? (
+          <div className="anim-page mt-6 space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Dashboard</Button>
+              <Button variant="primary" onClick={createImageSpace}><Plus className="h-4 w-4" /> New Space</Button>
+              <Button variant="secondary" onClick={() => imageEditorFileRef.current?.click()}><Upload className="h-4 w-4" /> Import Image</Button>
+              <Button variant="secondary" onClick={undoImageEditor}><ChevronLeft className="h-4 w-4" /> Undo</Button>
+              <Button variant="secondary" onClick={redoImageEditor}>Redo <ChevronRight className="h-4 w-4" /></Button>
+              <Button variant="secondary" onClick={() => localStorage.setItem(IMAGE_EDITOR_SPACES_KEY, JSON.stringify(imageSpaces))}><Download className="h-4 w-4" /> Save Spaces</Button>
+              <Button variant="secondary" onClick={() => exportImageEditor("png")}><Download className="h-4 w-4" /> Export PNG</Button>
+              <Button variant="secondary" onClick={() => exportImageEditor("jpg")}><Download className="h-4 w-4" /> Export JPG</Button>
+              <input ref={imageEditorFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageEditorFile(f); e.currentTarget.value = ""; }} />
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-[280px,1fr]">
+              <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                <div className="text-sm font-semibold">Spaces</div>
+                <div className="max-h-40 space-y-2 overflow-auto">
+                  {imageSpaces.map((space) => (
+                    <button key={space.id} type="button" onClick={() => setActiveImageSpaceId(space.id)} className={cn("w-full rounded-lg border px-2 py-1 text-left text-sm", activeImageSpaceId === space.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{space.name}</button>
+                  ))}
+                  {!imageSpaces.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No spaces yet.</div> : null}
+                </div>
+                <div className="text-sm font-semibold">Select Tool</div>
+                <Select value={imageSelectionTool} onChange={(e) => setImageSelectionTool(e.target.value as ImageSelectionTool)}>
+                  <option value="rectangle">Rectangle</option>
+                  <option value="lasso">Lasso</option>
+                  <option value="freehand">Freehand</option>
+                </Select>
+                <div className="text-sm font-semibold">Resize Tool</div>
+                <Select value={imageResizeMode} onChange={(e) => setImageResizeMode(e.target.value as ImageResizeMode)}>
+                  <option value="free">Free Resize</option>
+                  <option value="fixed">Fixed Resize (1:1)</option>
+                  <option value="skew">Skew</option>
+                  <option value="perspective">Perspective</option>
+                </Select>
+                {activeImageSpace?.activeLayerId ? (
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <Button variant="secondary" onClick={() => updateActiveImageSpace((s) => {
+                      const layer = s.layers.find((l) => l.id === s.activeLayerId);
+                      if (!layer) return s;
+                      const nextLayers = s.layers.map((l) => l.id !== layer.id ? l : {
+                        ...l,
+                        width: imageResizeMode === "fixed" ? Math.max(1, l.width + 40) : Math.max(1, l.width + 40),
+                        height: imageResizeMode === "fixed" ? Math.max(1, l.width + 40) : Math.max(1, l.height + 40),
+                      });
+                      return { ...s, layers: nextLayers };
+                    })}>Grow</Button>
+                    <Button variant="secondary" onClick={() => updateActiveImageSpace((s) => {
+                      const layer = s.layers.find((l) => l.id === s.activeLayerId);
+                      if (!layer) return s;
+                      const nextLayers = s.layers.map((l) => l.id !== layer.id ? l : {
+                        ...l,
+                        width: Math.max(1, l.width - 40),
+                        height: imageResizeMode === "fixed" ? Math.max(1, l.width - 40) : Math.max(1, l.height - 40),
+                      });
+                      return { ...s, layers: nextLayers };
+                    })}>Shrink</Button>
+                    <Button variant="secondary" onClick={() => updateActiveImageSpace((s) => {
+                      const nextLayers = s.layers.map((l) => l.id !== s.activeLayerId ? l : { ...l, x: l.x + 20 });
+                      return { ...s, layers: nextLayers };
+                    })}>Skew +X</Button>
+                    <Button variant="secondary" onClick={() => updateActiveImageSpace((s) => {
+                      const nextLayers = s.layers.map((l) => l.id !== s.activeLayerId ? l : { ...l, y: l.y + 20 });
+                      return { ...s, layers: nextLayers };
+                    })}>Perspective +Y</Button>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                <div
+                  className="relative h-[70vh] overflow-hidden rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))]"
+                  onWheel={(e) => {
+                    e.preventDefault();
+                    const next = Math.max(0.1, Math.min(4, imageWorkspaceZoom + (e.deltaY < 0 ? 0.1 : -0.1)));
+                    setImageWorkspaceZoom(next);
+                  }}
+                  onMouseDown={(e) => {
+                    if (e.button !== 1 && !e.altKey) return;
+                    setImageIsPanning(true);
+                  }}
+                  onMouseUp={() => setImageIsPanning(false)}
+                  onMouseLeave={() => setImageIsPanning(false)}
+                  onMouseMove={(e) => {
+                    if (imageIsPanning) {
+                      setImageWorkspacePan((prev) => ({ x: prev.x + e.movementX, y: prev.y + e.movementY }));
+                      return;
+                    }
+                    if (!activeImageSpace) return;
+                    if ((e.buttons & 1) !== 1) return;
+                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                    const x = (e.clientX - rect.left - imageWorkspacePan.x) / imageWorkspaceZoom;
+                    const y = (e.clientY - rect.top - imageWorkspacePan.y) / imageWorkspaceZoom;
+                    setImageSelectionPoints((prev) => {
+                      if (imageSelectionTool === "rectangle") return prev.length ? [prev[0], { x, y }] : [{ x, y }];
+                      return [...prev, { x, y }];
+                    });
+                  }}
+                  onMouseDownCapture={(e) => {
+                    if (e.button !== 0 || !activeImageSpace) return;
+                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                    const x = (e.clientX - rect.left - imageWorkspacePan.x) / imageWorkspaceZoom;
+                    const y = (e.clientY - rect.top - imageWorkspacePan.y) / imageWorkspaceZoom;
+                    setImageSelectionPoints([{ x, y }]);
+                  }}
+                  onMouseUpCapture={() => {
+                    if (!activeImageSpace) return;
+                    if (imageSelectionPoints.length) {
+                      const p = imageSelectionPoints[imageSelectionPoints.length - 1];
+                      const hit = [...activeImageSpace.layers].reverse().find((l) => p.x >= l.x && p.x <= l.x + l.width && p.y >= l.y && p.y <= l.y + l.height) || null;
+                      if (hit) updateActiveImageSpace((s) => ({ ...s, activeLayerId: hit.id }));
+                    }
+                  }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const f = e.dataTransfer.files?.[0];
+                    if (f) handleImageEditorFile(f);
+                  }}
+                >
+                  <div style={{ transform: `translate(${imageWorkspacePan.x}px, ${imageWorkspacePan.y}px) scale(${imageWorkspaceZoom})`, transformOrigin: "0 0" }}>
+                    <canvas ref={imageEditorCanvasRef} className="block" style={{ background: "white" }} />
+                    {imageSelectionPoints.length > 1 ? (
+                      <svg className="pointer-events-none absolute left-0 top-0" width={activeImageSpace?.canvasWidth || 1} height={activeImageSpace?.canvasHeight || 1}>
+                        {imageSelectionTool === "rectangle" ? (
+                          <rect
+                            x={Math.min(imageSelectionPoints[0].x, imageSelectionPoints[1].x)}
+                            y={Math.min(imageSelectionPoints[0].y, imageSelectionPoints[1].y)}
+                            width={Math.abs(imageSelectionPoints[1].x - imageSelectionPoints[0].x)}
+                            height={Math.abs(imageSelectionPoints[1].y - imageSelectionPoints[0].y)}
+                            fill="none"
+                            stroke="#36c"
+                            strokeDasharray="6 4"
+                          />
+                        ) : (
+                          <polyline points={imageSelectionPoints.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke="#36c" strokeDasharray="6 4" />
+                        )}
+                      </svg>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : page === "chat" ? (
           <div className="anim-page mt-6 grid gap-4 lg:grid-cols-3">
             <div className="space-y-3 lg:col-span-1">
               <div className="flex items-center justify-between gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
