@@ -206,6 +206,14 @@ type CharacterCard = {
   updatedAt: string;
 };
 
+type CharacterCardJsonExport = {
+  version: 1;
+  exportedAt: string;
+  card: CharacterCard;
+  characters: Character[];
+  relationshipStory: StoryProject | null;
+};
+
 const STORAGE_KEY = "mastercreator_characters_v5";
 const IDB_NAME = "mastercreator_db";
 const IDB_STORE = "characters";
@@ -610,6 +618,23 @@ function normalizeCharacter(x: any): Character | null {
     introMessages: introMessages.length ? introMessages : [""],
     selectedIntroIndex,
     assignedLorebookIds: normalizeStringArray(x.assignedLorebookIds),
+    createdAt: typeof x.createdAt === "string" ? x.createdAt : now,
+    updatedAt: typeof x.updatedAt === "string" ? x.updatedAt : now,
+  };
+}
+
+function normalizeCharacterCard(x: any): CharacterCard | null {
+  if (!x || typeof x !== "object") return null;
+  const now = new Date().toISOString();
+  return {
+    id: typeof x.id === "string" ? x.id : uid(),
+    name: collapseWhitespace(x.name || "Character Card"),
+    characterIds: normalizeStringArray(x.characterIds),
+    relationshipStoryId: typeof x.relationshipStoryId === "string" ? x.relationshipStoryId : undefined,
+    systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
+    selectedSystemRuleIds: normalizeStringArray(x.selectedSystemRuleIds),
+    firstMessageMessages: normalizeStringArray(x.firstMessageMessages).length ? normalizeStringArray(x.firstMessageMessages) : [""],
+    selectedFirstMessageIndex: Number.isFinite(Number(x.selectedFirstMessageIndex)) ? Math.max(0, Number(x.selectedFirstMessageIndex)) : 0,
     createdAt: typeof x.createdAt === "string" ? x.createdAt : now,
     updatedAt: typeof x.updatedAt === "string" ? x.updatedAt : now,
   };
@@ -1195,6 +1220,7 @@ export default function CharacterCreatorApp() {
   const lorebookCoverFileRef = useRef<HTMLInputElement | null>(null);
   const factionImageFileRef = useRef<HTMLInputElement | null>(null);
   const sexualBehaviorImportRef = useRef<HTMLInputElement | null>(null);
+  const characterCardImportRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (import.meta.env.MODE === "test") runTests();
@@ -1415,22 +1441,7 @@ export default function CharacterCreatorApp() {
     const savedCharacterCards = safeParseJSON(localStorage.getItem(CHARACTER_CARDS_KEY) || "");
     if (Array.isArray(savedCharacterCards)) {
       const normalizedCards = savedCharacterCards
-        .map((card: any) => {
-          if (!card || typeof card !== "object") return null;
-          const now = new Date().toISOString();
-          return {
-            id: typeof card.id === "string" ? card.id : uid(),
-            name: collapseWhitespace(card.name || "Character Card"),
-            characterIds: normalizeStringArray(card.characterIds),
-            relationshipStoryId: typeof card.relationshipStoryId === "string" ? card.relationshipStoryId : undefined,
-            systemRules: typeof card.systemRules === "string" ? card.systemRules : "",
-            selectedSystemRuleIds: normalizeStringArray(card.selectedSystemRuleIds),
-            firstMessageMessages: normalizeStringArray(card.firstMessageMessages).length ? normalizeStringArray(card.firstMessageMessages) : [""],
-            selectedFirstMessageIndex: Number.isFinite(Number(card.selectedFirstMessageIndex)) ? Math.max(0, Number(card.selectedFirstMessageIndex)) : 0,
-            createdAt: typeof card.createdAt === "string" ? card.createdAt : now,
-            updatedAt: typeof card.updatedAt === "string" ? card.updatedAt : now,
-          } as CharacterCard;
-        })
+        .map(normalizeCharacterCard)
         .filter((x): x is CharacterCard => !!x)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       setCharacterCards(normalizedCards);
@@ -3281,6 +3292,116 @@ ${prompt}`,
       if (arr.length) setSexualBehavior(arr);
     } catch {
       // ignore
+    }
+  }
+
+  function exportCurrentCardJson(fallbackCharacter?: Character) {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
+    const baseCard = activeCard || (() => {
+      const now = new Date().toISOString();
+      return {
+        id: uid(),
+        name: collapseWhitespace(characterCardNameInput) || fallbackCharacter?.name || "Character Card",
+        characterIds: fallbackCharacter ? [fallbackCharacter.id] : [],
+        systemRules: cardSystemRules,
+        selectedSystemRuleIds: cardSelectedSystemRuleIds,
+        firstMessageMessages: introMessages.length ? [...introMessages] : [""],
+        selectedFirstMessageIndex: introIndex,
+        createdAt: now,
+        updatedAt: now,
+      } as CharacterCard;
+    })();
+
+    const exportedCard: CharacterCard = {
+      ...baseCard,
+      name: collapseWhitespace(characterCardNameInput) || baseCard.name || "Character Card",
+      characterIds: [...(baseCard.characterIds || [])],
+      systemRules: cardSystemRules,
+      selectedSystemRuleIds: [...cardSelectedSystemRuleIds],
+      firstMessageMessages: introMessages.length ? [...introMessages] : [""],
+      selectedFirstMessageIndex: clampIndex(introIndex, Math.max(1, introMessages.length)),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const exportedCharacters = exportedCard.characterIds
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c)
+      .map((c) => ({ ...c }));
+
+    const relationshipStory = exportedCard.relationshipStoryId
+      ? stories.find((s) => s.id === exportedCard.relationshipStoryId) || null
+      : null;
+
+    const payload: CharacterCardJsonExport = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      card: exportedCard,
+      characters: exportedCharacters,
+      relationshipStory: relationshipStory ? { ...relationshipStory } : null,
+    };
+
+    const exportName = filenameSafe(exportedCard.name || fallbackCharacter?.name || "character_card") || "character_card";
+    downloadJSON(`${exportName}.json`, payload);
+  }
+
+  async function importCharacterCardJSON(file: File) {
+    try {
+      const raw = await file.text();
+      const parsed = safeParseJSON(raw);
+      if (!parsed || typeof parsed !== "object") {
+        alert("Invalid JSON file.");
+        return;
+      }
+
+      const maybeExport = parsed as Partial<CharacterCardJsonExport>;
+      const incomingCardRaw = maybeExport.card ?? parsed;
+      const normalizedCard = normalizeCharacterCard(incomingCardRaw);
+      if (!normalizedCard) {
+        alert("This file does not contain a valid character card.");
+        return;
+      }
+
+      const importedCharacters = Array.isArray(maybeExport.characters)
+        ? maybeExport.characters.map(normalizeCharacter).filter((c): c is Character => !!c)
+        : [];
+
+      const incomingStory = maybeExport.relationshipStory && typeof maybeExport.relationshipStory === "object"
+        ? (maybeExport.relationshipStory as StoryProject)
+        : null;
+
+      const finalCard: CharacterCard = {
+        ...normalizedCard,
+        name: normalizedCard.name || "Imported Character Card",
+        firstMessageMessages: normalizedCard.firstMessageMessages.length ? normalizedCard.firstMessageMessages : [""],
+        selectedFirstMessageIndex: clampIndex(normalizedCard.selectedFirstMessageIndex || 0, Math.max(1, normalizedCard.firstMessageMessages.length || 1)),
+      };
+
+      if (importedCharacters.length) {
+        setCharacters((prev) => {
+          const byId = new Map(prev.map((c) => [c.id, c]));
+          for (const ch of importedCharacters) byId.set(ch.id, ch);
+          return Array.from(byId.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        });
+      }
+
+      if (incomingStory) {
+        setStories((prev) => {
+          const byId = new Map(prev.map((s) => [s.id, s]));
+          byId.set(incomingStory.id, incomingStory);
+          return Array.from(byId.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        });
+      }
+
+      setCharacterCards((prev) => {
+        const byId = new Map(prev.map((card) => [card.id, card]));
+        byId.set(finalCard.id, finalCard);
+        return Array.from(byId.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      });
+      setActiveCharacterCardId(finalCard.id);
+      setCharacterCardNameInput(finalCard.name);
+      alert("Character card imported successfully.");
+    } catch {
+      alert("Failed to import character card JSON.");
     }
   }
 
@@ -6037,14 +6158,25 @@ ${feedback}`,
                   variant="secondary"
                   onClick={() => {
                     if (!draft) return alert("Please enter a character name before exporting.");
-                    downloadJSON(
-                      (filenameSafe(draft.name) || "character") + ".json",
-                      draft
-                    );
+                    exportCurrentCardJson(draft);
                   }}
                 >
                   <Download className="h-4 w-4" /> Export JSON
                 </Button>
+                <Button variant="secondary" onClick={() => characterCardImportRef.current?.click()}>
+                  <Upload className="h-4 w-4" /> Import JSON
+                </Button>
+                <input
+                  ref={characterCardImportRef}
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) importCharacterCardJSON(f);
+                    e.currentTarget.value = "";
+                  }}
+                />
                 <Button variant="primary" onClick={saveCharacter}>
                   <Plus className="h-4 w-4" /> {selectedId ? "Update" : "Save"}
                 </Button>
@@ -6483,7 +6615,7 @@ ${feedback}`,
                       </div>
                     </div>
 
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <Button
                         variant="secondary"
                         type="button"
@@ -6493,6 +6625,16 @@ ${feedback}`,
                         }}
                       >
                         <Download className="h-4 w-4" /> Export TXT
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        onClick={() => {
+                          if (!draft) return alert("Enter a character name first.");
+                          exportCurrentCardJson(draft);
+                        }}
+                      >
+                        <Download className="h-4 w-4" /> Export JSON
                       </Button>
                       <Button variant="primary" type="button" onClick={saveCharacter}>
                         <Plus className="h-4 w-4" /> Save
@@ -6561,6 +6703,16 @@ ${feedback}`,
                 }}
               >
                 <Download className="h-4 w-4" /> Export TXT
+              </Button>
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => {
+                  if (!draft) return alert("Enter a character name first.");
+                  exportCurrentCardJson(draft);
+                }}
+              >
+                <Download className="h-4 w-4" /> Export JSON
               </Button>
               <Button variant="primary" type="button" onClick={saveCharacter}>
                 <Plus className="h-4 w-4" /> Save
