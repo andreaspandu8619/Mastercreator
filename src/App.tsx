@@ -254,6 +254,8 @@ const DEFAULT_PROXY: ProxyConfig = {
   streamingEnabled: true,
 };
 
+const DEFAULT_CHUTES_MODELS_URL = "https://llm.chutes.ai/v1/models";
+
 const PERSONALITIES: string[] = [
   "Brave",
   "Cautious",
@@ -361,7 +363,7 @@ function safeParseJSON(text: string) {
 
 function deriveModelsUrlFromChatUrl(chatUrl: string) {
   const normalized = collapseWhitespace(chatUrl);
-  if (!normalized) return "";
+  if (!normalized) return DEFAULT_CHUTES_MODELS_URL;
   const modelsSuffix = "/v1/models";
   if (normalized.endsWith(modelsSuffix)) return normalized;
   if (normalized.endsWith("/v1/chat/completions")) return normalized.replace("/v1/chat/completions", modelsSuffix);
@@ -1076,6 +1078,11 @@ export default function CharacterCreatorApp() {
   const [createPreviewOpen, setCreatePreviewOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
 
+  const selectedProxyCatalogModel = useMemo(
+    () => proxyModels.find((item) => item.id === proxyModel) || null,
+    [proxyModels, proxyModel]
+  );
+
   const [imageDataUrl, setImageDataUrl] = useState("");
   const [imageError, setImageError] = useState<string | null>(null);
 
@@ -1334,22 +1341,26 @@ export default function CharacterCreatorApp() {
 
   const loadProxyModels = React.useCallback(async () => {
     const modelsUrl = deriveModelsUrlFromChatUrl(proxyChatUrl);
-    if (!modelsUrl) {
-      setProxyModels([]);
-      setProxyModelsError(null);
-      return;
-    }
     setProxyModelsLoading(true);
     setProxyModelsError(null);
     try {
-      const headers: Record<string, string> = {};
       const key = collapseWhitespace(proxyApiKey);
-      if (key) headers.Authorization = key.startsWith("Bearer ") ? key : `Bearer ${key}`;
-      const res = await fetch(modelsUrl, { headers });
-      if (!res.ok) {
-        throw new Error(`Model list request failed (${res.status})`);
+      const normalizedKey = key.replace(/^Bearer\s+/i, "").trim();
+      const shouldSendAuth = !!normalizedKey && normalizedKey.toLowerCase() !== "token";
+      const fetchModels = async (withAuth: boolean) => {
+        const headers: Record<string, string> = {};
+        if (withAuth && shouldSendAuth) headers.Authorization = key.startsWith("Bearer ") ? key : `Bearer ${key}`;
+        const res = await fetch(modelsUrl, { headers });
+        if (!res.ok) throw new Error(`Model list request failed (${res.status})`);
+        return res.json();
+      };
+      let payload: any;
+      try {
+        payload = await fetchModels(shouldSendAuth);
+      } catch (firstErr) {
+        if (!shouldSendAuth) throw firstErr;
+        payload = await fetchModels(false);
       }
-      const payload = await res.json();
       const data = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
       const normalized = data
         .map((item: any) => {
@@ -1376,6 +1387,9 @@ export default function CharacterCreatorApp() {
         .filter((item: ProxyModelCatalogItem | null): item is ProxyModelCatalogItem => !!item)
         .sort((a: ProxyModelCatalogItem, b: ProxyModelCatalogItem) => a.id.localeCompare(b.id));
       setProxyModels(normalized);
+      if (normalized.length && !normalized.some((item: ProxyModelCatalogItem) => item.id === proxyModel)) {
+        setProxyModel(normalized[0].id);
+      }
       setProxyModelsLastUpdatedAt(new Date().toISOString());
     } catch (err: any) {
       setProxyModels([]);
@@ -1383,7 +1397,7 @@ export default function CharacterCreatorApp() {
     } finally {
       setProxyModelsLoading(false);
     }
-  }, [proxyApiKey, proxyChatUrl]);
+  }, [proxyApiKey, proxyChatUrl, proxyModel]);
 
   useEffect(() => {
     if (import.meta.env.MODE === "test") runTests();
@@ -7404,8 +7418,13 @@ ${feedback}`,
                 onChange={(e) => setProxyModel(e.target.value)}
                 placeholder="e.g., deepseek-ai/DeepSeek-R1"
               />
+              {selectedProxyCatalogModel ? (
+                <div className="text-xs text-[hsl(var(--muted-foreground))]">
+                  Selected pricing: input {formatDollarsPerMillion(selectedProxyCatalogModel.promptCostPerMTokens)} · output {formatDollarsPerMillion(selectedProxyCatalogModel.completionCostPerMTokens)}.
+                </div>
+              ) : null}
               <div className="text-xs text-[hsl(var(--muted-foreground))]">
-                Source: {deriveModelsUrlFromChatUrl(proxyChatUrl) || "Enter Chat completion URL first"}.
+                Source: {deriveModelsUrlFromChatUrl(proxyChatUrl)}.
                 {proxyModelsLastUpdatedAt ? ` Last updated ${new Date(proxyModelsLastUpdatedAt).toLocaleString()}.` : ""}
               </div>
               {proxyModelsError ? (
