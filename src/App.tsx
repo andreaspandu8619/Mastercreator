@@ -2297,11 +2297,18 @@ export default function CharacterCreatorApp() {
       });
       return;
     }
-    const greeting = collapseWhitespace(
+    const ownerCard = characterCards.find((card) => (card.characterIds || []).includes(c.id)) || null;
+    const characterIntro = collapseWhitespace(
       c.introMessages?.[
         clampIndex(c.selectedIntroIndex || 0, Math.max(1, c.introMessages?.length || 1))
       ] || ""
     );
+    const cardIntro = collapseWhitespace(
+      ownerCard?.firstMessageMessages?.[
+        clampIndex(ownerCard?.selectedFirstMessageIndex || 0, Math.max(1, ownerCard?.firstMessageMessages?.length || 1))
+      ] || ""
+    );
+    const greeting = characterIntro || cardIntro;
     const session: ChatSession = {
       id: uid(),
       characterId: c.id,
@@ -2358,8 +2365,8 @@ export default function CharacterCreatorApp() {
     }
   }
 
-  function startChatWithSelectedCard() {
-    const selectedCard = characterCards.find((card) => card.id === chatCardSelectionId);
+  function startChatWithSelectedCard(cardId?: string) {
+    const selectedCard = characterCards.find((card) => card.id === (cardId || chatCardSelectionId));
     if (!selectedCard) return alert("Select a character card first.");
     const selectedCharacter = selectedCard.characterIds
       .map((id) => characters.find((c) => c.id === id))
@@ -4988,7 +4995,7 @@ ${feedback}`,
                       {characterCards.map((card) => {
                         const c = characters.find((x) => x.id === card.characterIds[0]);
                         return (
-                          <button key={card.id} type="button" onClick={() => { setChatCardSelectionId(card.id); startChatWithSelectedCard(); }} className="overflow-hidden rounded-xl border border-[hsl(var(--border))] text-left">
+                          <button key={card.id} type="button" onClick={() => { setChatCardSelectionId(card.id); startChatWithSelectedCard(card.id); }} className="overflow-hidden rounded-xl border border-[hsl(var(--border))] text-left">
                             <div className="relative aspect-[3/4] bg-[hsl(var(--muted))]">
                               {c?.imageDataUrl ? <img src={c.imageDataUrl} alt={card.name} className="absolute inset-0 h-full w-full object-cover" /> : null}
                             </div>
