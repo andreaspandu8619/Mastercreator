@@ -4849,7 +4849,7 @@ ${feedback}`,
             </aside>
             ) : null}
 
-            <div className="space-y-4">
+            <div className="space-y-4 pb-44">
               <div className="flex flex-wrap items-center gap-2">
                 <Button variant="secondary" onClick={() => setChatSidebarOpen((v) => !v)}><Menu className="h-4 w-4" /></Button>
                 <Button variant="secondary" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Back</Button>
@@ -4956,10 +4956,12 @@ ${feedback}`,
                 </div>
               )}
 
-              <div className="rounded-2xl border border-[hsl(var(--border))] p-3">
-                <div className="flex gap-2">
-                  <Textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} rows={3} placeholder="Type your message...." disabled={!chatCharacter} onKeyDown={(e) => onEnterAdd(e, sendChatMessage)} />
-                  <Button variant="primary" onClick={sendChatMessage} disabled={!chatCharacter || !collapseWhitespace(chatInput) || genLoading}><SendHorizontal className="h-4 w-4" /></Button>
+              <div className={cn("fixed bottom-4 right-4 z-40", chatSidebarOpen ? "left-4 lg:left-[260px]" : "left-4")}>
+                <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 shadow-xl">
+                  <div className="flex gap-2">
+                    <Textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} rows={3} placeholder="Type your message...." disabled={!chatCharacter} onKeyDown={(e) => onEnterAdd(e, sendChatMessage)} />
+                    <Button variant="primary" onClick={sendChatMessage} disabled={!chatCharacter || !collapseWhitespace(chatInput) || genLoading}><SendHorizontal className="h-4 w-4" /></Button>
+                  </div>
                 </div>
               </div>
             </div>
