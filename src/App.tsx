@@ -164,6 +164,14 @@ type LoreMemoryTurn = {
   createdAt: string;
 };
 
+type PersonaProfile = {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Character = {
   id: string;
   name: string;
@@ -220,6 +228,7 @@ const IDB_STORE = "characters";
 const THEME_KEY = "mastercreator_theme";
 const PROXY_KEY = "mastercreator_proxy";
 const PERSONA_KEY = "mastercreator_persona";
+const PERSONAS_KEY = "mastercreator_personas_v1";
 const CHAT_SESSIONS_KEY = "mastercreator_chat_sessions_v1";
 const STORIES_KEY = "mastercreator_stories_v1";
 const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
@@ -894,7 +903,7 @@ function runTests() {
 
 export default function CharacterCreatorApp() {
   const [theme, setTheme] = useState<ThemeMode>("light");
-  const [page, setPage] = useState<Page>("characters");
+  const [page, setPage] = useState<Page>("library");
   const [tab, setTab] = useState<CreateTab>("definition");
 
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -917,8 +926,14 @@ export default function CharacterCreatorApp() {
   const [proxyStreamingEnabled, setProxyStreamingEnabled] = useState(DEFAULT_PROXY.streamingEnabled);
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaText, setPersonaText] = useState("");
+  const [personas, setPersonas] = useState<PersonaProfile[]>([]);
+  const [activePersonaId, setActivePersonaId] = useState("");
+  const [personaCreatorOpen, setPersonaCreatorOpen] = useState(false);
+  const [personaNameInput, setPersonaNameInput] = useState("");
+  const [personaDescriptionInput, setPersonaDescriptionInput] = useState("");
 
   const [chatCharacter, setChatCharacter] = useState<Character | null>(null);
+  const [chatCardSelectionId, setChatCardSelectionId] = useState("");
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -1270,6 +1285,7 @@ export default function CharacterCreatorApp() {
   const factionImageFileRef = useRef<HTMLInputElement | null>(null);
   const sexualBehaviorImportRef = useRef<HTMLInputElement | null>(null);
   const characterCardImportRef = useRef<HTMLInputElement | null>(null);
+  const chatCharacterCardImportRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (import.meta.env.MODE === "test") runTests();
@@ -1299,6 +1315,27 @@ export default function CharacterCreatorApp() {
 
     const savedPersona = localStorage.getItem(PERSONA_KEY);
     if (typeof savedPersona === "string") setPersonaText(savedPersona);
+    const savedPersonas = safeParseJSON(localStorage.getItem(PERSONAS_KEY) || "");
+    if (Array.isArray(savedPersonas)) {
+      const normalized = savedPersonas
+        .map((p) => {
+          if (!p || typeof p !== "object") return null;
+          const name = collapseWhitespace((p as any).name || "");
+          const description = String((p as any).description || "");
+          if (!name) return null;
+          const now = new Date().toISOString();
+          return {
+            id: typeof (p as any).id === "string" ? (p as any).id : uid(),
+            name,
+            description,
+            createdAt: typeof (p as any).createdAt === "string" ? (p as any).createdAt : now,
+            updatedAt: typeof (p as any).updatedAt === "string" ? (p as any).updatedAt : now,
+          } as PersonaProfile;
+        })
+        .filter((p): p is PersonaProfile => !!p);
+      setPersonas(normalized);
+      if (normalized.length) setActivePersonaId(normalized[0].id);
+    }
 
     const savedSessions = safeParseJSON(localStorage.getItem(CHAT_SESSIONS_KEY) || "");
     if (Array.isArray(savedSessions)) {
@@ -1595,6 +1632,20 @@ export default function CharacterCreatorApp() {
   }, [personaText]);
 
   useEffect(() => {
+    localStorage.setItem(PERSONAS_KEY, JSON.stringify(personas));
+  }, [personas]);
+
+  useEffect(() => {
+    if (!personas.length) {
+      setActivePersonaId("");
+      return;
+    }
+    if (!activePersonaId || !personas.some((p) => p.id === activePersonaId)) {
+      setActivePersonaId(personas[0].id);
+    }
+  }, [personas, activePersonaId]);
+
+  useEffect(() => {
     localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(chatSessions));
   }, [chatSessions]);
 
@@ -1667,6 +1718,16 @@ export default function CharacterCreatorApp() {
       setCharacterCardNameInput(characterCards[0].name);
     }
   }, [hydrated, characterCards, activeCharacterCardId]);
+
+  useEffect(() => {
+    if (!characterCards.length) {
+      setChatCardSelectionId("");
+      return;
+    }
+    if (!chatCardSelectionId || !characterCards.some((c) => c.id === chatCardSelectionId)) {
+      setChatCardSelectionId(characterCards[0].id);
+    }
+  }, [characterCards, chatCardSelectionId]);
   const selected = useMemo(
     () => characters.find((c) => c.id === selectedId) || null,
     [characters, selectedId]
@@ -2228,8 +2289,37 @@ export default function CharacterCreatorApp() {
     openChatSession(session);
   }
 
+  function createPersonaProfile() {
+    const name = collapseWhitespace(personaNameInput);
+    const description = personaDescriptionInput.trim();
+    if (!name) {
+      alert("Please enter a persona name.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const profile: PersonaProfile = { id: uid(), name, description, createdAt: now, updatedAt: now };
+    setPersonas((prev) => [profile, ...prev]);
+    setActivePersonaId(profile.id);
+    setPersonaNameInput("");
+    setPersonaDescriptionInput("");
+    setPersonaCreatorOpen(false);
+  }
+
+  function startChatWithSelectedCard() {
+    const selectedCard = characterCards.find((card) => card.id === chatCardSelectionId);
+    if (!selectedCard) return alert("Select a character card first.");
+    const selectedCharacter = selectedCard.characterIds
+      .map((id) => characters.find((c) => c.id === id))
+      .find((c): c is Character => !!c);
+    if (!selectedCharacter) return alert("This character card has no character entries yet.");
+    startChatWithCharacter(selectedCharacter);
+  }
+
   function buildCharacterChatSystemPrompt(c: Character) {
-    const persona = collapseWhitespace(personaText);
+    const selectedPersona = personas.find((p) => p.id === activePersonaId) || null;
+    const persona = collapseWhitespace(
+      selectedPersona ? `${selectedPersona.name}: ${selectedPersona.description}` : personaText
+    );
     return [
       "You are roleplaying as the following character. Stay in-character and speak naturally.",
       `Name: ${c.name}`,
@@ -2289,16 +2379,6 @@ export default function CharacterCreatorApp() {
     setStoryFirstMessageStyle(activeStory?.firstMessageStyle || "realistic");
     setStorySystemRulesInput(activeStory?.systemRules || "");
   }, [activeStory?.id]);
-
-  const latestCharacter = useMemo(
-    () => (characters.length ? [...characters].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] : null),
-    [characters]
-  );
-
-  const latestStory = useMemo(
-    () => (stories.length ? [...stories].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] : null),
-    [stories]
-  );
 
   const activeLorebook = useMemo(
     () => lorebooks.find((book) => book.id === activeLorebookId) || null,
@@ -4614,12 +4694,29 @@ ${feedback}`,
             <button
               type="button"
               className="text-2xl font-semibold tracking-tight md:text-3xl"
-              onClick={() => navigateTo("characters")}
+              onClick={() => navigateTo("library")}
             >
               Mastercreator
             </button>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+            <div className="relative">
+              <Button variant="secondary" onClick={() => setPersonaCreatorOpen((v) => !v)}>
+                <Plus className="h-4 w-4" /> Create Persona
+              </Button>
+              {personaCreatorOpen ? (
+                <div className="absolute right-0 top-12 z-50 w-[320px] rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 shadow-2xl">
+                  <div className="space-y-2">
+                    <Input value={personaNameInput} onChange={(e) => setPersonaNameInput(e.target.value)} placeholder="Persona name" />
+                    <Textarea value={personaDescriptionInput} onChange={(e) => setPersonaDescriptionInput(e.target.value)} rows={4} placeholder="Persona description" />
+                    <div className="flex justify-end gap-2">
+                      <Button variant="secondary" onClick={() => setPersonaCreatorOpen(false)}>Close</Button>
+                      <Button variant="primary" onClick={createPersonaProfile}>Save</Button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
             <Button variant="secondary" onClick={() => navigateTo("characters")}>
               <Library className="h-4 w-4" /> Character List
             </Button>
@@ -4637,103 +4734,65 @@ ${feedback}`,
         </header>
 
         {page === "chat" ? (
-          <div className="anim-page mt-6 grid gap-4 lg:grid-cols-3">
-            <div className="space-y-3 lg:col-span-1">
-              <div className="flex items-center justify-between gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                <div>
-                  <div className="text-sm font-semibold">Chats</div>
-                  <div className="text-xs text-[hsl(var(--muted-foreground))]">Continue latest or pick a session.</div>
-                </div>
-                <Button variant="secondary" onClick={() => navigateTo("library")}>
-                  <ArrowLeft className="h-4 w-4" /> Dashboard
-                </Button>
+          <div className="anim-page mt-6 space-y-4">
+            <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="text-lg font-semibold">Chat</div>
+                <Button variant="secondary" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Dashboard</Button>
               </div>
-              {chatSessions.length ? (
-                <div className="space-y-2">
-                  <Button
-                    variant="primary"
-                    className="w-full"
-                    onClick={() => openChatSession(chatSessions[0])}
-                  >
-                    Continue latest chat
-                  </Button>
-                  {chatSessions.map((s) => (
-                    <button
-                      key={s.id}
-                      className={cn(
-                        "clickable w-full rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 text-left",
-                        activeChatSessionId === s.id && "border-[hsl(var(--hover-accent))]"
-                      )}
-                      onClick={() => openChatSession(s)}
-                      type="button"
-                    >
-                      <div className="text-sm font-medium">{s.characterName}</div>
-                      <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
-                        {new Date(s.updatedAt).toLocaleString()}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-sm text-[hsl(var(--muted-foreground))]">
-                  No chats yet. Start a chat from a character.
-                </div>
-              )}
+              <div className="grid gap-2 md:grid-cols-4">
+                <Select value={activePersonaId} onChange={(e) => setActivePersonaId(e.target.value)}>
+                  <option value="">No persona</option>
+                  {personas.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </Select>
+                <Select value={chatCardSelectionId} onChange={(e) => setChatCardSelectionId(e.target.value)}>
+                  {characterCards.map((card) => <option key={card.id} value={card.id}>{card.name || "Character Card"}</option>)}
+                </Select>
+                <Button variant="secondary" onClick={() => chatCharacterCardImportRef.current?.click()}><Upload className="h-4 w-4" /> Import card JSON</Button>
+                <Button variant="primary" onClick={startChatWithSelectedCard}>Start chat</Button>
+                <input
+                  ref={chatCharacterCardImportRef}
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (f) await importCharacterCardJSON(f);
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </div>
             </div>
 
-            <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 shadow-sm lg:col-span-2">
+            {chatSessions.length ? (
+              <div className="flex gap-2 overflow-auto pb-1">
+                {chatSessions.map((s) => (
+                  <button key={s.id} type="button" onClick={() => openChatSession(s)} className={cn("rounded-xl border px-3 py-2 text-sm whitespace-nowrap", activeChatSessionId === s.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>
+                    {s.characterName}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
               {chatCharacter ? (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-lg font-semibold">Chat with {chatCharacter.name}</div>
-                  </div>
-                  <div className="max-h-[62vh] space-y-2 overflow-auto rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
-                    {chatMessages.length ? (
-                      chatMessages.map((m, i) => (
-                        <div
-                          key={`${m.role}-${i}`}
-                          className={cn(
-                            "flex max-w-[95%] items-start gap-2 rounded-xl px-3 py-2 text-sm whitespace-pre-wrap",
-                            m.role === "user"
-                              ? "ml-auto border border-[hsl(var(--border))]"
-                              : "mr-auto border border-[hsl(var(--border))] bg-[hsl(var(--card))]"
-                          )}
-                        >
-                          {m.role === "assistant" ? (
-                            chatCharacter.imageDataUrl ? (
-                              <img
-                                src={chatCharacter.imageDataUrl}
-                                alt={chatCharacter.name}
-                                className="mt-0.5 h-7 w-7 rounded-full object-cover"
-                              />
-                            ) : (
-                              <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-[hsl(var(--border))] text-[10px]">AI</div>
-                            )
-                          ) : null}
-                          <div className="min-w-0">
-                            <RichText text={m.content} />
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-sm text-[hsl(var(--muted-foreground))]">No messages yet. Start chatting.</div>
-                    )}
+                  <div className="text-sm text-[hsl(var(--muted-foreground))]">Chatting with <span className="font-semibold text-[hsl(var(--foreground))]">{chatCharacter.name}</span></div>
+                  <div className="max-h-[62vh] space-y-3 overflow-auto rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
+                    {chatMessages.length ? chatMessages.map((m, i) => (
+                      <div key={`${m.role}-${i}`} className={cn("rounded-xl px-4 py-3 text-sm whitespace-pre-wrap", m.role === "user" ? "ml-auto max-w-[85%] border border-[hsl(var(--border))]" : "mr-auto max-w-[90%] border border-[hsl(var(--border))] bg-[hsl(var(--card))]")}>
+                        <RichText text={m.content} />
+                      </div>
+                    )) : <div className="text-sm text-[hsl(var(--muted-foreground))]">No messages yet.</div>}
                   </div>
                   <div className="flex gap-2">
-                    <Input
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => onEnterAdd(e, sendChatMessage)}
-                      placeholder="Type your message…"
-                    />
-                    <Button variant="primary" onClick={sendChatMessage} disabled={!collapseWhitespace(chatInput) || genLoading}>
-                      Send
-                    </Button>
+                    <Input value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, sendChatMessage)} placeholder="Write something." />
+                    <Button variant="primary" onClick={sendChatMessage} disabled={!collapseWhitespace(chatInput) || genLoading}>Send</Button>
                   </div>
                   {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
                 </div>
               ) : (
-                <div className="text-sm text-[hsl(var(--muted-foreground))]">Pick a chat session from the left.</div>
+                <div className="text-sm text-[hsl(var(--muted-foreground))]">Select a character card and start chat.</div>
               )}
             </div>
           </div>
@@ -6006,89 +6065,26 @@ ${feedback}`,
             </div>
           )
         ) : page === "library" ? (
-            <div className="anim-page mt-6 space-y-6">
-            <div className="anim-stagger grid gap-4 md:grid-cols-3">
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                <div className="mb-3 text-sm font-semibold">Characters</div>
-                <Button variant="primary" className="w-full justify-center py-3" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}>
-                  <Plus className="h-4 w-4" /> Create new character
-                </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("characters")}>
-                  <Library className="h-4 w-4" /> View character gallery
-                </Button>
-              </div>
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                <div className="mb-3 text-sm font-semibold">Stories</div>
-                <Button variant="primary" className="w-full justify-center py-3" onClick={() => navigateTo("storywriting")}>
-                  <Plus className="h-4 w-4" /> Create new story
-                </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("my_stories")}>
-                  <Library className="h-4 w-4" /> View stories
-                </Button>
-              </div>
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                <div className="mb-3 text-sm font-semibold">Lorebooks</div>
-                <Button variant="primary" className="w-full justify-center py-3" onClick={createLorebook}>
-                  <Plus className="h-4 w-4" /> Create new lorebook
-                </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("lorebooks")}>
-                  <BookOpen className="h-4 w-4" /> View lorebooks
-                </Button>
+            <div className="anim-page mt-10">
+              <div className="mx-auto grid max-w-4xl gap-6 md:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => navigateTo("chat")}
+                  className="aspect-[3/4] rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-8 text-left shadow-sm"
+                >
+                  <div className="text-3xl font-semibold">Chat</div>
+                  <div className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">Open chatbot interface and start a conversation.</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigateTo("characters")}
+                  className="aspect-[3/4] rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-8 text-left shadow-sm"
+                >
+                  <div className="text-3xl font-semibold">Creator</div>
+                  <div className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">Open character card dashboard.</div>
+                </button>
               </div>
             </div>
-
-            <div className="space-y-2">
-              <div className="text-sm font-semibold">Your latest character</div>
-              <button
-                type="button"
-                onClick={() => latestCharacter && setPreviewId(latestCharacter.id)}
-                className="group relative grid h-64 w-full grid-cols-[180px,1fr] overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left"
-              >
-                <div className="relative border-r border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
-                  {latestCharacter?.imageDataUrl ? <img src={latestCharacter.imageDataUrl} alt={latestCharacter.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : null}
-                </div>
-                <div className="relative z-10 p-5">
-                  <div className="text-xl font-semibold">{latestCharacter?.name || "No character yet"}</div>
-                  <div className="text-sm text-[hsl(var(--foreground))/0.8]">Continue your last character</div>
-                </div>
-                <div className="absolute inset-y-0 right-0 w-24 translate-x-full bg-white transition-transform duration-300 group-hover:translate-x-0">
-                  <div className="flex h-full items-center justify-center">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-white/90">
-                      <ArrowLeft className="h-4 w-4 rotate-180 text-black opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-hover:animate-[spin_0.2s_linear_1]" />
-                    </div>
-                  </div>
-                </div>
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              <div className="text-sm font-semibold">Your latest story</div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!latestStory) return;
-                  setActiveStoryId(latestStory.id);
-                  navigateTo("story_editor");
-                }}
-                className="group relative grid h-64 w-full grid-cols-[180px,1fr] overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left"
-              >
-                <div className="relative border-r border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
-                  {latestStory?.imageDataUrl ? <img src={latestStory.imageDataUrl} alt={latestStory.title} className="absolute inset-0 h-full w-full object-cover object-top" /> : null}
-                </div>
-                <div className="relative z-10 p-5">
-                  <div className="text-xl font-semibold">{latestStory?.title || "No story yet"}</div>
-                  <div className="text-sm text-[hsl(var(--foreground))/0.8]">Continue your last story</div>
-                </div>
-                <div className="absolute inset-y-0 right-0 w-24 translate-x-full bg-white transition-transform duration-300 group-hover:translate-x-0">
-                  <div className="flex h-full items-center justify-center">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-white/90">
-                      <ArrowLeft className="h-4 w-4 rotate-180 text-black opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-hover:animate-[spin_0.2s_linear_1]" />
-                    </div>
-                  </div>
-                </div>
-              </button>
-            </div>
-          </div>
         ) : page === "characters" ? (
           <div className="anim-page mt-6 space-y-4">
             <div className="flex items-center justify-between">
