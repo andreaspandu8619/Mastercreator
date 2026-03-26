@@ -2259,9 +2259,21 @@ export default function CharacterCreatorApp() {
     });
   }
 
+  function normalizeChatMessageList(messages: any): ChatMessage[] {
+    if (!Array.isArray(messages)) return [];
+    return messages
+      .map((m) => {
+        const role = m?.role === "assistant" ? "assistant" : m?.role === "user" ? "user" : null;
+        const content = typeof m?.content === "string" ? m.content : "";
+        if (!role) return null;
+        return { role, content } as ChatMessage;
+      })
+      .filter((m): m is ChatMessage => !!m);
+  }
+
   function openChatSession(session: ChatSession) {
     setActiveChatSessionId(session.id);
-    setChatMessages(Array.isArray(session.messages) ? session.messages : []);
+    setChatMessages(normalizeChatMessageList(session.messages));
     const linked = characters.find((c) => c.id === session.characterId) || null;
     setChatCharacter(linked);
     setChatNameInput(session.characterName || "");
@@ -2277,7 +2289,12 @@ export default function CharacterCreatorApp() {
     const now = new Date().toISOString();
     const latest = chatSessions.find((s) => s.characterId === c.id);
     if (latest) {
-      openChatSession({ ...latest, characterName: c.name, characterImageDataUrl: c.imageDataUrl || latest.characterImageDataUrl });
+      openChatSession({
+        ...latest,
+        characterName: c.name,
+        characterImageDataUrl: c.imageDataUrl || latest.characterImageDataUrl,
+        messages: normalizeChatMessageList(latest.messages),
+      });
       return;
     }
     const greeting = collapseWhitespace(
@@ -4929,7 +4946,7 @@ ${feedback}`,
                 {chatSessions.map((s) => (
                   <button key={s.id} type="button" onClick={() => openChatSession(s)} className={cn("w-full rounded-xl border p-2 text-left", activeChatSessionId === s.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>
                     <div className="text-sm font-medium truncate">{s.characterName}</div>
-                    <div className="text-xs text-[hsl(var(--muted-foreground))] truncate">{s.messages[s.messages.length - 1]?.content || "No messages yet."}</div>
+                    <div className="text-xs text-[hsl(var(--muted-foreground))] truncate">{(Array.isArray(s.messages) ? s.messages[s.messages.length - 1]?.content : "") || "No messages yet."}</div>
                   </button>
                 ))}
                 {!chatSessions.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No chats yet.</div> : null}
