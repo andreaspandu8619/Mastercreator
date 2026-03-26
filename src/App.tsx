@@ -1160,13 +1160,6 @@ export default function CharacterCreatorApp() {
     return () => window.removeEventListener("resize", sync);
   }, []);
 
-  useEffect(() => {
-    if (page !== "characters" && page !== "create" && page !== "story_relationship_board" && page !== "lorebooks" && page !== "lorebook_create") {
-      setPage("characters");
-    }
-  }, [page]);
-
-
   function startGeneratedTextPage(fieldKey: string) {
     const pageId = uid();
     setGeneratedTextStates((prev) => {
