@@ -7388,15 +7388,17 @@ ${feedback}`,
             </div>
             <div className="space-y-2">
               <div className="text-sm font-medium">Model name</div>
+              <div className="text-xs font-medium text-[hsl(var(--muted-foreground))]">Live Chutes models (dropdown)</div>
               <div className="flex gap-2">
                 <Select
-                  value={proxyModels.some((m) => m.id === proxyModel) ? proxyModel : "__custom__"}
+                  value={proxyModels.some((m) => m.id === proxyModel) ? proxyModel : ""}
                   onChange={(e) => {
-                    if (e.target.value === "__custom__") return;
+                    if (!e.target.value) return;
                     setProxyModel(e.target.value);
                   }}
+                  disabled={proxyModelsLoading}
                 >
-                  <option value="__custom__">{proxyModelsLoading ? "Loading live model list…" : "Custom model (manual entry)"}</option>
+                  <option value="">{proxyModelsLoading ? "Loading models from Chutes…" : "Select a live model…"}</option>
                   {proxyModels.map((modelItem) => (
                     <option key={modelItem.id} value={modelItem.id}>
                       {modelItem.id} · in {formatDollarsPerMillion(modelItem.promptCostPerMTokens)} · out {formatDollarsPerMillion(modelItem.completionCostPerMTokens)}
@@ -7413,6 +7415,11 @@ ${feedback}`,
                   Refresh
                 </Button>
               </div>
+              {!proxyModelsLoading && !proxyModels.length ? (
+                <div className="text-xs text-amber-500">
+                  No live models loaded yet. Click Refresh to fetch from Chutes.
+                </div>
+              ) : null}
               <Input
                 value={proxyModel}
                 onChange={(e) => setProxyModel(e.target.value)}
