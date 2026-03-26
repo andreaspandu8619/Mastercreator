@@ -469,6 +469,52 @@ function downloadJSON(filename: string, data: unknown) {
   setTimeout(() => URL.revokeObjectURL(url), 50);
 }
 
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to read file."));
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function normalizeImageDataUrl(file: File, maxDimension = 2048): Promise<string> {
+  if (typeof window === "undefined") {
+    return fileToDataUrl(file);
+  }
+  const rawDataUrl = await fileToDataUrl(file);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const srcW = img.naturalWidth || img.width;
+        const srcH = img.naturalHeight || img.height;
+        if (!srcW || !srcH) {
+          resolve(rawDataUrl);
+          return;
+        }
+        const scale = Math.min(1, maxDimension / Math.max(srcW, srcH));
+        const targetW = Math.max(1, Math.round(srcW * scale));
+        const targetH = Math.max(1, Math.round(srcH * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(rawDataUrl);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, targetW, targetH);
+        resolve(canvas.toDataURL("image/jpeg", 0.92));
+      } catch {
+        resolve(rawDataUrl);
+      }
+    };
+    img.onerror = () => reject(new Error("Failed to decode image."));
+    img.src = rawDataUrl;
+  });
+}
+
 function openIdb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (typeof indexedDB === "undefined") {
@@ -2028,12 +2074,7 @@ export default function CharacterCreatorApp() {
   }
 
   async function readFileAsDataUrl(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error("Failed to read file."));
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.readAsDataURL(file);
-    });
+    return fileToDataUrl(file);
   }
 
   async function handlePickImage(file: File) {
@@ -2047,8 +2088,12 @@ export default function CharacterCreatorApp() {
       setImageError("Please upload an image file.");
       return;
     }
+    if (file.type === "image/svg+xml") {
+      setImageError("SVG files are not supported. Please upload PNG, JPG, WEBP, or GIF.");
+      return;
+    }
     try {
-      const dataUrl = await readFileAsDataUrl(file);
+      const dataUrl = await normalizeImageDataUrl(file);
       setImageDataUrl(dataUrl);
     } catch (e: any) {
       setImageError(e?.message ? String(e.message) : "Failed to load image.");
@@ -2057,9 +2102,9 @@ export default function CharacterCreatorApp() {
 
   async function handlePickStoryImage(file: File) {
     const maxBytes = 10 * 1024 * 1024;
-    if (file.size > maxBytes || !file.type.startsWith("image/")) return;
+    if (file.size > maxBytes || !file.type.startsWith("image/") || file.type === "image/svg+xml") return;
     try {
-      const dataUrl = await readFileAsDataUrl(file);
+      const dataUrl = await normalizeImageDataUrl(file);
       setStoryImageDataUrl(dataUrl);
       if (activeStory) {
         updateStory(activeStory.id, { imageDataUrl: dataUrl });
@@ -2072,9 +2117,9 @@ export default function CharacterCreatorApp() {
   async function handlePickLorebookCover(file: File) {
     if (!activeLorebook) return;
     const maxBytes = 10 * 1024 * 1024;
-    if (file.size > maxBytes || !file.type.startsWith("image/")) return;
+    if (file.size > maxBytes || !file.type.startsWith("image/") || file.type === "image/svg+xml") return;
     try {
-      const dataUrl = await readFileAsDataUrl(file);
+      const dataUrl = await normalizeImageDataUrl(file);
       updateLorebook(activeLorebook.id, { coverImageDataUrl: dataUrl });
     } catch {
       // ignore invalid lorebook cover
@@ -6007,7 +6052,10 @@ ${feedback}`,
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {characterCards.map((card) => {
-                const firstCharacter = characters.find((c) => c.id === (card.characterIds[0] || "")) || null;
+                const previewCharacters = card.characterIds
+                  .slice(0, 4)
+                  .map((id) => characters.find((c) => c.id === id))
+                  .filter((c): c is Character => !!c);
                 return (
                   <button key={card.id} type="button" onClick={() => {
                     setActiveCharacterCardId(card.id);
@@ -6022,7 +6070,24 @@ ${feedback}`,
                     navigateTo("create");
                   }} className="text-left rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
                     <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-[hsl(var(--border))]">
-                      {firstCharacter?.imageDataUrl ? <img src={firstCharacter.imageDataUrl} alt={card.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>}
+                      {previewCharacters.length ? (
+                        <div className="absolute inset-0 grid grid-cols-2 grid-rows-2">
+                          {previewCharacters.map((character) => (
+                            <div key={character.id} className="relative overflow-hidden border border-[hsl(var(--border))/0.5] bg-[hsl(var(--muted))]">
+                              {character.imageDataUrl ? (
+                                <img src={character.imageDataUrl} alt={character.name} className="absolute inset-0 h-full w-full object-cover object-top" />
+                              ) : (
+                                <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
+                              )}
+                            </div>
+                          ))}
+                          {Array.from({ length: Math.max(0, 4 - previewCharacters.length) }).map((_, i) => (
+                            <div key={`empty-${i}`} className="border border-[hsl(var(--border))/0.5] bg-[hsl(var(--muted))]" />
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>
+                      )}
                     </div>
                     <div className="mt-2 font-semibold">{card.name || "Character Card"}</div>
                     <div className="text-xs text-[hsl(var(--muted-foreground))]">{card.characterIds.length} character entries</div>
