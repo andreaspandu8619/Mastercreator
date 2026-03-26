@@ -39,6 +39,12 @@ type ProxyConfig = {
   streamingEnabled: boolean;
 };
 
+type ProxyModelCatalogItem = {
+  id: string;
+  promptCostPerMTokens: number | null;
+  completionCostPerMTokens: number | null;
+};
+
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -351,6 +357,31 @@ function safeParseJSON(text: string) {
   } catch {
     return null;
   }
+}
+
+function deriveModelsUrlFromChatUrl(chatUrl: string) {
+  const normalized = collapseWhitespace(chatUrl);
+  if (!normalized) return "";
+  const modelsSuffix = "/v1/models";
+  if (normalized.endsWith(modelsSuffix)) return normalized;
+  if (normalized.endsWith("/v1/chat/completions")) return normalized.replace("/v1/chat/completions", modelsSuffix);
+  if (normalized.endsWith("/chat/completions")) return normalized.replace("/chat/completions", modelsSuffix);
+  if (normalized.endsWith("/")) return `${normalized}v1/models`;
+  return `${normalized}${modelsSuffix}`;
+}
+
+function normalizePricePerMTokens(raw: any): number | null {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (n <= 0.01) return n * 1_000_000;
+  return n;
+}
+
+function formatDollarsPerMillion(value: number | null) {
+  if (value === null) return "—";
+  if (value >= 100) return `$${value.toFixed(0)}/M`;
+  if (value >= 10) return `$${value.toFixed(1)}/M`;
+  return `$${value.toFixed(2)}/M`;
 }
 
 function normalizeStringArray(v: any): string[] {
@@ -934,6 +965,10 @@ export default function CharacterCreatorApp() {
   const [proxyContextSize, setProxyContextSize] = useState(DEFAULT_PROXY.contextSize);
   const [proxyCustomPrompt, setProxyCustomPrompt] = useState(DEFAULT_PROXY.customPrompt);
   const [proxyStreamingEnabled, setProxyStreamingEnabled] = useState(DEFAULT_PROXY.streamingEnabled);
+  const [proxyModels, setProxyModels] = useState<ProxyModelCatalogItem[]>([]);
+  const [proxyModelsLoading, setProxyModelsLoading] = useState(false);
+  const [proxyModelsError, setProxyModelsError] = useState<string | null>(null);
+  const [proxyModelsLastUpdatedAt, setProxyModelsLastUpdatedAt] = useState<string>("");
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaText, setPersonaText] = useState("");
   const [personas, setPersonas] = useState<PersonaProfile[]>([]);
@@ -1297,9 +1332,67 @@ export default function CharacterCreatorApp() {
   const characterCardImportRef = useRef<HTMLInputElement | null>(null);
   const chatCharacterCardImportRef = useRef<HTMLInputElement | null>(null);
 
+  const loadProxyModels = React.useCallback(async () => {
+    const modelsUrl = deriveModelsUrlFromChatUrl(proxyChatUrl);
+    if (!modelsUrl) {
+      setProxyModels([]);
+      setProxyModelsError(null);
+      return;
+    }
+    setProxyModelsLoading(true);
+    setProxyModelsError(null);
+    try {
+      const headers: Record<string, string> = {};
+      const key = collapseWhitespace(proxyApiKey);
+      if (key) headers.Authorization = key.startsWith("Bearer ") ? key : `Bearer ${key}`;
+      const res = await fetch(modelsUrl, { headers });
+      if (!res.ok) {
+        throw new Error(`Model list request failed (${res.status})`);
+      }
+      const payload = await res.json();
+      const data = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+      const normalized = data
+        .map((item: any) => {
+          const id = collapseWhitespace(item?.id || item?.name || "");
+          if (!id) return null;
+          const promptRaw =
+            item?.pricing?.prompt ??
+            item?.pricing?.input ??
+            item?.pricing?.prompt_tokens ??
+            item?.cost?.prompt ??
+            item?.cost?.input;
+          const completionRaw =
+            item?.pricing?.completion ??
+            item?.pricing?.output ??
+            item?.pricing?.completion_tokens ??
+            item?.cost?.completion ??
+            item?.cost?.output;
+          return {
+            id,
+            promptCostPerMTokens: normalizePricePerMTokens(promptRaw),
+            completionCostPerMTokens: normalizePricePerMTokens(completionRaw),
+          } as ProxyModelCatalogItem;
+        })
+        .filter((item: ProxyModelCatalogItem | null): item is ProxyModelCatalogItem => !!item)
+        .sort((a: ProxyModelCatalogItem, b: ProxyModelCatalogItem) => a.id.localeCompare(b.id));
+      setProxyModels(normalized);
+      setProxyModelsLastUpdatedAt(new Date().toISOString());
+    } catch (err: any) {
+      setProxyModels([]);
+      setProxyModelsError(err?.message ? String(err.message) : "Unable to load model list.");
+    } finally {
+      setProxyModelsLoading(false);
+    }
+  }, [proxyApiKey, proxyChatUrl]);
+
   useEffect(() => {
     if (import.meta.env.MODE === "test") runTests();
   }, []);
+
+  useEffect(() => {
+    if (!proxyOpen) return;
+    loadProxyModels();
+  }, [proxyOpen, loadProxyModels]);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem(THEME_KEY);
@@ -7281,11 +7374,45 @@ ${feedback}`,
             </div>
             <div className="space-y-2">
               <div className="text-sm font-medium">Model name</div>
+              <div className="flex gap-2">
+                <Select
+                  value={proxyModels.some((m) => m.id === proxyModel) ? proxyModel : "__custom__"}
+                  onChange={(e) => {
+                    if (e.target.value === "__custom__") return;
+                    setProxyModel(e.target.value);
+                  }}
+                >
+                  <option value="__custom__">{proxyModelsLoading ? "Loading live model list…" : "Custom model (manual entry)"}</option>
+                  {proxyModels.map((modelItem) => (
+                    <option key={modelItem.id} value={modelItem.id}>
+                      {modelItem.id} · in {formatDollarsPerMillion(modelItem.promptCostPerMTokens)} · out {formatDollarsPerMillion(modelItem.completionCostPerMTokens)}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="shrink-0"
+                  onClick={loadProxyModels}
+                  disabled={proxyModelsLoading}
+                >
+                  Refresh
+                </Button>
+              </div>
               <Input
                 value={proxyModel}
                 onChange={(e) => setProxyModel(e.target.value)}
-                placeholder="e.g., gpt-4.1-mini"
+                placeholder="e.g., deepseek-ai/DeepSeek-R1"
               />
+              <div className="text-xs text-[hsl(var(--muted-foreground))]">
+                Source: {deriveModelsUrlFromChatUrl(proxyChatUrl) || "Enter Chat completion URL first"}.
+                {proxyModelsLastUpdatedAt ? ` Last updated ${new Date(proxyModelsLastUpdatedAt).toLocaleString()}.` : ""}
+              </div>
+              {proxyModelsError ? (
+                <div className="text-xs text-red-500">
+                  Could not load model list: {proxyModelsError}
+                </div>
+              ) : null}
             </div>
             <div className="space-y-2">
               <div className="text-sm font-medium">Max tokens</div>
