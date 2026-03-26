@@ -944,6 +944,7 @@ export default function CharacterCreatorApp() {
   const [editingMessageText, setEditingMessageText] = useState("");
   const [chatIntroIndex, setChatIntroIndex] = useState(0);
   const [chatSidebarOpen, setChatSidebarOpen] = useState(true);
+  const [chatWarning, setChatWarning] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [dragCharacterId, setDragCharacterId] = useState<string | null>(null);
@@ -2379,6 +2380,38 @@ export default function CharacterCreatorApp() {
     }
   }
 
+  function getCardContextForCharacter(c: Character) {
+    const ownerCard = characterCards.find((card) => (card.characterIds || []).includes(c.id));
+    if (!ownerCard) return "Card context: (none)";
+    const cardCharacters = (ownerCard.characterIds || [])
+      .map((id) => characters.find((x) => x.id === id))
+      .filter((x): x is Character => !!x);
+    const relationshipStory = ownerCard.relationshipStoryId
+      ? stories.find((s) => s.id === ownerCard.relationshipStoryId) || null
+      : null;
+
+    return [
+      `Card name: ${ownerCard.name || ""}`,
+      `Card system rules: ${ownerCard.systemRules || ""}`,
+      `Card selected rules: ${ownerCard.selectedSystemRuleIds.join(", ")}`,
+      `Card first messages: ${(ownerCard.firstMessageMessages || []).join(" | ")}`,
+      `Scenario: ${relationshipStory?.scenario || ""}`,
+      `Story first message: ${relationshipStory?.firstMessage || ""}`,
+      `Story system rules: ${relationshipStory?.systemRules || ""}`,
+      `Story synopsis: ${relationshipStory?.synopsis || ""}`,
+      `Relationships: ${(relationshipStory?.relationships || []).map((r) => `${r.fromCharacterId}->${r.toCharacterId} (${r.relationType}/${r.alignment}) ${r.details}`).join(" | ")}`,
+      `All card characters context:\n${cardCharacters.map((ch) => characterToTxt(ch)).join("\n")}`,
+    ].join("\n");
+  }
+
+  function splitThinkingAndReply(content: string) {
+    const match = content.match(/<think>([\s\S]*?)<\/think>/i);
+    if (!match) return { thinking: "", reply: content };
+    const thinking = collapseWhitespace(match[1] || "");
+    const reply = content.replace(match[0], "").trim();
+    return { thinking, reply };
+  }
+
   function buildCharacterChatSystemPrompt(c: Character) {
     const selectedPersona = personas.find((p) => p.id === activePersonaId) || null;
     const persona = collapseWhitespace(
@@ -2397,6 +2430,7 @@ export default function CharacterCreatorApp() {
       `Backstory: ${(c.backstory || []).join(" | ")}`,
       `Synopsis: ${c.synopsis || ""}`,
       `System rules: ${c.systemRules || ""}`,
+      getCardContextForCharacter(c),
       persona ? `User persona: ${persona}` : "User persona: (not provided)",
       "Respond as the character in chat. Keep continuity with prior messages.",
     ].join("\n");
@@ -3332,6 +3366,10 @@ ${prompt}`,
 
   async function sendChatMessage() {
     if (!chatCharacter || !activeChatSessionId || genLoading) return;
+    if (!collapseWhitespace(proxyChatUrl) || !collapseWhitespace(proxyModel)) {
+      setChatWarning("Proxy is not configured. Please go to Proxy Configuration.");
+      return;
+    }
     const text = collapseWhitespace(chatInput);
     if (!text) return;
     setGenError(null);
@@ -4870,7 +4908,24 @@ ${feedback}`,
                           </div>
                         ) : (
                           <>
-                            <RichText text={m.content} />
+                            {m.role === "assistant" ? (
+                              (() => {
+                                const parsed = splitThinkingAndReply(m.content || "");
+                                return (
+                                  <div className="space-y-2">
+                                    {parsed.thinking ? (
+                                      <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--muted))] p-2 text-xs text-[hsl(var(--muted-foreground))]">
+                                        <div className="mb-1 font-semibold">Thinking</div>
+                                        <RichText text={parsed.thinking} />
+                                      </div>
+                                    ) : null}
+                                    <RichText text={parsed.reply || ""} />
+                                  </div>
+                                );
+                              })()
+                            ) : (
+                              <RichText text={m.content} />
+                            )}
                             <div className="mt-3 flex items-center gap-2">
                               <button type="button" onClick={() => startEditChatMessage(i)}><Pencil className="h-4 w-4" /></button>
                               <button type="button" onClick={() => deleteChatMessage(i)}><Trash2 className="h-4 w-4" /></button>
@@ -4880,6 +4935,15 @@ ${feedback}`,
                         )}
                       </div>
                     ))}
+                    {genLoading ? (
+                      <div className="mr-auto max-w-[92%] rounded-xl border bg-[hsl(var(--card))] p-4">
+                        <div className="flex items-center gap-1">
+                          <span className="h-2 w-2 animate-bounce rounded-full bg-[hsl(var(--muted-foreground))]" />
+                          <span className="h-2 w-2 animate-bounce rounded-full bg-[hsl(var(--muted-foreground))] [animation-delay:120ms]" />
+                          <span className="h-2 w-2 animate-bounce rounded-full bg-[hsl(var(--muted-foreground))] [animation-delay:240ms]" />
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
 
                   {chatMessages.length && chatMessages[0].role === "assistant" ? (
@@ -7319,6 +7383,15 @@ ${feedback}`,
         {saveToastOpen ? (
           <div className="fixed bottom-4 left-4 z-[70] rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-6 py-4 text-base font-semibold shadow-2xl">
             Saved.
+          </div>
+        ) : null}
+        {chatWarning ? (
+          <div className="fixed bottom-4 right-4 z-[80] max-w-sm rounded-2xl border border-red-500 bg-red-600 px-4 py-3 text-sm text-white shadow-2xl">
+            <div>{chatWarning}</div>
+            <div className="mt-2 flex gap-2">
+              <Button variant="secondary" onClick={() => { setProxyOpen(true); setChatWarning(null); }}>Go to Proxy Configuration</Button>
+              <Button variant="secondary" onClick={() => setChatWarning(null)}>Close</Button>
+            </div>
           </div>
         ) : null}
       </div>
