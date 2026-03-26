@@ -17,6 +17,8 @@ import {
   Upload,
   X,
   Sparkles,
+  Menu,
+  SendHorizontal,
 } from "lucide-react";
 
 type ThemeMode = "light" | "dark";
@@ -928,7 +930,6 @@ export default function CharacterCreatorApp() {
   const [personaText, setPersonaText] = useState("");
   const [personas, setPersonas] = useState<PersonaProfile[]>([]);
   const [activePersonaId, setActivePersonaId] = useState("");
-  const [personaCreatorOpen, setPersonaCreatorOpen] = useState(false);
   const [personaNameInput, setPersonaNameInput] = useState("");
   const [personaDescriptionInput, setPersonaDescriptionInput] = useState("");
 
@@ -938,6 +939,10 @@ export default function CharacterCreatorApp() {
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [chatNameInput, setChatNameInput] = useState("");
+  const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null);
+  const [editingMessageText, setEditingMessageText] = useState("");
+  const [chatIntroIndex, setChatIntroIndex] = useState(0);
 
   const [query, setQuery] = useState("");
   const [dragCharacterId, setDragCharacterId] = useState<string | null>(null);
@@ -2252,6 +2257,10 @@ export default function CharacterCreatorApp() {
     setChatMessages(Array.isArray(session.messages) ? session.messages : []);
     const linked = characters.find((c) => c.id === session.characterId) || null;
     setChatCharacter(linked);
+    setChatNameInput(session.characterName || "");
+    if (linked) {
+      setChatIntroIndex(clampIndex(linked.selectedIntroIndex || 0, Math.max(1, linked.introMessages?.length || 1)));
+    }
     setChatInput("");
     setGenError(null);
     navigateTo("chat");
@@ -2279,6 +2288,7 @@ export default function CharacterCreatorApp() {
       updatedAt: now,
     };
     upsertChatSession(session);
+    setChatIntroIndex(clampIndex(c.selectedIntroIndex || 0, Math.max(1, c.introMessages?.length || 1)));
     openChatSession(session);
   }
 
@@ -2295,7 +2305,7 @@ export default function CharacterCreatorApp() {
     setActivePersonaId(profile.id);
     setPersonaNameInput("");
     setPersonaDescriptionInput("");
-    setPersonaCreatorOpen(false);
+    setPersonaOpen(false);
   }
 
   function startChatWithSelectedCard() {
@@ -2306,6 +2316,66 @@ export default function CharacterCreatorApp() {
       .find((c): c is Character => !!c);
     if (!selectedCharacter) return alert("This character card has no character entries yet.");
     startChatWithCharacter(selectedCharacter);
+  }
+
+  function updateActiveChatMessages(nextMessages: ChatMessage[]) {
+    if (!activeChatSessionId) return;
+    const now = new Date().toISOString();
+    setChatMessages(nextMessages);
+    setChatSessions((prev) =>
+      prev
+        .map((s) => (s.id === activeChatSessionId ? { ...s, messages: nextMessages, updatedAt: now } : s))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    );
+  }
+
+  function startEditChatMessage(index: number) {
+    setEditingMessageIndex(index);
+    setEditingMessageText(chatMessages[index]?.content || "");
+  }
+
+  function saveEditedChatMessage() {
+    if (editingMessageIndex === null) return;
+    const content = editingMessageText;
+    updateActiveChatMessages(
+      chatMessages.map((m, i) => (i === editingMessageIndex ? { ...m, content } : m))
+    );
+    setEditingMessageIndex(null);
+    setEditingMessageText("");
+  }
+
+  function deleteChatMessage(index: number) {
+    updateActiveChatMessages(chatMessages.filter((_, i) => i !== index));
+  }
+
+  function branchFromMessage(index: number) {
+    if (!chatCharacter) return;
+    const now = new Date().toISOString();
+    const base = chatMessages.slice(0, index + 1);
+    const newSession: ChatSession = {
+      id: uid(),
+      characterId: chatCharacter.id,
+      characterName: chatNameInput || chatCharacter.name,
+      characterImageDataUrl: chatCharacter.imageDataUrl || "",
+      messages: base,
+      createdAt: now,
+      updatedAt: now,
+    };
+    upsertChatSession(newSession);
+    openChatSession(newSession);
+  }
+
+  function setIntroMessageByOffset(offset: -1 | 1) {
+    if (!chatCharacter) return;
+    const introList = chatCharacter.introMessages?.length ? chatCharacter.introMessages : [""];
+    const next = (chatIntroIndex + offset + introList.length) % introList.length;
+    setChatIntroIndex(next);
+    const introText = introList[next] || "";
+    if (chatMessages.length && chatMessages[0].role === "assistant") {
+      updateActiveChatMessages(chatMessages.map((m, i) => (i === 0 ? { ...m, content: introText } : m)));
+    } else if (!chatMessages.length) {
+      updateActiveChatMessages([{ role: "assistant", content: introText }]);
+    }
   }
 
   function buildCharacterChatSystemPrompt(c: Character) {
@@ -4695,23 +4765,12 @@ ${feedback}`,
             </button>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-            <div className="relative">
-              <Button variant="secondary" onClick={() => setPersonaCreatorOpen((v) => !v)}>
-                <Plus className="h-4 w-4" /> Create Persona
-              </Button>
-              {personaCreatorOpen ? (
-                <div className="absolute right-0 top-12 z-50 w-[320px] rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 shadow-2xl">
-                  <div className="space-y-2">
-                    <Input value={personaNameInput} onChange={(e) => setPersonaNameInput(e.target.value)} placeholder="Persona name" />
-                    <Textarea value={personaDescriptionInput} onChange={(e) => setPersonaDescriptionInput(e.target.value)} rows={4} placeholder="Persona description" />
-                    <div className="flex justify-end gap-2">
-                      <Button variant="secondary" onClick={() => setPersonaCreatorOpen(false)}>Close</Button>
-                      <Button variant="primary" onClick={createPersonaProfile}>Save</Button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-            </div>
+            <Button variant="secondary" onClick={() => setPersonaOpen(true)}>
+              Persona: {personas.find((p) => p.id === activePersonaId)?.name || "None"}
+            </Button>
+            <Button variant="secondary" onClick={() => setPersonaOpen(true)}>
+              <Plus className="h-4 w-4" /> Create Persona
+            </Button>
             <Button variant="secondary" onClick={() => navigateTo("characters")}>
               <Library className="h-4 w-4" /> Character List
             </Button>
@@ -4729,22 +4788,31 @@ ${feedback}`,
         </header>
 
         {page === "chat" ? (
-          <div className="anim-page mt-6 space-y-4">
-            <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <div className="text-lg font-semibold">Chat</div>
-                <Button variant="secondary" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Dashboard</Button>
+          <div className="anim-page mt-4 grid gap-4 lg:grid-cols-[230px,1fr]">
+            <aside className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+              <Button variant="secondary" className="mb-3 w-full" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Back</Button>
+              <div className="mb-2 text-sm font-semibold">Persona</div>
+              <button type="button" onClick={() => setPersonaOpen(true)} className="mb-4 w-full rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-left">
+                {personas.find((p) => p.id === activePersonaId)?.name || "Select persona"}
+              </button>
+              <div className="mb-2 text-sm font-semibold">Chats</div>
+              <div className="max-h-[60vh] space-y-2 overflow-auto">
+                {chatSessions.map((s) => (
+                  <button key={s.id} type="button" onClick={() => openChatSession(s)} className={cn("w-full rounded-xl border p-2 text-left", activeChatSessionId === s.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>
+                    <div className="text-sm font-medium truncate">{s.characterName}</div>
+                    <div className="text-xs text-[hsl(var(--muted-foreground))] truncate">{s.messages[s.messages.length - 1]?.content || "No messages yet."}</div>
+                  </button>
+                ))}
+                {!chatSessions.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No chats yet.</div> : null}
               </div>
-              <div className="grid gap-2 md:grid-cols-4">
-                <Select value={activePersonaId} onChange={(e) => setActivePersonaId(e.target.value)}>
-                  <option value="">No persona</option>
-                  {personas.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </Select>
-                <Select value={chatCardSelectionId} onChange={(e) => setChatCardSelectionId(e.target.value)}>
-                  {characterCards.map((card) => <option key={card.id} value={card.id}>{card.name || "Character Card"}</option>)}
-                </Select>
-                <Button variant="secondary" onClick={() => chatCharacterCardImportRef.current?.click()}><Upload className="h-4 w-4" /> Import card JSON</Button>
-                <Button variant="primary" onClick={startChatWithSelectedCard}>Start chat</Button>
+            </aside>
+
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="secondary"><Menu className="h-4 w-4" /></Button>
+                <Input value={chatNameInput} onChange={(e) => setChatNameInput(e.target.value)} placeholder="Chat Name" className="max-w-md" />
+                <Button variant="primary" onClick={() => { setActiveChatSessionId(null); setChatCharacter(null); setChatMessages([]); setChatInput(""); }}>New Chat</Button>
+                <Button variant="secondary" onClick={() => chatCharacterCardImportRef.current?.click()}><Upload className="h-4 w-4" /> Import Card</Button>
                 <input
                   ref={chatCharacterCardImportRef}
                   type="file"
@@ -4760,38 +4828,71 @@ ${feedback}`,
                   }}
                 />
               </div>
-            </div>
 
-            {chatSessions.length ? (
-              <div className="flex gap-2 overflow-auto pb-1">
-                {chatSessions.map((s) => (
-                  <button key={s.id} type="button" onClick={() => openChatSession(s)} className={cn("rounded-xl border px-3 py-2 text-sm whitespace-nowrap", activeChatSessionId === s.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>
-                    {s.characterName}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-              {chatCharacter ? (
+              {!chatCharacter ? (
                 <div className="space-y-3">
-                  <div className="text-sm text-[hsl(var(--muted-foreground))]">Chatting with <span className="font-semibold text-[hsl(var(--foreground))]">{chatCharacter.name}</span></div>
-                  <div className="max-h-[62vh] space-y-3 overflow-auto rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-4">
-                    {chatMessages.length ? chatMessages.map((m, i) => (
-                      <div key={`${m.role}-${i}`} className={cn("rounded-xl px-4 py-3 text-sm whitespace-pre-wrap", m.role === "user" ? "ml-auto max-w-[85%] border border-[hsl(var(--border))]" : "mr-auto max-w-[90%] border border-[hsl(var(--border))] bg-[hsl(var(--card))]")}>
-                        <RichText text={m.content} />
-                      </div>
-                    )) : <div className="text-sm text-[hsl(var(--muted-foreground))]">No messages yet.</div>}
+                  <div>
+                    <div className="text-xl font-semibold">No Character Yet</div>
+                    <div className="text-sm text-[hsl(var(--muted-foreground))]">Select character below.</div>
                   </div>
-                  <div className="flex gap-2">
-                    <Input value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, sendChatMessage)} placeholder="Write something." />
-                    <Button variant="primary" onClick={sendChatMessage} disabled={!collapseWhitespace(chatInput) || genLoading}>Send</Button>
+                  <div className="max-h-[52vh] overflow-auto rounded-2xl border border-[hsl(var(--border))] p-3">
+                    <div className="grid grid-cols-3 gap-3 md:grid-cols-5 lg:grid-cols-7">
+                      {characterCards.map((card) => {
+                        const c = characters.find((x) => x.id === card.characterIds[0]);
+                        return (
+                          <button key={card.id} type="button" onClick={() => { setChatCardSelectionId(card.id); startChatWithSelectedCard(); }} className="overflow-hidden rounded-xl border border-[hsl(var(--border))] text-left">
+                            <div className="relative aspect-[3/4] bg-[hsl(var(--muted))]">
+                              {c?.imageDataUrl ? <img src={c.imageDataUrl} alt={card.name} className="absolute inset-0 h-full w-full object-cover" /> : null}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
                 </div>
               ) : (
-                <div className="text-sm text-[hsl(var(--muted-foreground))]">Select a character card and start chat.</div>
+                <div className="space-y-4">
+                  <div className="space-y-3">
+                    {chatMessages.map((m, i) => (
+                      <div key={`${m.role}-${i}`} className={cn("rounded-xl border p-4", m.role === "user" ? "ml-auto max-w-[85%]" : "mr-auto max-w-[92%] bg-[hsl(var(--card))]")}>
+                        {editingMessageIndex === i ? (
+                          <div className="space-y-2">
+                            <Textarea value={editingMessageText} onChange={(e) => setEditingMessageText(e.target.value)} rows={4} />
+                            <div className="flex gap-2">
+                              <Button variant="primary" onClick={saveEditedChatMessage}>Save</Button>
+                              <Button variant="secondary" onClick={() => setEditingMessageIndex(null)}>Cancel</Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <RichText text={m.content} />
+                            <div className="mt-3 flex items-center gap-2">
+                              <button type="button" onClick={() => startEditChatMessage(i)}><Pencil className="h-4 w-4" /></button>
+                              <button type="button" onClick={() => deleteChatMessage(i)}><Trash2 className="h-4 w-4" /></button>
+                              <button type="button" onClick={() => branchFromMessage(i)}><SendHorizontal className="h-4 w-4" /></button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {chatMessages.length && chatMessages[0].role === "assistant" ? (
+                    <div className="flex items-center justify-center gap-4 text-sm text-[hsl(var(--muted-foreground))]">
+                      <button type="button" onClick={() => setIntroMessageByOffset(-1)}><ChevronLeft className="h-5 w-5" /></button>
+                      <span>{chatIntroIndex + 1}/{Math.max(1, chatCharacter.introMessages?.length || 1)}</span>
+                      <button type="button" onClick={() => setIntroMessageByOffset(1)}><ChevronRight className="h-5 w-5" /></button>
+                    </div>
+                  ) : null}
+                </div>
               )}
+
+              <div className="rounded-2xl border border-[hsl(var(--border))] p-3">
+                <div className="flex gap-2">
+                  <Textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} rows={3} placeholder="Type your message...." disabled={!chatCharacter} onKeyDown={(e) => onEnterAdd(e, sendChatMessage)} />
+                  <Button variant="primary" onClick={sendChatMessage} disabled={!chatCharacter || !collapseWhitespace(chatInput) || genLoading}><SendHorizontal className="h-4 w-4" /></Button>
+                </div>
+              </div>
             </div>
           </div>
         ) : page === "storywriting" ? (
@@ -7072,21 +7173,33 @@ ${feedback}`,
           </div>
         </Modal>
 
-        <Modal open={personaOpen} onClose={() => setPersonaOpen(false)} title="Your Persona" widthClass="max-w-2xl">
-          <div className="space-y-3">
-            <div className="text-sm text-[hsl(var(--muted-foreground))]">
-              Describe who you are / what you look like so characters can use this context in chat.
+        <Modal open={personaOpen} onClose={() => setPersonaOpen(false)} title="Persona Manager" widthClass="max-w-3xl">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] p-3">
+              <div className="text-sm font-semibold">Your personas</div>
+              <div className="max-h-72 space-y-2 overflow-auto">
+                {personas.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setActivePersonaId(p.id)}
+                    className={cn("w-full rounded-lg border p-2 text-left", activePersonaId === p.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}
+                  >
+                    <div className="font-medium">{p.name}</div>
+                    <div className="text-xs text-[hsl(var(--muted-foreground))] line-clamp-2">{p.description || "No description"}</div>
+                  </button>
+                ))}
+                {!personas.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No persona yet.</div> : null}
+              </div>
             </div>
-            <Textarea
-              value={personaText}
-              onChange={(e) => setPersonaText(e.target.value)}
-              rows={8}
-              placeholder="Example: I am a 24-year-old detective with short black hair, calm voice, and a cautious personality..."
-            />
-            <div className="flex justify-end">
-              <Button variant="primary" onClick={() => setPersonaOpen(false)}>
-                Done
-              </Button>
+            <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] p-3">
+              <div className="text-sm font-semibold">Create persona</div>
+              <Input value={personaNameInput} onChange={(e) => setPersonaNameInput(e.target.value)} placeholder="Persona name" />
+              <Textarea value={personaDescriptionInput} onChange={(e) => setPersonaDescriptionInput(e.target.value)} rows={6} placeholder="Persona description" />
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => setPersonaOpen(false)}>Close</Button>
+                <Button variant="primary" onClick={createPersonaProfile}>Save</Button>
+              </div>
             </div>
           </div>
         </Modal>
