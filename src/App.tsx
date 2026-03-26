@@ -362,6 +362,13 @@ function normalizeStringArray(v: any): string[] {
   return [];
 }
 
+function normalizeTextArray(v: any): string[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((x) => (typeof x === "string" ? x.replace(/\r/g, "").trim() : ""))
+    .filter((x) => x.length > 0);
+}
+
 function normalizeGender(v: any): Gender {
   const s = collapseWhitespace(v).toLowerCase();
   if (s === "male") return "Male";
@@ -626,7 +633,7 @@ function normalizeCharacter(x: any): Character | null {
   const now = new Date().toISOString();
 
   const introMessages = (() => {
-    const arr = normalizeStringArray(x.introMessages);
+    const arr = normalizeTextArray(x.introMessages);
     if (arr.length) return arr;
     const legacy = collapseWhitespace(x.introMessage);
     return legacy ? [legacy] : [""];
@@ -668,7 +675,7 @@ function normalizeCharacter(x: any): Character | null {
     respondToProblems: normalizeStringArray(x.respondToProblems),
     sexualBehavior: normalizeStringArray(x.sexualBehavior),
     speechPatterns: normalizeStringArray((x as any).speechPatterns),
-    backstory: normalizeStringArray(x.backstory),
+    backstory: normalizeTextArray(x.backstory),
     selectedBackstoryIndex: Number.isFinite(Number(x.selectedBackstoryIndex)) ? Math.max(0, Number(x.selectedBackstoryIndex)) : 0,
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
     selectedSystemRuleIds: normalizeStringArray(x.selectedSystemRuleIds),
@@ -1351,7 +1358,7 @@ export default function CharacterCreatorApp() {
             ? (s as any).messages
                 .map((m: any) => {
                   const role = m?.role === "assistant" ? "assistant" : m?.role === "user" ? "user" : null;
-                  const content = collapseWhitespace(m?.content ?? "");
+                  const content = typeof m?.content === "string" ? m.content : "";
                   if (!role || !content) return null;
                   return { role, content } as ChatMessage;
                 })
@@ -2287,16 +2294,6 @@ export default function CharacterCreatorApp() {
 
   function startChatWithCharacter(c: Character) {
     const now = new Date().toISOString();
-    const latest = chatSessions.find((s) => s.characterId === c.id);
-    if (latest) {
-      openChatSession({
-        ...latest,
-        characterName: c.name,
-        characterImageDataUrl: c.imageDataUrl || latest.characterImageDataUrl,
-        messages: normalizeChatMessageList(latest.messages),
-      });
-      return;
-    }
     const ownerCard = characterCards.find((card) => (card.characterIds || []).includes(c.id)) || null;
     const characterIntro = collapseWhitespace(
       c.introMessages?.[
@@ -3428,7 +3425,7 @@ ${prompt}`,
       setGenError(msg);
       return;
     }
-    const text = collapseWhitespace(chatInput);
+    const text = chatInput.trim();
     if (!text) return;
     setGenError(null);
     const newHistory = [...chatMessages, { role: "user" as const, content: text }];
@@ -4961,8 +4958,8 @@ ${feedback}`,
             </aside>
             ) : null}
 
-            <div className="space-y-4 pb-44">
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="space-y-4 pb-44 pt-24">
+              <div className={cn("fixed right-4 top-4 z-40 flex flex-wrap items-center gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl", chatSidebarOpen ? "left-4 lg:left-[260px]" : "left-4")}>
                 <Button variant="secondary" onClick={() => setChatSidebarOpen((v) => !v)}><Menu className="h-4 w-4" /></Button>
                 <Button variant="secondary" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Back</Button>
                 <Input value={chatNameInput} onChange={(e) => setChatNameInput(e.target.value)} placeholder="Chat Name" className="max-w-md" />
