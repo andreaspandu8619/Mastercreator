@@ -3472,13 +3472,13 @@ ${prompt}`,
     downloadJSON(`${exportName}.json`, payload);
   }
 
-  async function importCharacterCardJSON(file: File) {
+  async function importCharacterCardJSON(file: File): Promise<string | null> {
     try {
       const raw = await file.text();
       const parsed = safeParseJSON(raw);
       if (!parsed || typeof parsed !== "object") {
         alert("Invalid JSON file.");
-        return;
+        return null;
       }
 
       const maybeExport = parsed as Partial<CharacterCardJsonExport>;
@@ -3486,7 +3486,7 @@ ${prompt}`,
       const normalizedCard = normalizeCharacterCard(incomingCardRaw);
       if (!normalizedCard) {
         alert("This file does not contain a valid character card.");
-        return;
+        return null;
       }
 
       const importedCharacters = Array.isArray(maybeExport.characters)
@@ -3528,8 +3528,10 @@ ${prompt}`,
       setActiveCharacterCardId(finalCard.id);
       setCharacterCardNameInput(finalCard.name);
       alert("Character card imported successfully.");
+      return finalCard.id;
     } catch {
       alert("Failed to import character card JSON.");
+      return null;
     }
   }
 
@@ -4757,7 +4759,10 @@ ${feedback}`,
                   className="hidden"
                   onChange={async (e) => {
                     const f = e.target.files?.[0];
-                    if (f) await importCharacterCardJSON(f);
+                    if (f) {
+                      const importedId = await importCharacterCardJSON(f);
+                      if (importedId) setChatCardSelectionId(importedId);
+                    }
                     e.currentTarget.value = "";
                   }}
                 />
