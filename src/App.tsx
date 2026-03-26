@@ -17,6 +17,8 @@ import {
   Upload,
   X,
   Sparkles,
+  Menu,
+  SendHorizontal,
 } from "lucide-react";
 
 type ThemeMode = "light" | "dark";
@@ -35,6 +37,12 @@ type ProxyConfig = {
   contextSize: number;
   customPrompt: string;
   streamingEnabled: boolean;
+};
+
+type ProxyModelCatalogItem = {
+  id: string;
+  promptCostPerMTokens: number | null;
+  completionCostPerMTokens: number | null;
 };
 
 type ChatMessage = {
@@ -164,6 +172,15 @@ type LoreMemoryTurn = {
   createdAt: string;
 };
 
+type PersonaProfile = {
+  id: string;
+  name: string;
+  description: string;
+  traitsRaw: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Character = {
   id: string;
   name: string;
@@ -220,6 +237,7 @@ const IDB_STORE = "characters";
 const THEME_KEY = "mastercreator_theme";
 const PROXY_KEY = "mastercreator_proxy";
 const PERSONA_KEY = "mastercreator_persona";
+const PERSONAS_KEY = "mastercreator_personas_v1";
 const CHAT_SESSIONS_KEY = "mastercreator_chat_sessions_v1";
 const STORIES_KEY = "mastercreator_stories_v1";
 const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
@@ -235,6 +253,8 @@ const DEFAULT_PROXY: ProxyConfig = {
   customPrompt: "",
   streamingEnabled: true,
 };
+
+const DEFAULT_CHUTES_MODELS_URL = "https://llm.chutes.ai/v1/models";
 
 const PERSONALITIES: string[] = [
   "Brave",
@@ -341,6 +361,31 @@ function safeParseJSON(text: string) {
   }
 }
 
+function deriveModelsUrlFromChatUrl(chatUrl: string) {
+  const normalized = collapseWhitespace(chatUrl);
+  if (!normalized) return DEFAULT_CHUTES_MODELS_URL;
+  const modelsSuffix = "/v1/models";
+  if (normalized.endsWith(modelsSuffix)) return normalized;
+  if (normalized.endsWith("/v1/chat/completions")) return normalized.replace("/v1/chat/completions", modelsSuffix);
+  if (normalized.endsWith("/chat/completions")) return normalized.replace("/chat/completions", modelsSuffix);
+  if (normalized.endsWith("/")) return `${normalized}v1/models`;
+  return `${normalized}${modelsSuffix}`;
+}
+
+function normalizePricePerMTokens(raw: any): number | null {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (n <= 0.01) return n * 1_000_000;
+  return n;
+}
+
+function formatDollarsPerMillion(value: number | null) {
+  if (value === null) return "—";
+  if (value >= 100) return `$${value.toFixed(0)}/M`;
+  if (value >= 10) return `$${value.toFixed(1)}/M`;
+  return `$${value.toFixed(2)}/M`;
+}
+
 function normalizeStringArray(v: any): string[] {
   if (Array.isArray(v)) return v.map((x) => collapseWhitespace(x)).filter(Boolean);
   if (typeof v === "string") {
@@ -348,6 +393,13 @@ function normalizeStringArray(v: any): string[] {
     return s ? [s] : [];
   }
   return [];
+}
+
+function normalizeTextArray(v: any): string[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((x) => (typeof x === "string" ? x.replace(/\r/g, "").trim() : ""))
+    .filter((x) => x.length > 0);
 }
 
 function normalizeGender(v: any): Gender {
@@ -469,6 +521,52 @@ function downloadJSON(filename: string, data: unknown) {
   setTimeout(() => URL.revokeObjectURL(url), 50);
 }
 
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to read file."));
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function normalizeImageDataUrl(file: File, maxDimension = 2048): Promise<string> {
+  if (typeof window === "undefined") {
+    return fileToDataUrl(file);
+  }
+  const rawDataUrl = await fileToDataUrl(file);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const srcW = img.naturalWidth || img.width;
+        const srcH = img.naturalHeight || img.height;
+        if (!srcW || !srcH) {
+          resolve(rawDataUrl);
+          return;
+        }
+        const scale = Math.min(1, maxDimension / Math.max(srcW, srcH));
+        const targetW = Math.max(1, Math.round(srcW * scale));
+        const targetH = Math.max(1, Math.round(srcH * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(rawDataUrl);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, targetW, targetH);
+        resolve(canvas.toDataURL("image/jpeg", 0.92));
+      } catch {
+        resolve(rawDataUrl);
+      }
+    };
+    img.onerror = () => reject(new Error("Failed to decode image."));
+    img.src = rawDataUrl;
+  });
+}
+
 function openIdb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (typeof indexedDB === "undefined") {
@@ -568,7 +666,7 @@ function normalizeCharacter(x: any): Character | null {
   const now = new Date().toISOString();
 
   const introMessages = (() => {
-    const arr = normalizeStringArray(x.introMessages);
+    const arr = normalizeTextArray(x.introMessages);
     if (arr.length) return arr;
     const legacy = collapseWhitespace(x.introMessage);
     return legacy ? [legacy] : [""];
@@ -610,7 +708,7 @@ function normalizeCharacter(x: any): Character | null {
     respondToProblems: normalizeStringArray(x.respondToProblems),
     sexualBehavior: normalizeStringArray(x.sexualBehavior),
     speechPatterns: normalizeStringArray((x as any).speechPatterns),
-    backstory: normalizeStringArray(x.backstory),
+    backstory: normalizeTextArray(x.backstory),
     selectedBackstoryIndex: Number.isFinite(Number(x.selectedBackstoryIndex)) ? Math.max(0, Number(x.selectedBackstoryIndex)) : 0,
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
     selectedSystemRuleIds: normalizeStringArray(x.selectedSystemRuleIds),
@@ -848,7 +946,7 @@ function runTests() {
 
 export default function CharacterCreatorApp() {
   const [theme, setTheme] = useState<ThemeMode>("light");
-  const [page, setPage] = useState<Page>("characters");
+  const [page, setPage] = useState<Page>("library");
   const [tab, setTab] = useState<CreateTab>("definition");
 
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -869,14 +967,31 @@ export default function CharacterCreatorApp() {
   const [proxyContextSize, setProxyContextSize] = useState(DEFAULT_PROXY.contextSize);
   const [proxyCustomPrompt, setProxyCustomPrompt] = useState(DEFAULT_PROXY.customPrompt);
   const [proxyStreamingEnabled, setProxyStreamingEnabled] = useState(DEFAULT_PROXY.streamingEnabled);
+  const [proxyModels, setProxyModels] = useState<ProxyModelCatalogItem[]>([]);
+  const [proxyModelsLoading, setProxyModelsLoading] = useState(false);
+  const [proxyModelsError, setProxyModelsError] = useState<string | null>(null);
+  const [proxyModelsLastUpdatedAt, setProxyModelsLastUpdatedAt] = useState<string>("");
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaText, setPersonaText] = useState("");
+  const [personas, setPersonas] = useState<PersonaProfile[]>([]);
+  const [activePersonaId, setActivePersonaId] = useState("");
+  const [personaNameInput, setPersonaNameInput] = useState("");
+  const [personaDescriptionInput, setPersonaDescriptionInput] = useState("");
+  const [personaTraitsInput, setPersonaTraitsInput] = useState("");
+  const [personaEditingId, setPersonaEditingId] = useState<string | null>(null);
 
   const [chatCharacter, setChatCharacter] = useState<Character | null>(null);
+  const [chatCardSelectionId, setChatCardSelectionId] = useState("");
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [chatNameInput, setChatNameInput] = useState("");
+  const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null);
+  const [editingMessageText, setEditingMessageText] = useState("");
+  const [chatIntroIndex, setChatIntroIndex] = useState(0);
+  const [chatSidebarOpen, setChatSidebarOpen] = useState(true);
+  const [chatWarning, setChatWarning] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [dragCharacterId, setDragCharacterId] = useState<string | null>(null);
@@ -962,6 +1077,11 @@ export default function CharacterCreatorApp() {
   const [showCreatePreview, setShowCreatePreview] = useState(true);
   const [createPreviewOpen, setCreatePreviewOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
+
+  const selectedProxyCatalogModel = useMemo(
+    () => proxyModels.find((item) => item.id === proxyModel) || null,
+    [proxyModels, proxyModel]
+  );
 
   const [imageDataUrl, setImageDataUrl] = useState("");
   const [imageError, setImageError] = useState<string | null>(null);
@@ -1081,6 +1201,9 @@ export default function CharacterCreatorApp() {
   const [introRevisionPrompt, setIntroRevisionPrompt] = useState("");
   const [relationshipDetailsPrompt, setRelationshipDetailsPrompt] = useState("");
   const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
+  const [exportPickerOpen, setExportPickerOpen] = useState(false);
+  const [exportAsTxt, setExportAsTxt] = useState(true);
+  const [exportAsJson, setExportAsJson] = useState(false);
   const [generatedTextStates, setGeneratedTextStates] = useState<Record<string, GeneratedTextState>>({});
   const [iterationSelections, setIterationSelections] = useState<Record<string, string>>({});
 
@@ -1095,13 +1218,6 @@ export default function CharacterCreatorApp() {
     window.addEventListener("resize", sync);
     return () => window.removeEventListener("resize", sync);
   }, []);
-
-  useEffect(() => {
-    if (page !== "characters" && page !== "create" && page !== "story_relationship_board" && page !== "lorebooks" && page !== "lorebook_create") {
-      setPage("characters");
-    }
-  }, [page]);
-
 
   function startGeneratedTextPage(fieldKey: string) {
     const pageId = uid();
@@ -1221,10 +1337,76 @@ export default function CharacterCreatorApp() {
   const factionImageFileRef = useRef<HTMLInputElement | null>(null);
   const sexualBehaviorImportRef = useRef<HTMLInputElement | null>(null);
   const characterCardImportRef = useRef<HTMLInputElement | null>(null);
+  const chatCharacterCardImportRef = useRef<HTMLInputElement | null>(null);
+
+  const loadProxyModels = React.useCallback(async () => {
+    const modelsUrl = deriveModelsUrlFromChatUrl(proxyChatUrl);
+    setProxyModelsLoading(true);
+    setProxyModelsError(null);
+    try {
+      const key = collapseWhitespace(proxyApiKey);
+      const normalizedKey = key.replace(/^Bearer\s+/i, "").trim();
+      const shouldSendAuth = !!normalizedKey && normalizedKey.toLowerCase() !== "token";
+      const fetchModels = async (withAuth: boolean) => {
+        const headers: Record<string, string> = {};
+        if (withAuth && shouldSendAuth) headers.Authorization = key.startsWith("Bearer ") ? key : `Bearer ${key}`;
+        const res = await fetch(modelsUrl, { headers });
+        if (!res.ok) throw new Error(`Model list request failed (${res.status})`);
+        return res.json();
+      };
+      let payload: any;
+      try {
+        payload = await fetchModels(shouldSendAuth);
+      } catch (firstErr) {
+        if (!shouldSendAuth) throw firstErr;
+        payload = await fetchModels(false);
+      }
+      const data = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+      const normalized = data
+        .map((item: any) => {
+          const id = collapseWhitespace(item?.id || item?.name || "");
+          if (!id) return null;
+          const promptRaw =
+            item?.pricing?.prompt ??
+            item?.pricing?.input ??
+            item?.pricing?.prompt_tokens ??
+            item?.cost?.prompt ??
+            item?.cost?.input;
+          const completionRaw =
+            item?.pricing?.completion ??
+            item?.pricing?.output ??
+            item?.pricing?.completion_tokens ??
+            item?.cost?.completion ??
+            item?.cost?.output;
+          return {
+            id,
+            promptCostPerMTokens: normalizePricePerMTokens(promptRaw),
+            completionCostPerMTokens: normalizePricePerMTokens(completionRaw),
+          } as ProxyModelCatalogItem;
+        })
+        .filter((item: ProxyModelCatalogItem | null): item is ProxyModelCatalogItem => !!item)
+        .sort((a: ProxyModelCatalogItem, b: ProxyModelCatalogItem) => a.id.localeCompare(b.id));
+      setProxyModels(normalized);
+      if (normalized.length && !normalized.some((item: ProxyModelCatalogItem) => item.id === proxyModel)) {
+        setProxyModel(normalized[0].id);
+      }
+      setProxyModelsLastUpdatedAt(new Date().toISOString());
+    } catch (err: any) {
+      setProxyModels([]);
+      setProxyModelsError(err?.message ? String(err.message) : "Unable to load model list.");
+    } finally {
+      setProxyModelsLoading(false);
+    }
+  }, [proxyApiKey, proxyChatUrl, proxyModel]);
 
   useEffect(() => {
     if (import.meta.env.MODE === "test") runTests();
   }, []);
+
+  useEffect(() => {
+    if (!proxyOpen) return;
+    loadProxyModels();
+  }, [proxyOpen, loadProxyModels]);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem(THEME_KEY);
@@ -1250,6 +1432,29 @@ export default function CharacterCreatorApp() {
 
     const savedPersona = localStorage.getItem(PERSONA_KEY);
     if (typeof savedPersona === "string") setPersonaText(savedPersona);
+    const savedPersonas = safeParseJSON(localStorage.getItem(PERSONAS_KEY) || "");
+    if (Array.isArray(savedPersonas)) {
+      const normalized = savedPersonas
+        .map((p) => {
+          if (!p || typeof p !== "object") return null;
+          const name = collapseWhitespace((p as any).name || "");
+          const description = String((p as any).description || "");
+          const traitsRaw = typeof (p as any).traitsRaw === "string" ? (p as any).traitsRaw : "";
+          if (!name) return null;
+          const now = new Date().toISOString();
+          return {
+            id: typeof (p as any).id === "string" ? (p as any).id : uid(),
+            name,
+            description,
+            traitsRaw,
+            createdAt: typeof (p as any).createdAt === "string" ? (p as any).createdAt : now,
+            updatedAt: typeof (p as any).updatedAt === "string" ? (p as any).updatedAt : now,
+          } as PersonaProfile;
+        })
+        .filter((p): p is PersonaProfile => !!p);
+      setPersonas(normalized);
+      if (normalized.length) setActivePersonaId(normalized[0].id);
+    }
 
     const savedSessions = safeParseJSON(localStorage.getItem(CHAT_SESSIONS_KEY) || "");
     if (Array.isArray(savedSessions)) {
@@ -1260,7 +1465,7 @@ export default function CharacterCreatorApp() {
             ? (s as any).messages
                 .map((m: any) => {
                   const role = m?.role === "assistant" ? "assistant" : m?.role === "user" ? "user" : null;
-                  const content = collapseWhitespace(m?.content ?? "");
+                  const content = typeof m?.content === "string" ? m.content : "";
                   if (!role || !content) return null;
                   return { role, content } as ChatMessage;
                 })
@@ -1546,6 +1751,20 @@ export default function CharacterCreatorApp() {
   }, [personaText]);
 
   useEffect(() => {
+    localStorage.setItem(PERSONAS_KEY, JSON.stringify(personas));
+  }, [personas]);
+
+  useEffect(() => {
+    if (!personas.length) {
+      setActivePersonaId("");
+      return;
+    }
+    if (!activePersonaId || !personas.some((p) => p.id === activePersonaId)) {
+      setActivePersonaId(personas[0].id);
+    }
+  }, [personas, activePersonaId]);
+
+  useEffect(() => {
     localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(chatSessions));
   }, [chatSessions]);
 
@@ -1618,6 +1837,16 @@ export default function CharacterCreatorApp() {
       setCharacterCardNameInput(characterCards[0].name);
     }
   }, [hydrated, characterCards, activeCharacterCardId]);
+
+  useEffect(() => {
+    if (!characterCards.length) {
+      setChatCardSelectionId("");
+      return;
+    }
+    if (!chatCardSelectionId || !characterCards.some((c) => c.id === chatCardSelectionId)) {
+      setChatCardSelectionId(characterCards[0].id);
+    }
+  }, [characterCards, chatCardSelectionId]);
   const selected = useMemo(
     () => characters.find((c) => c.id === selectedId) || null,
     [characters, selectedId]
@@ -2028,12 +2257,7 @@ export default function CharacterCreatorApp() {
   }
 
   async function readFileAsDataUrl(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error("Failed to read file."));
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.readAsDataURL(file);
-    });
+    return fileToDataUrl(file);
   }
 
   async function handlePickImage(file: File) {
@@ -2047,8 +2271,12 @@ export default function CharacterCreatorApp() {
       setImageError("Please upload an image file.");
       return;
     }
+    if (file.type === "image/svg+xml") {
+      setImageError("SVG files are not supported. Please upload PNG, JPG, WEBP, or GIF.");
+      return;
+    }
     try {
-      const dataUrl = await readFileAsDataUrl(file);
+      const dataUrl = await normalizeImageDataUrl(file);
       setImageDataUrl(dataUrl);
     } catch (e: any) {
       setImageError(e?.message ? String(e.message) : "Failed to load image.");
@@ -2057,9 +2285,9 @@ export default function CharacterCreatorApp() {
 
   async function handlePickStoryImage(file: File) {
     const maxBytes = 10 * 1024 * 1024;
-    if (file.size > maxBytes || !file.type.startsWith("image/")) return;
+    if (file.size > maxBytes || !file.type.startsWith("image/") || file.type === "image/svg+xml") return;
     try {
-      const dataUrl = await readFileAsDataUrl(file);
+      const dataUrl = await normalizeImageDataUrl(file);
       setStoryImageDataUrl(dataUrl);
       if (activeStory) {
         updateStory(activeStory.id, { imageDataUrl: dataUrl });
@@ -2072,9 +2300,9 @@ export default function CharacterCreatorApp() {
   async function handlePickLorebookCover(file: File) {
     if (!activeLorebook) return;
     const maxBytes = 10 * 1024 * 1024;
-    if (file.size > maxBytes || !file.type.startsWith("image/")) return;
+    if (file.size > maxBytes || !file.type.startsWith("image/") || file.type === "image/svg+xml") return;
     try {
-      const dataUrl = await readFileAsDataUrl(file);
+      const dataUrl = await normalizeImageDataUrl(file);
       updateLorebook(activeLorebook.id, { coverImageDataUrl: dataUrl });
     } catch {
       // ignore invalid lorebook cover
@@ -2145,11 +2373,27 @@ export default function CharacterCreatorApp() {
     });
   }
 
+  function normalizeChatMessageList(messages: any): ChatMessage[] {
+    if (!Array.isArray(messages)) return [];
+    return messages
+      .map((m) => {
+        const role = m?.role === "assistant" ? "assistant" : m?.role === "user" ? "user" : null;
+        const content = typeof m?.content === "string" ? m.content : "";
+        if (!role) return null;
+        return { role, content } as ChatMessage;
+      })
+      .filter((m): m is ChatMessage => !!m);
+  }
+
   function openChatSession(session: ChatSession) {
     setActiveChatSessionId(session.id);
-    setChatMessages(Array.isArray(session.messages) ? session.messages : []);
+    setChatMessages(normalizeChatMessageList(session.messages));
     const linked = characters.find((c) => c.id === session.characterId) || null;
     setChatCharacter(linked);
+    setChatNameInput(session.characterName || "");
+    if (linked) {
+      setChatIntroIndex(clampIndex(linked.selectedIntroIndex || 0, Math.max(1, linked.introMessages?.length || 1)));
+    }
     setChatInput("");
     setGenError(null);
     navigateTo("chat");
@@ -2157,16 +2401,18 @@ export default function CharacterCreatorApp() {
 
   function startChatWithCharacter(c: Character) {
     const now = new Date().toISOString();
-    const latest = chatSessions.find((s) => s.characterId === c.id);
-    if (latest) {
-      openChatSession({ ...latest, characterName: c.name, characterImageDataUrl: c.imageDataUrl || latest.characterImageDataUrl });
-      return;
-    }
-    const greeting = collapseWhitespace(
+    const ownerCard = characterCards.find((card) => (card.characterIds || []).includes(c.id)) || null;
+    const characterIntro = collapseWhitespace(
       c.introMessages?.[
         clampIndex(c.selectedIntroIndex || 0, Math.max(1, c.introMessages?.length || 1))
       ] || ""
     );
+    const cardIntro = collapseWhitespace(
+      ownerCard?.firstMessageMessages?.[
+        clampIndex(ownerCard?.selectedFirstMessageIndex || 0, Math.max(1, ownerCard?.firstMessageMessages?.length || 1))
+      ] || ""
+    );
+    const greeting = characterIntro || cardIntro;
     const session: ChatSession = {
       id: uid(),
       characterId: c.id,
@@ -2177,11 +2423,159 @@ export default function CharacterCreatorApp() {
       updatedAt: now,
     };
     upsertChatSession(session);
+    setChatIntroIndex(clampIndex(c.selectedIntroIndex || 0, Math.max(1, c.introMessages?.length || 1)));
     openChatSession(session);
   }
 
+  function createPersonaProfile() {
+    const name = collapseWhitespace(personaNameInput);
+    const description = personaDescriptionInput.trim();
+    const traitsRaw = personaTraitsInput.trim();
+    if (!name) {
+      alert("Please enter a persona name.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const profile: PersonaProfile = { id: personaEditingId || uid(), name, description, traitsRaw, createdAt: now, updatedAt: now };
+    setPersonas((prev) => {
+      if (personaEditingId) {
+        return prev.map((p) => (p.id === personaEditingId ? { ...p, name, description, traitsRaw, updatedAt: now } : p));
+      }
+      return [profile, ...prev];
+    });
+    setActivePersonaId(profile.id);
+    setPersonaNameInput("");
+    setPersonaDescriptionInput("");
+    setPersonaTraitsInput("");
+    setPersonaEditingId(null);
+    setPersonaOpen(false);
+  }
+
+  function loadPersonaIntoEditor(persona: PersonaProfile) {
+    setPersonaEditingId(persona.id);
+    setPersonaNameInput(persona.name);
+    setPersonaDescriptionInput(persona.description);
+    setPersonaTraitsInput(persona.traitsRaw || "");
+  }
+
+  function deletePersonaProfile(id: string) {
+    setPersonas((prev) => prev.filter((p) => p.id !== id));
+    if (activePersonaId === id) setActivePersonaId("");
+    if (personaEditingId === id) {
+      setPersonaEditingId(null);
+      setPersonaNameInput("");
+      setPersonaDescriptionInput("");
+      setPersonaTraitsInput("");
+    }
+  }
+
+  function startChatWithSelectedCard(cardId?: string) {
+    const selectedCard = characterCards.find((card) => card.id === (cardId || chatCardSelectionId));
+    if (!selectedCard) return alert("Select a character card first.");
+    const selectedCharacter = selectedCard.characterIds
+      .map((id) => characters.find((c) => c.id === id))
+      .find((c): c is Character => !!c);
+    if (!selectedCharacter) return alert("This character card has no character entries yet.");
+    startChatWithCharacter(selectedCharacter);
+  }
+
+  function updateActiveChatMessages(nextMessages: ChatMessage[]) {
+    if (!activeChatSessionId) return;
+    const now = new Date().toISOString();
+    setChatMessages(nextMessages);
+    setChatSessions((prev) =>
+      prev
+        .map((s) => (s.id === activeChatSessionId ? { ...s, messages: nextMessages, updatedAt: now } : s))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    );
+  }
+
+  function startEditChatMessage(index: number) {
+    setEditingMessageIndex(index);
+    setEditingMessageText(chatMessages[index]?.content || "");
+  }
+
+  function saveEditedChatMessage() {
+    if (editingMessageIndex === null) return;
+    const content = editingMessageText;
+    updateActiveChatMessages(
+      chatMessages.map((m, i) => (i === editingMessageIndex ? { ...m, content } : m))
+    );
+    setEditingMessageIndex(null);
+    setEditingMessageText("");
+  }
+
+  function deleteChatMessage(index: number) {
+    updateActiveChatMessages(chatMessages.filter((_, i) => i !== index));
+  }
+
+  function branchFromMessage(index: number) {
+    if (!chatCharacter) return;
+    const now = new Date().toISOString();
+    const base = chatMessages.slice(0, index + 1);
+    const newSession: ChatSession = {
+      id: uid(),
+      characterId: chatCharacter.id,
+      characterName: chatNameInput || chatCharacter.name,
+      characterImageDataUrl: chatCharacter.imageDataUrl || "",
+      messages: base,
+      createdAt: now,
+      updatedAt: now,
+    };
+    upsertChatSession(newSession);
+    openChatSession(newSession);
+  }
+
+  function setIntroMessageByOffset(offset: -1 | 1) {
+    if (!chatCharacter) return;
+    const introList = chatCharacter.introMessages?.length ? chatCharacter.introMessages : [""];
+    const next = (chatIntroIndex + offset + introList.length) % introList.length;
+    setChatIntroIndex(next);
+    const introText = introList[next] || "";
+    if (chatMessages.length && chatMessages[0].role === "assistant") {
+      updateActiveChatMessages(chatMessages.map((m, i) => (i === 0 ? { ...m, content: introText } : m)));
+    } else if (!chatMessages.length) {
+      updateActiveChatMessages([{ role: "assistant", content: introText }]);
+    }
+  }
+
+  function getCardContextForCharacter(c: Character) {
+    const ownerCard = characterCards.find((card) => (card.characterIds || []).includes(c.id));
+    if (!ownerCard) return "Card context: (none)";
+    const cardCharacters = (ownerCard.characterIds || [])
+      .map((id) => characters.find((x) => x.id === id))
+      .filter((x): x is Character => !!x);
+    const relationshipStory = ownerCard.relationshipStoryId
+      ? stories.find((s) => s.id === ownerCard.relationshipStoryId) || null
+      : null;
+
+    return [
+      `Card name: ${ownerCard.name || ""}`,
+      `Card system rules: ${ownerCard.systemRules || ""}`,
+      `Card selected rules: ${ownerCard.selectedSystemRuleIds.join(", ")}`,
+      `Card first messages: ${(ownerCard.firstMessageMessages || []).join(" | ")}`,
+      `Scenario: ${relationshipStory?.scenario || ""}`,
+      `Story first message: ${relationshipStory?.firstMessage || ""}`,
+      `Story system rules: ${relationshipStory?.systemRules || ""}`,
+      `Story synopsis: ${relationshipStory?.synopsis || ""}`,
+      `Relationships: ${(relationshipStory?.relationships || []).map((r) => `${r.fromCharacterId}->${r.toCharacterId} (${r.relationType}/${r.alignment}) ${r.details}`).join(" | ")}`,
+      `All card characters context:\n${cardCharacters.map((ch) => characterToTxt(ch)).join("\n")}`,
+    ].join("\n");
+  }
+
+  function splitThinkingAndReply(content: string) {
+    const match = content.match(/<think>([\s\S]*?)<\/think>/i);
+    if (!match) return { thinking: "", reply: content };
+    const thinking = collapseWhitespace(match[1] || "");
+    const reply = content.replace(match[0], "").trim();
+    return { thinking, reply };
+  }
+
   function buildCharacterChatSystemPrompt(c: Character) {
-    const persona = collapseWhitespace(personaText);
+    const selectedPersona = personas.find((p) => p.id === activePersonaId) || null;
+    const persona = collapseWhitespace(
+      selectedPersona ? `${selectedPersona.name}: ${selectedPersona.description}. Traits: ${selectedPersona.traitsRaw || ""}` : personaText
+    );
     return [
       "You are roleplaying as the following character. Stay in-character and speak naturally.",
       `Name: ${c.name}`,
@@ -2195,6 +2589,7 @@ export default function CharacterCreatorApp() {
       `Backstory: ${(c.backstory || []).join(" | ")}`,
       `Synopsis: ${c.synopsis || ""}`,
       `System rules: ${c.systemRules || ""}`,
+      getCardContextForCharacter(c),
       persona ? `User persona: ${persona}` : "User persona: (not provided)",
       "Respond as the character in chat. Keep continuity with prior messages.",
     ].join("\n");
@@ -2241,16 +2636,6 @@ export default function CharacterCreatorApp() {
     setStoryFirstMessageStyle(activeStory?.firstMessageStyle || "realistic");
     setStorySystemRulesInput(activeStory?.systemRules || "");
   }, [activeStory?.id]);
-
-  const latestCharacter = useMemo(
-    () => (characters.length ? [...characters].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] : null),
-    [characters]
-  );
-
-  const latestStory = useMemo(
-    () => (stories.length ? [...stories].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] : null),
-    [stories]
-  );
 
   const activeLorebook = useMemo(
     () => lorebooks.find((book) => book.id === activeLorebookId) || null,
@@ -3140,7 +3525,14 @@ ${prompt}`,
 
   async function sendChatMessage() {
     if (!chatCharacter || !activeChatSessionId || genLoading) return;
-    const text = collapseWhitespace(chatInput);
+    const proxyReady = !!collapseWhitespace(proxyChatUrl) && !!collapseWhitespace(proxyModel) && !!collapseWhitespace(proxyApiKey);
+    if (!proxyReady) {
+      const msg = "Proxy is not configured for chat. Please set Chat URL, API key, and Model in Proxy Configuration.";
+      setChatWarning(msg);
+      setGenError(msg);
+      return;
+    }
+    const text = chatInput.trim();
     if (!text) return;
     setGenError(null);
     const newHistory = [...chatMessages, { role: "user" as const, content: text }];
@@ -3280,6 +3672,59 @@ ${prompt}`,
     }
   }
 
+  async function generateCardSynopsisOneClick() {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
+    if (!activeCard) return;
+    const cast = (activeCard.characterIds || [])
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c);
+    const relationshipStory = activeCard.relationshipStoryId
+      ? stories.find((s) => s.id === activeCard.relationshipStoryId) || null
+      : null;
+    if (!cast.length) {
+      setGenError("Add at least one character entry before generating synopsis.");
+      return;
+    }
+    const placeHint = relationshipStory?.scenario.match(/(?:at|in|inside|within)\s+([A-Z][A-Za-z0-9' -]{2,40})/)?.[1] || "";
+    const builtInPrompt = [
+      "Generate a comprehensive but natural synopsis for this character card.",
+      "Use this exact structure and order:",
+      "1) Overview",
+      "2) Character info list. For each character: **Name** then age || height.",
+      "3) Main plot / goal / conflict, written clearly and naturally without rhetoric or hyperbole.",
+      "4) Place (name only).",
+      "Rules: Keep it human-like and cohesive. Do not use em dashes.",
+    ].join("\n");
+    setGenLoading(true);
+    setGenError(null);
+    const fieldKey = `character-card-synopsis:${activeCard.id}`;
+    startGeneratedTextPage(fieldKey);
+    try {
+      const out = await callProxyChatCompletion({
+        system: builtInPrompt,
+        user: `Card name: ${activeCard.name}
+Card first messages: ${(activeCard.firstMessageMessages || []).join(" | ")}
+Card system rules: ${activeCard.systemRules || ""}
+Story scenario: ${relationshipStory?.scenario || ""}
+Story plot details: ${relationshipStory?.synopsis || ""}
+Story first message: ${relationshipStory?.firstMessage || ""}
+Place hint: ${placeHint}
+
+Characters:
+${cast.map((c) => `${c.name} | age: ${c.age === "" ? "" : c.age} | height: ${c.height} | summary: ${c.synopsis} | backstory: ${(c.backstory || []).join(" / ")}`).join("\n")}`,
+        maxTokens: proxyMaxTokens,
+        stream: proxyStreamingEnabled,
+        lorebookIds: getActiveCardLorebookIds(),
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setSynopsis),
+      });
+      commitGeneratedText(fieldKey, out, setSynopsis, true);
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Synopsis generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
   function exportSexualBehaviorJSON() {
     downloadJSON((filenameSafe(name) || "character") + "_sexual_behavior.json", { sexualBehavior });
   }
@@ -3344,13 +3789,13 @@ ${prompt}`,
     downloadJSON(`${exportName}.json`, payload);
   }
 
-  async function importCharacterCardJSON(file: File) {
+  async function importCharacterCardJSON(file: File): Promise<string | null> {
     try {
       const raw = await file.text();
       const parsed = safeParseJSON(raw);
       if (!parsed || typeof parsed !== "object") {
         alert("Invalid JSON file.");
-        return;
+        return null;
       }
 
       const maybeExport = parsed as Partial<CharacterCardJsonExport>;
@@ -3358,7 +3803,7 @@ ${prompt}`,
       const normalizedCard = normalizeCharacterCard(incomingCardRaw);
       if (!normalizedCard) {
         alert("This file does not contain a valid character card.");
-        return;
+        return null;
       }
 
       const importedCharacters = Array.isArray(maybeExport.characters)
@@ -3400,8 +3845,10 @@ ${prompt}`,
       setActiveCharacterCardId(finalCard.id);
       setCharacterCardNameInput(finalCard.name);
       alert("Character card imported successfully.");
+      return finalCard.id;
     } catch {
       alert("Failed to import character card JSON.");
+      return null;
     }
   }
 
@@ -4400,50 +4847,102 @@ ${feedback}`,
     const cardChars = activeCard
       ? (activeCard.characterIds || []).map((id) => characters.find((c) => c.id === id)).filter((c): c is Character => !!c)
       : fallbackCharacter ? [fallbackCharacter] : [];
-
     const cardStory = activeCard?.relationshipStoryId
       ? stories.find((s) => s.id === activeCard.relationshipStoryId) || null
       : null;
 
-    const relationships = (cardStory?.relationships || []).map((r) => {
-      const from = cardChars.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
-      const to = cardChars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
-      return `    <relationship from="${xmlEscape(from)}" to="${xmlEscape(to)}" alignment="${xmlEscape(r.alignment)}" type="${xmlEscape(r.relationType)}">${xmlEscape(r.details || "")}</relationship>`;
-    });
-
     const selectedRuleTexts = STORY_SYSTEM_RULE_CARDS
       .filter((r) => cardSelectedSystemRuleIds.includes(r.id))
       .map((r) => r.text);
+    const customRules = (cardSystemRules || "")
+      .split("\n")
+      .map((line) => collapseWhitespace(line))
+      .filter(Boolean);
+    const allRules = [...selectedRuleTexts, ...customRules];
+    const relationshipLines = (cardStory?.relationships || []).map((r) => {
+      const from = cardChars.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
+      const to = cardChars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
+      const bits = [`${from} -> ${to}`];
+      if (r.relationType) bits.push(`type: ${r.relationType}`);
+      if (r.alignment) bits.push(`alignment: ${r.alignment}`);
+      if (r.details) bits.push(`details: ${r.details}`);
+      return bits.join(" | ");
+    });
 
-    const xml = [
-      `<character_card name="${xmlEscape(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card")}">`,
-      `  <individual_character_info>`,
-      ...(cardChars.length ? cardChars.map((c) => characterToTxt(c)) : ["    <character />"]),
-      `  </individual_character_info>`,
-      `  <relationships>`,
-      ...(relationships.length ? relationships : ["    <relationship />"]),
-      `  </relationships>`,
-      `  <system_rules>`,
-      `    <selected_rule_cards>${xmlEscape(selectedRuleTexts.join(" | "))}</selected_rule_cards>`,
-      `    <custom_rules>${xmlEscape(cardSystemRules || "")}</custom_rules>`,
-      `  </system_rules>`,
-      `</character_card>`,
+    const characterBlocks = cardChars.length
+      ? cardChars.map((c) => {
+          const selectedBackstory = (c.backstory || []).length
+            ? (c.backstory || [])[Math.max(0, Math.min((c.backstory || []).length - 1, (c as any).selectedBackstoryIndex || 0))] || ""
+            : "";
+          const speechPatternsText = (c.speechPatterns || []).length
+            ? (c.speechPatterns || []).map((item) => `- ${item}`).join("\n")
+            : "-";
+          const content = [
+            `Name: ${c.name || ""}`,
+            "",
+            `Age: ${c.age === "" ? "" : String(c.age)}`,
+            "",
+            `Gender: ${c.gender || ""}`,
+            "",
+            `Race: ${c.race || ""}`,
+            "",
+            `Height: ${c.height || ""}`,
+            "",
+            `Origin: ${c.origins || ""}`,
+            "",
+            `Personality: ${(c.personalities || []).join(", ")}`,
+            "",
+            `Physical appearance: ${(c.physicalAppearance || []).join(", ")}`,
+            "",
+            `Unique traits: ${(c.uniqueTraits || []).join(", ")}`,
+            "",
+            `Speech patterns:`,
+            speechPatternsText,
+            "",
+            `Backstory: ${selectedBackstory}`,
+          ].join("\n");
+          const tagName = collapseWhitespace(c.name) || "character";
+          return [`<${tagName}>`, content, `</${tagName}>`].join("\n");
+        })
+      : ["<character>\n\n</character>"];
+
+    const text = [
+      ...characterBlocks,
+      "",
+      `<relationships>`,
+      ...(relationshipLines.length ? relationshipLines : [""]),
+      `</relationships>`,
+      "",
+      `<system>`,
+      ...(allRules.length ? allRules : [""]),
+      `</system>`,
       "",
     ].join("\n");
 
     const exportName = filenameSafe(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "character_card") || "character_card";
-    downloadText(`${exportName}.txt`, xml);
+    downloadText(`${exportName}.txt`, text);
   }
 
 
 
   const draft = getDraftCharacter();
+  function confirmCardExportSelection() {
+    if (!draft) {
+      alert("Please enter a character name before exporting.");
+      return;
+    }
+    if (!exportAsTxt && !exportAsJson) return;
+    if (exportAsTxt) exportCurrentCardTxt(draft);
+    if (exportAsJson) exportCurrentCardJson(draft);
+    setExportPickerOpen(false);
+  }
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
     { id: "definition", label: "Characters" },
     { id: "relationships", label: "Relationships" },
     { id: "system", label: "System Rules" },
     { id: "intro", label: "First Message" },
+    { id: "synopsis", label: "Synopsis" },
   ];
 
   return (
@@ -4501,13 +5000,14 @@ ${feedback}`,
         }
       `}</style>
 
-      <div className="mx-auto max-w-7xl pt-28 md:pt-32">
+      <div className={cn("mx-auto", page === "chat" ? "max-w-none pt-2" : "max-w-7xl pt-28 md:pt-32")}>
         {storageError ? (
           <div className="mt-4 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-sm">
             <div className="font-semibold">Storage issue</div>
             <div className="mt-1 text-[hsl(var(--muted-foreground))]">{storageError}</div>
           </div>
         ) : null}
+        {page !== "chat" ? (
         <header className="fixed inset-x-0 top-0 z-50 border-b border-[hsl(var(--border))] bg-[hsl(var(--background))/0.95] backdrop-blur">
           <div className="mx-auto flex w-full max-w-7xl flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:justify-between md:px-8">
           <div className="flex items-center gap-2">
@@ -4515,12 +5015,18 @@ ${feedback}`,
             <button
               type="button"
               className="text-2xl font-semibold tracking-tight md:text-3xl"
-              onClick={() => navigateTo("characters")}
+              onClick={() => navigateTo("library")}
             >
               Mastercreator
             </button>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+            <Button variant="secondary" onClick={() => setPersonaOpen(true)}>
+              Persona: {personas.find((p) => p.id === activePersonaId)?.name || "None"}
+            </Button>
+            <Button variant="secondary" onClick={() => setPersonaOpen(true)}>
+              <Plus className="h-4 w-4" /> Create Persona
+            </Button>
             <Button variant="secondary" onClick={() => navigateTo("characters")}>
               <Library className="h-4 w-4" /> Character List
             </Button>
@@ -4536,106 +5042,147 @@ ${feedback}`,
           </div>
           </div>
         </header>
+        ) : null}
 
         {page === "chat" ? (
-          <div className="anim-page mt-6 grid gap-4 lg:grid-cols-3">
-            <div className="space-y-3 lg:col-span-1">
-              <div className="flex items-center justify-between gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                <div>
-                  <div className="text-sm font-semibold">Chats</div>
-                  <div className="text-xs text-[hsl(var(--muted-foreground))]">Continue latest or pick a session.</div>
-                </div>
-                <Button variant="secondary" onClick={() => navigateTo("library")}>
-                  <ArrowLeft className="h-4 w-4" /> Dashboard
-                </Button>
+          <div className={cn("anim-page mt-2 grid gap-4", chatSidebarOpen ? "lg:grid-cols-[230px,1fr]" : "grid-cols-1")}>
+            {chatSidebarOpen ? (
+            <aside className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+              <div className="mb-2 text-sm font-semibold">Persona</div>
+              <button type="button" onClick={() => setPersonaOpen(true)} className="mb-4 w-full rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-left">
+                {personas.find((p) => p.id === activePersonaId)?.name || "Select persona"}
+              </button>
+              <div className="mb-2 text-sm font-semibold">Chats</div>
+              <div className="max-h-[60vh] space-y-2 overflow-auto">
+                {chatSessions.map((s) => (
+                  <button key={s.id} type="button" onClick={() => openChatSession(s)} className={cn("w-full rounded-xl border p-2 text-left", activeChatSessionId === s.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>
+                    <div className="text-sm font-medium truncate">{s.characterName}</div>
+                    <div className="text-xs text-[hsl(var(--muted-foreground))] truncate">{(Array.isArray(s.messages) ? s.messages[s.messages.length - 1]?.content : "") || "No messages yet."}</div>
+                  </button>
+                ))}
+                {!chatSessions.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No chats yet.</div> : null}
               </div>
-              {chatSessions.length ? (
-                <div className="space-y-2">
-                  <Button
-                    variant="primary"
-                    className="w-full"
-                    onClick={() => openChatSession(chatSessions[0])}
-                  >
-                    Continue latest chat
-                  </Button>
-                  {chatSessions.map((s) => (
-                    <button
-                      key={s.id}
-                      className={cn(
-                        "clickable w-full rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 text-left",
-                        activeChatSessionId === s.id && "border-[hsl(var(--hover-accent))]"
-                      )}
-                      onClick={() => openChatSession(s)}
-                      type="button"
-                    >
-                      <div className="text-sm font-medium">{s.characterName}</div>
-                      <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
-                        {new Date(s.updatedAt).toLocaleString()}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-sm text-[hsl(var(--muted-foreground))]">
-                  No chats yet. Start a chat from a character.
-                </div>
-              )}
-            </div>
+            </aside>
+            ) : null}
 
-            <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 shadow-sm lg:col-span-2">
-              {chatCharacter ? (
+            <div className="space-y-4 pb-44 pt-24">
+              <div className={cn("fixed right-4 top-4 z-40 flex flex-wrap items-center gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl", chatSidebarOpen ? "left-4 lg:left-[260px]" : "left-4")}>
+                <Button variant="secondary" onClick={() => setChatSidebarOpen((v) => !v)}><Menu className="h-4 w-4" /></Button>
+                <Button variant="secondary" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Back</Button>
+                <Input value={chatNameInput} onChange={(e) => setChatNameInput(e.target.value)} placeholder="Chat Name" className="max-w-md" />
+                <Button variant="primary" onClick={() => { setActiveChatSessionId(null); setChatCharacter(null); setChatMessages([]); setChatInput(""); }}>New Chat</Button>
+                <Button variant="secondary" onClick={() => chatCharacterCardImportRef.current?.click()}><Upload className="h-4 w-4" /> Import Card</Button>
+                <input
+                  ref={chatCharacterCardImportRef}
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      const importedId = await importCharacterCardJSON(f);
+                      if (importedId) setChatCardSelectionId(importedId);
+                    }
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </div>
+
+              {!chatCharacter ? (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-lg font-semibold">Chat with {chatCharacter.name}</div>
+                  <div>
+                    <div className="text-xl font-semibold">No Character Yet</div>
+                    <div className="text-sm text-[hsl(var(--muted-foreground))]">Select character below.</div>
                   </div>
-                  <div className="max-h-[62vh] space-y-2 overflow-auto rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3">
-                    {chatMessages.length ? (
-                      chatMessages.map((m, i) => (
-                        <div
-                          key={`${m.role}-${i}`}
-                          className={cn(
-                            "flex max-w-[95%] items-start gap-2 rounded-xl px-3 py-2 text-sm whitespace-pre-wrap",
-                            m.role === "user"
-                              ? "ml-auto border border-[hsl(var(--border))]"
-                              : "mr-auto border border-[hsl(var(--border))] bg-[hsl(var(--card))]"
-                          )}
-                        >
-                          {m.role === "assistant" ? (
-                            chatCharacter.imageDataUrl ? (
-                              <img
-                                src={chatCharacter.imageDataUrl}
-                                alt={chatCharacter.name}
-                                className="mt-0.5 h-7 w-7 rounded-full object-cover"
-                              />
-                            ) : (
-                              <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-[hsl(var(--border))] text-[10px]">AI</div>
-                            )
-                          ) : null}
-                          <div className="min-w-0">
-                            <RichText text={m.content} />
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-sm text-[hsl(var(--muted-foreground))]">No messages yet. Start chatting.</div>
-                    )}
+                  <div className="max-h-[52vh] overflow-auto rounded-2xl border border-[hsl(var(--border))] p-3">
+                    <div className="grid grid-cols-3 gap-3 md:grid-cols-5 lg:grid-cols-7">
+                      {characterCards.map((card) => {
+                        const c = characters.find((x) => x.id === card.characterIds[0]);
+                        return (
+                          <button key={card.id} type="button" onClick={() => { setChatCardSelectionId(card.id); startChatWithSelectedCard(card.id); }} className="overflow-hidden rounded-xl border border-[hsl(var(--border))] text-left">
+                            <div className="relative aspect-[3/4] bg-[hsl(var(--muted))]">
+                              {c?.imageDataUrl ? <img src={c.imageDataUrl} alt={card.name} className="absolute inset-0 h-full w-full object-cover" /> : null}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Input
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => onEnterAdd(e, sendChatMessage)}
-                      placeholder="Type your message…"
-                    />
-                    <Button variant="primary" onClick={sendChatMessage} disabled={!collapseWhitespace(chatInput) || genLoading}>
-                      Send
-                    </Button>
-                  </div>
-                  {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
                 </div>
               ) : (
-                <div className="text-sm text-[hsl(var(--muted-foreground))]">Pick a chat session from the left.</div>
+                <div className="space-y-4">
+                  <div className="space-y-3">
+                    {chatMessages.map((m, i) => (
+                      <div key={`${m.role}-${i}`} className={cn("rounded-xl border p-4", m.role === "user" ? "ml-auto max-w-[85%]" : "mr-auto max-w-[92%] bg-[hsl(var(--card))]")}>
+                        {editingMessageIndex === i ? (
+                          <div className="space-y-2">
+                            <Textarea value={editingMessageText} onChange={(e) => setEditingMessageText(e.target.value)} rows={4} />
+                            <div className="flex gap-2">
+                              <Button variant="primary" onClick={saveEditedChatMessage}>Save</Button>
+                              <Button variant="secondary" onClick={() => setEditingMessageIndex(null)}>Cancel</Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            {m.role === "assistant" ? (
+                              (() => {
+                                const parsed = splitThinkingAndReply(m.content || "");
+                                return (
+                                  <div className="space-y-2">
+                                    {parsed.thinking ? (
+                                      <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--muted))] p-2 text-xs text-[hsl(var(--muted-foreground))]">
+                                        <div className="mb-1 font-semibold">Thinking</div>
+                                        <RichText text={parsed.thinking} />
+                                      </div>
+                                    ) : null}
+                                    <RichText text={parsed.reply || ""} />
+                                  </div>
+                                );
+                              })()
+                            ) : (
+                              <RichText text={m.content} />
+                            )}
+                            <div className="mt-3 flex items-center gap-2">
+                              <button type="button" onClick={() => startEditChatMessage(i)}><Pencil className="h-4 w-4" /></button>
+                              <button type="button" onClick={() => deleteChatMessage(i)}><Trash2 className="h-4 w-4" /></button>
+                              <button type="button" onClick={() => branchFromMessage(i)}><SendHorizontal className="h-4 w-4" /></button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                    {genLoading ? (
+                      <div className="mr-auto max-w-[92%] rounded-xl border bg-[hsl(var(--card))] p-4">
+                        <div className="flex items-center gap-1">
+                          <span className="h-2 w-2 animate-bounce rounded-full bg-[hsl(var(--muted-foreground))]" />
+                          <span className="h-2 w-2 animate-bounce rounded-full bg-[hsl(var(--muted-foreground))] [animation-delay:120ms]" />
+                          <span className="h-2 w-2 animate-bounce rounded-full bg-[hsl(var(--muted-foreground))] [animation-delay:240ms]" />
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {chatMessages.length && chatMessages[0].role === "assistant" ? (
+                    <div className="flex items-center justify-center gap-4 text-sm text-[hsl(var(--muted-foreground))]">
+                      <button type="button" onClick={() => setIntroMessageByOffset(-1)}><ChevronLeft className="h-5 w-5" /></button>
+                      <span>{chatIntroIndex + 1}/{Math.max(1, chatCharacter.introMessages?.length || 1)}</span>
+                      <button type="button" onClick={() => setIntroMessageByOffset(1)}><ChevronRight className="h-5 w-5" /></button>
+                    </div>
+                  ) : null}
+                </div>
               )}
+
+              <div className={cn("fixed bottom-4 right-4 z-40", chatSidebarOpen ? "left-4 lg:left-[260px]" : "left-4")}>
+                <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 shadow-xl">
+                  <div className="flex gap-2">
+                    <Textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} rows={3} placeholder="Type your message...." disabled={!chatCharacter} onKeyDown={(e) => onEnterAdd(e, sendChatMessage)} />
+                    <Button variant="primary" onClick={sendChatMessage} disabled={!chatCharacter || !collapseWhitespace(chatInput) || genLoading || !collapseWhitespace(proxyChatUrl) || !collapseWhitespace(proxyModel) || !collapseWhitespace(proxyApiKey)}><SendHorizontal className="h-4 w-4" /></Button>
+                  </div>
+                  {(!collapseWhitespace(proxyChatUrl) || !collapseWhitespace(proxyModel) || !collapseWhitespace(proxyApiKey)) ? (
+                    <div className="mt-2 text-xs text-red-500">Proxy not configured for chat. Please open Proxy Configuration.</div>
+                  ) : null}
+                </div>
+              </div>
             </div>
           </div>
         ) : page === "storywriting" ? (
@@ -5907,89 +6454,26 @@ ${feedback}`,
             </div>
           )
         ) : page === "library" ? (
-            <div className="anim-page mt-6 space-y-6">
-            <div className="anim-stagger grid gap-4 md:grid-cols-3">
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                <div className="mb-3 text-sm font-semibold">Characters</div>
-                <Button variant="primary" className="w-full justify-center py-3" onClick={() => { resetForm(); navigateTo("create"); setTab("overview"); }}>
-                  <Plus className="h-4 w-4" /> Create new character
-                </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("characters")}>
-                  <Library className="h-4 w-4" /> View character gallery
-                </Button>
-              </div>
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                <div className="mb-3 text-sm font-semibold">Stories</div>
-                <Button variant="primary" className="w-full justify-center py-3" onClick={() => navigateTo("storywriting")}>
-                  <Plus className="h-4 w-4" /> Create new story
-                </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("my_stories")}>
-                  <Library className="h-4 w-4" /> View stories
-                </Button>
-              </div>
-              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                <div className="mb-3 text-sm font-semibold">Lorebooks</div>
-                <Button variant="primary" className="w-full justify-center py-3" onClick={createLorebook}>
-                  <Plus className="h-4 w-4" /> Create new lorebook
-                </Button>
-                <Button variant="secondary" className="mt-3 w-full" onClick={() => navigateTo("lorebooks")}>
-                  <BookOpen className="h-4 w-4" /> View lorebooks
-                </Button>
+            <div className="anim-page mt-10">
+              <div className="mx-auto grid max-w-4xl gap-6 md:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => navigateTo("chat")}
+                  className="aspect-[3/4] rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-8 text-left shadow-sm"
+                >
+                  <div className="text-3xl font-semibold">Chat</div>
+                  <div className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">Open chatbot interface and start a conversation.</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigateTo("characters")}
+                  className="aspect-[3/4] rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-8 text-left shadow-sm"
+                >
+                  <div className="text-3xl font-semibold">Creator</div>
+                  <div className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">Open character card dashboard.</div>
+                </button>
               </div>
             </div>
-
-            <div className="space-y-2">
-              <div className="text-sm font-semibold">Your latest character</div>
-              <button
-                type="button"
-                onClick={() => latestCharacter && setPreviewId(latestCharacter.id)}
-                className="group relative grid h-64 w-full grid-cols-[180px,1fr] overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left"
-              >
-                <div className="relative border-r border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
-                  {latestCharacter?.imageDataUrl ? <img src={latestCharacter.imageDataUrl} alt={latestCharacter.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : null}
-                </div>
-                <div className="relative z-10 p-5">
-                  <div className="text-xl font-semibold">{latestCharacter?.name || "No character yet"}</div>
-                  <div className="text-sm text-[hsl(var(--foreground))/0.8]">Continue your last character</div>
-                </div>
-                <div className="absolute inset-y-0 right-0 w-24 translate-x-full bg-white transition-transform duration-300 group-hover:translate-x-0">
-                  <div className="flex h-full items-center justify-center">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-white/90">
-                      <ArrowLeft className="h-4 w-4 rotate-180 text-black opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-hover:animate-[spin_0.2s_linear_1]" />
-                    </div>
-                  </div>
-                </div>
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              <div className="text-sm font-semibold">Your latest story</div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!latestStory) return;
-                  setActiveStoryId(latestStory.id);
-                  navigateTo("story_editor");
-                }}
-                className="group relative grid h-64 w-full grid-cols-[180px,1fr] overflow-hidden rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-left"
-              >
-                <div className="relative border-r border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
-                  {latestStory?.imageDataUrl ? <img src={latestStory.imageDataUrl} alt={latestStory.title} className="absolute inset-0 h-full w-full object-cover object-top" /> : null}
-                </div>
-                <div className="relative z-10 p-5">
-                  <div className="text-xl font-semibold">{latestStory?.title || "No story yet"}</div>
-                  <div className="text-sm text-[hsl(var(--foreground))/0.8]">Continue your last story</div>
-                </div>
-                <div className="absolute inset-y-0 right-0 w-24 translate-x-full bg-white transition-transform duration-300 group-hover:translate-x-0">
-                  <div className="flex h-full items-center justify-center">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-white/90">
-                      <ArrowLeft className="h-4 w-4 rotate-180 text-black opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-hover:animate-[spin_0.2s_linear_1]" />
-                    </div>
-                  </div>
-                </div>
-              </button>
-            </div>
-          </div>
         ) : page === "characters" ? (
           <div className="anim-page mt-6 space-y-4">
             <div className="flex items-center justify-between">
@@ -6007,7 +6491,10 @@ ${feedback}`,
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {characterCards.map((card) => {
-                const firstCharacter = characters.find((c) => c.id === (card.characterIds[0] || "")) || null;
+                const previewCharacters = card.characterIds
+                  .slice(0, 4)
+                  .map((id) => characters.find((c) => c.id === id))
+                  .filter((c): c is Character => !!c);
                 return (
                   <button key={card.id} type="button" onClick={() => {
                     setActiveCharacterCardId(card.id);
@@ -6022,7 +6509,24 @@ ${feedback}`,
                     navigateTo("create");
                   }} className="text-left rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
                     <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-[hsl(var(--border))]">
-                      {firstCharacter?.imageDataUrl ? <img src={firstCharacter.imageDataUrl} alt={card.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>}
+                      {previewCharacters.length ? (
+                        <div className="absolute inset-0 grid grid-cols-2 grid-rows-2">
+                          {previewCharacters.map((character) => (
+                            <div key={character.id} className="relative overflow-hidden border border-[hsl(var(--border))/0.5] bg-[hsl(var(--muted))]">
+                              {character.imageDataUrl ? (
+                                <img src={character.imageDataUrl} alt={character.name} className="absolute inset-0 h-full w-full object-cover object-top" />
+                              ) : (
+                                <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
+                              )}
+                            </div>
+                          ))}
+                          {Array.from({ length: Math.max(0, 4 - previewCharacters.length) }).map((_, i) => (
+                            <div key={`empty-${i}`} className="border border-[hsl(var(--border))/0.5] bg-[hsl(var(--muted))]" />
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>
+                      )}
                     </div>
                     <div className="mt-2 font-semibold">{card.name || "Character Card"}</div>
                     <div className="text-xs text-[hsl(var(--muted-foreground))]">{card.characterIds.length} character entries</div>
@@ -6033,13 +6537,58 @@ ${feedback}`,
           </div>
         ) : page === "create" ? (
           <div className="anim-page mt-6 space-y-3">
-            <div className="flex flex-wrap gap-2">
-              {tabs.map((t) => (
-                <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
-              ))}
+            <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Character card</div>
+              <div className="flex items-center justify-between gap-2">
+                <Input value={characterCardNameInput} onChange={(e) => { const v = e.target.value; setCharacterCardNameInput(v); if (activeCharacterCardId) setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, name: v, updatedAt: new Date().toISOString() } : card)); }} placeholder="Character card name" />
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={updateWholeCharacterCard}><Pencil className="h-4 w-4" /> Update</Button>
+                  {selectedId ? <Button variant="secondary" onClick={() => deleteCharacter(selectedId)}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
+                </div>
+              </div>
             </div>
 
-            {tab === "relationships" ? (
+            {selectedId ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {tabs.map((t) => (
+                    <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" onClick={() => characterCardImportRef.current?.click()}>
+                    <Upload className="h-4 w-4" /> Import JSON
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setExportAsTxt(true);
+                      setExportAsJson(false);
+                      setExportPickerOpen(true);
+                    }}
+                  >
+                    <Download className="h-4 w-4" /> Export
+                  </Button>
+                </div>
+                <input
+                  ref={characterCardImportRef}
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) importCharacterCardJSON(f);
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </div>
+            ) : null}
+
+            {!selectedId ? (
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <Button variant="primary" className="w-full justify-center" onClick={createCharacterEntryInActiveCard}><Plus className="h-4 w-4" /> New character entry</Button>
+              </div>
+            ) : tab === "relationships" ? (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
                 <div className="text-sm text-[hsl(var(--muted-foreground))]">Use the exact drag-and-drop relationship board.</div>
                 <Button variant="secondary" onClick={openCardRelationshipBoard}>Open Relationship Board</Button>
@@ -6077,17 +6626,6 @@ ${feedback}`,
                 ) : null}
 
                 <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex-1 space-y-2">
-                      <div className="text-lg font-semibold">Character Dashboard</div>
-                      <Input value={characterCardNameInput} onChange={(e) => { const v = e.target.value; setCharacterCardNameInput(v); if (activeCharacterCardId) setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, name: v, updatedAt: new Date().toISOString() } : card)); }} placeholder="Character card name" />
-                    </div>
-                    <div className="flex gap-2">
-                      <Button variant="secondary" onClick={updateWholeCharacterCard}><Pencil className="h-4 w-4" /> Update</Button>
-                      {selectedId ? <Button variant="secondary" onClick={() => deleteCharacter(selectedId)}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
-                    </div>
-                  </div>
-
                   {tab === "definition" ? (
                     <div className="space-y-3">
                       <div className="grid gap-3 md:grid-cols-[160px,1fr]">
@@ -6119,6 +6657,14 @@ ${feedback}`,
 
                   {tab === "intro" ? (
                     <div className="space-y-3"><div className="flex items-center justify-between"><div className="text-sm">Message {introIndex + 1} / {Math.max(1, introMessages.length)}</div><Button variant="secondary" onClick={() => { setIntroMessages((prev)=>[...prev, ""]); setIntroVersionHistories((prev)=>[...prev,[""]]); setIntroVersionIndices((prev)=>[...prev,0]); setIntroIndex(introMessages.length); }}><Plus className="h-4 w-4" /> New</Button></div><div className="flex items-center justify-between gap-2"><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.max(0,i-1))} disabled={introIndex<=0}><ChevronLeft className="h-4 w-4" /> Prev</Button><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.min(introMessages.length-1,i+1))} disabled={introIndex>=introMessages.length-1}>Next <ChevronRight className="h-4 w-4" /></Button></div><Textarea value={introMessages[clampIndex(introIndex, Math.max(1,introMessages.length))] || ""} onChange={(e) => { const v=e.target.value; setIntroMessages((prev)=>{const b=[...prev]; b[clampIndex(introIndex,b.length)] = v; return b;}); setIntroVersionHistories((prev)=>{const base = prev.length ? prev.map((h)=> (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]]; const i = clampIndex(introIndex, Math.max(1, base.length)); while (base.length <= i) base.push([""]); const history = base[i]; const vi = clampIndex(introVersionIndices[i] || 0, history.length); history[vi] = v; return base;}); }} rows={9} placeholder="Write first message..." /><Textarea value={introPrompt} onChange={(e)=>setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" /><div className="flex gap-2"><Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div><Textarea value={introRevisionPrompt} onChange={(e)=>setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" /></div>
+                  ) : null}
+
+                  {tab === "synopsis" ? (
+                    <div className="space-y-3">
+                      <div className="text-sm text-[hsl(var(--muted-foreground))]">One-click synopsis generator with built-in structure prompt.</div>
+                      <Textarea value={synopsis} onChange={(e) => setSynopsis(e.target.value)} rows={10} placeholder="Synopsis..." />
+                      <Button variant="secondary" onClick={generateCardSynopsisOneClick} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate synopsis</Button>
+                    </div>
                   ) : null}
 
                   {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
@@ -6842,11 +7388,57 @@ ${feedback}`,
             </div>
             <div className="space-y-2">
               <div className="text-sm font-medium">Model name</div>
+              <div className="text-xs font-medium text-[hsl(var(--muted-foreground))]">Live Chutes models (dropdown)</div>
+              <div className="flex gap-2">
+                <Select
+                  value={proxyModels.some((m) => m.id === proxyModel) ? proxyModel : ""}
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    setProxyModel(e.target.value);
+                  }}
+                  disabled={proxyModelsLoading}
+                >
+                  <option value="">{proxyModelsLoading ? "Loading models from Chutes…" : "Select a live model…"}</option>
+                  {proxyModels.map((modelItem) => (
+                    <option key={modelItem.id} value={modelItem.id}>
+                      {modelItem.id} · in {formatDollarsPerMillion(modelItem.promptCostPerMTokens)} · out {formatDollarsPerMillion(modelItem.completionCostPerMTokens)}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="shrink-0"
+                  onClick={loadProxyModels}
+                  disabled={proxyModelsLoading}
+                >
+                  Refresh
+                </Button>
+              </div>
+              {!proxyModelsLoading && !proxyModels.length ? (
+                <div className="text-xs text-amber-500">
+                  No live models loaded yet. Click Refresh to fetch from Chutes.
+                </div>
+              ) : null}
               <Input
                 value={proxyModel}
                 onChange={(e) => setProxyModel(e.target.value)}
-                placeholder="e.g., gpt-4.1-mini"
+                placeholder="e.g., deepseek-ai/DeepSeek-R1"
               />
+              {selectedProxyCatalogModel ? (
+                <div className="text-xs text-[hsl(var(--muted-foreground))]">
+                  Selected pricing: input {formatDollarsPerMillion(selectedProxyCatalogModel.promptCostPerMTokens)} · output {formatDollarsPerMillion(selectedProxyCatalogModel.completionCostPerMTokens)}.
+                </div>
+              ) : null}
+              <div className="text-xs text-[hsl(var(--muted-foreground))]">
+                Source: {deriveModelsUrlFromChatUrl(proxyChatUrl)}.
+                {proxyModelsLastUpdatedAt ? ` Last updated ${new Date(proxyModelsLastUpdatedAt).toLocaleString()}.` : ""}
+              </div>
+              {proxyModelsError ? (
+                <div className="text-xs text-red-500">
+                  Could not load model list: {proxyModelsError}
+                </div>
+              ) : null}
             </div>
             <div className="space-y-2">
               <div className="text-sm font-medium">Max tokens</div>
@@ -6925,21 +7517,55 @@ ${feedback}`,
           </div>
         </Modal>
 
-        <Modal open={personaOpen} onClose={() => setPersonaOpen(false)} title="Your Persona" widthClass="max-w-2xl">
-          <div className="space-y-3">
-            <div className="text-sm text-[hsl(var(--muted-foreground))]">
-              Describe who you are / what you look like so characters can use this context in chat.
+        <Modal open={personaOpen} onClose={() => setPersonaOpen(false)} title="Persona Manager" widthClass="max-w-3xl">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] p-3">
+              <div className="text-sm font-semibold">Your personas</div>
+              <div className="max-h-72 space-y-2 overflow-auto">
+                {personas.map((p) => (
+                  <div key={p.id} className={cn("w-full rounded-lg border p-2 text-left", activePersonaId === p.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>
+                    <button type="button" className="w-full text-left" onClick={() => setActivePersonaId(p.id)}>
+                      <div className="font-medium">{p.name}</div>
+                      <div className="text-xs text-[hsl(var(--muted-foreground))] line-clamp-2">{p.description || "No description"}</div>
+                      <div className="mt-1 text-[11px] text-[hsl(var(--muted-foreground))]">Traits: {p.traitsRaw || "None"}</div>
+                    </button>
+                    <div className="mt-2 flex gap-2">
+                      <Button variant="secondary" onClick={() => loadPersonaIntoEditor(p)}><Pencil className="h-4 w-4" /> Edit</Button>
+                      <Button variant="danger" onClick={() => deletePersonaProfile(p.id)}><Trash2 className="h-4 w-4" /> Delete</Button>
+                    </div>
+                  </div>
+                ))}
+                {!personas.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No persona yet.</div> : null}
+              </div>
             </div>
-            <Textarea
-              value={personaText}
-              onChange={(e) => setPersonaText(e.target.value)}
-              rows={8}
-              placeholder="Example: I am a 24-year-old detective with short black hair, calm voice, and a cautious personality..."
-            />
-            <div className="flex justify-end">
-              <Button variant="primary" onClick={() => setPersonaOpen(false)}>
-                Done
-              </Button>
+            <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] p-3">
+              <div className="text-sm font-semibold">{personaEditingId ? "Edit persona" : "Create persona"}</div>
+              <Input value={personaNameInput} onChange={(e) => setPersonaNameInput(e.target.value)} placeholder="Persona name" />
+              <Input value={personaTraitsInput} onChange={(e) => setPersonaTraitsInput(e.target.value)} placeholder="Traits (comma separated)" />
+              <Textarea value={personaDescriptionInput} onChange={(e) => setPersonaDescriptionInput(e.target.value)} rows={6} placeholder="Persona description" />
+              <div className="flex justify-end gap-2">
+                {personaEditingId ? <Button variant="secondary" onClick={() => { setPersonaEditingId(null); setPersonaNameInput(""); setPersonaDescriptionInput(""); setPersonaTraitsInput(""); }}>Cancel edit</Button> : null}
+                <Button variant="secondary" onClick={() => setPersonaOpen(false)}>Close</Button>
+                <Button variant="primary" onClick={createPersonaProfile}>{personaEditingId ? "Update" : "Save"}</Button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal open={exportPickerOpen} onClose={() => setExportPickerOpen(false)} title="Export Character Card" widthClass="max-w-md">
+          <div className="space-y-4">
+            <div className="text-sm text-[hsl(var(--muted-foreground))]">Select one or more formats.</div>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={exportAsTxt} onChange={(e) => setExportAsTxt(e.target.checked)} />
+              TXT
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={exportAsJson} onChange={(e) => setExportAsJson(e.target.checked)} />
+              JSON
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setExportPickerOpen(false)}>Cancel</Button>
+              <Button variant="primary" onClick={confirmCardExportSelection} disabled={!exportAsTxt && !exportAsJson}>Export</Button>
             </div>
           </div>
         </Modal>
@@ -7036,6 +7662,15 @@ ${feedback}`,
         {saveToastOpen ? (
           <div className="fixed bottom-4 left-4 z-[70] rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-6 py-4 text-base font-semibold shadow-2xl">
             Saved.
+          </div>
+        ) : null}
+        {chatWarning ? (
+          <div className="fixed bottom-4 right-4 z-[80] max-w-sm rounded-2xl border border-red-500 bg-red-600 px-4 py-3 text-sm text-white shadow-2xl">
+            <div>{chatWarning}</div>
+            <div className="mt-2 flex gap-2">
+              <Button variant="secondary" onClick={() => { setProxyOpen(true); setChatWarning(null); }}>Go to Proxy Configuration</Button>
+              <Button variant="secondary" onClick={() => setChatWarning(null)}>Close</Button>
+            </div>
           </div>
         ) : null}
       </div>
