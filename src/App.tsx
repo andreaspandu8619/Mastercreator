@@ -943,6 +943,7 @@ export default function CharacterCreatorApp() {
   const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null);
   const [editingMessageText, setEditingMessageText] = useState("");
   const [chatIntroIndex, setChatIntroIndex] = useState(0);
+  const [chatSidebarOpen, setChatSidebarOpen] = useState(true);
 
   const [query, setQuery] = useState("");
   const [dragCharacterId, setDragCharacterId] = useState<string | null>(null);
@@ -4745,13 +4746,14 @@ ${feedback}`,
         }
       `}</style>
 
-      <div className="mx-auto max-w-7xl pt-28 md:pt-32">
+      <div className={cn("mx-auto", page === "chat" ? "max-w-none pt-2" : "max-w-7xl pt-28 md:pt-32")}>
         {storageError ? (
           <div className="mt-4 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-sm">
             <div className="font-semibold">Storage issue</div>
             <div className="mt-1 text-[hsl(var(--muted-foreground))]">{storageError}</div>
           </div>
         ) : null}
+        {page !== "chat" ? (
         <header className="fixed inset-x-0 top-0 z-50 border-b border-[hsl(var(--border))] bg-[hsl(var(--background))/0.95] backdrop-blur">
           <div className="mx-auto flex w-full max-w-7xl flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:justify-between md:px-8">
           <div className="flex items-center gap-2">
@@ -4786,11 +4788,12 @@ ${feedback}`,
           </div>
           </div>
         </header>
+        ) : null}
 
         {page === "chat" ? (
-          <div className="anim-page mt-4 grid gap-4 lg:grid-cols-[230px,1fr]">
+          <div className={cn("anim-page mt-2 grid gap-4", chatSidebarOpen ? "lg:grid-cols-[230px,1fr]" : "grid-cols-1")}>
+            {chatSidebarOpen ? (
             <aside className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-              <Button variant="secondary" className="mb-3 w-full" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Back</Button>
               <div className="mb-2 text-sm font-semibold">Persona</div>
               <button type="button" onClick={() => setPersonaOpen(true)} className="mb-4 w-full rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-left">
                 {personas.find((p) => p.id === activePersonaId)?.name || "Select persona"}
@@ -4806,10 +4809,12 @@ ${feedback}`,
                 {!chatSessions.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No chats yet.</div> : null}
               </div>
             </aside>
+            ) : null}
 
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2">
-                <Button variant="secondary"><Menu className="h-4 w-4" /></Button>
+                <Button variant="secondary" onClick={() => setChatSidebarOpen((v) => !v)}><Menu className="h-4 w-4" /></Button>
+                <Button variant="secondary" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Back</Button>
                 <Input value={chatNameInput} onChange={(e) => setChatNameInput(e.target.value)} placeholder="Chat Name" className="max-w-md" />
                 <Button variant="primary" onClick={() => { setActiveChatSessionId(null); setChatCharacter(null); setChatMessages([]); setChatInput(""); }}>New Chat</Button>
                 <Button variant="secondary" onClick={() => chatCharacterCardImportRef.current?.click()}><Upload className="h-4 w-4" /> Import Card</Button>
