@@ -1127,6 +1127,9 @@ export default function CharacterCreatorApp() {
   const [introRevisionPrompt, setIntroRevisionPrompt] = useState("");
   const [relationshipDetailsPrompt, setRelationshipDetailsPrompt] = useState("");
   const [synopsisRevisionFeedback, setSynopsisRevisionFeedback] = useState("");
+  const [exportPickerOpen, setExportPickerOpen] = useState(false);
+  const [exportAsTxt, setExportAsTxt] = useState(true);
+  const [exportAsJson, setExportAsJson] = useState(false);
   const [generatedTextStates, setGeneratedTextStates] = useState<Record<string, GeneratedTextState>>({});
   const [iterationSelections, setIterationSelections] = useState<Record<string, string>>({});
 
@@ -4445,6 +4448,9 @@ ${feedback}`,
     const cardChars = activeCard
       ? (activeCard.characterIds || []).map((id) => characters.find((c) => c.id === id)).filter((c): c is Character => !!c)
       : fallbackCharacter ? [fallbackCharacter] : [];
+    const cardStory = activeCard?.relationshipStoryId
+      ? stories.find((s) => s.id === activeCard.relationshipStoryId) || null
+      : null;
 
     const selectedRuleTexts = STORY_SYSTEM_RULE_CARDS
       .filter((r) => cardSelectedSystemRuleIds.includes(r.id))
@@ -4454,26 +4460,46 @@ ${feedback}`,
       .map((line) => collapseWhitespace(line))
       .filter(Boolean);
     const allRules = [...selectedRuleTexts, ...customRules];
-    const numberedRules = allRules.length
-      ? allRules.map((rule, idx) => `${idx + 1}. ${rule}`)
-      : ["1. "];
+    const relationshipLines = (cardStory?.relationships || []).map((r) => {
+      const from = cardChars.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
+      const to = cardChars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
+      const bits = [`${from} -> ${to}`];
+      if (r.relationType) bits.push(`type: ${r.relationType}`);
+      if (r.alignment) bits.push(`alignment: ${r.alignment}`);
+      if (r.details) bits.push(`details: ${r.details}`);
+      return bits.join(" | ");
+    });
 
     const characterBlocks = cardChars.length
       ? cardChars.map((c) => {
           const selectedBackstory = (c.backstory || []).length
             ? (c.backstory || [])[Math.max(0, Math.min((c.backstory || []).length - 1, (c as any).selectedBackstoryIndex || 0))] || ""
             : "";
+          const speechPatternsText = (c.speechPatterns || []).length
+            ? (c.speechPatterns || []).map((item) => `- ${item}`).join("\n")
+            : "-";
           const content = [
-            `Gender: ${c.gender || ""}`,
+            `Name: ${c.name || ""}`,
+            "",
             `Age: ${c.age === "" ? "" : String(c.age)}`,
-            `Height: ${c.height || ""}`,
-            `Origin: ${c.origins || ""}`,
+            "",
+            `Gender: ${c.gender || ""}`,
+            "",
             `Race: ${c.race || ""}`,
+            "",
+            `Height: ${c.height || ""}`,
+            "",
+            `Origin: ${c.origins || ""}`,
+            "",
             `Personality: ${(c.personalities || []).join(", ")}`,
+            "",
             `Physical appearance: ${(c.physicalAppearance || []).join(", ")}`,
+            "",
             `Unique traits: ${(c.uniqueTraits || []).join(", ")}`,
-            `Behavior: ${[...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", ")}`,
-            `Speech patterns: ${(c.speechPatterns || []).join(", ")}`,
+            "",
+            `Speech patterns:`,
+            speechPatternsText,
+            "",
             `Backstory: ${selectedBackstory}`,
           ].join("\n");
           const tagName = collapseWhitespace(c.name) || "character";
@@ -4482,9 +4508,15 @@ ${feedback}`,
       : ["<character>\n\n</character>"];
 
     const text = [
-      `<system>${numberedRules.join("\n")}</system>`,
-      "",
       ...characterBlocks,
+      "",
+      `<relationships>`,
+      ...(relationshipLines.length ? relationshipLines : [""]),
+      `</relationships>`,
+      "",
+      `<system>`,
+      ...(allRules.length ? allRules : [""]),
+      `</system>`,
       "",
     ].join("\n");
 
@@ -4495,6 +4527,16 @@ ${feedback}`,
 
 
   const draft = getDraftCharacter();
+  function confirmCardExportSelection() {
+    if (!draft) {
+      alert("Please enter a character name before exporting.");
+      return;
+    }
+    if (!exportAsTxt && !exportAsJson) return;
+    if (exportAsTxt) exportCurrentCardTxt(draft);
+    if (exportAsJson) exportCurrentCardJson(draft);
+    setExportPickerOpen(false);
+  }
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
     { id: "definition", label: "Characters" },
@@ -6122,10 +6164,38 @@ ${feedback}`,
             </div>
 
             {selectedId ? (
-              <div className="flex flex-wrap gap-2">
-                {tabs.map((t) => (
-                  <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
-                ))}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {tabs.map((t) => (
+                    <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" onClick={() => characterCardImportRef.current?.click()}>
+                    <Upload className="h-4 w-4" /> Import JSON
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setExportAsTxt(true);
+                      setExportAsJson(false);
+                      setExportPickerOpen(true);
+                    }}
+                  >
+                    <Download className="h-4 w-4" /> Export
+                  </Button>
+                </div>
+                <input
+                  ref={characterCardImportRef}
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) importCharacterCardJSON(f);
+                    e.currentTarget.value = "";
+                  }}
+                />
               </div>
             ) : null}
 
@@ -7023,6 +7093,24 @@ ${feedback}`,
               <Button variant="primary" onClick={() => setPersonaOpen(false)}>
                 Done
               </Button>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal open={exportPickerOpen} onClose={() => setExportPickerOpen(false)} title="Export Character Card" widthClass="max-w-md">
+          <div className="space-y-4">
+            <div className="text-sm text-[hsl(var(--muted-foreground))]">Select one or more formats.</div>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={exportAsTxt} onChange={(e) => setExportAsTxt(e.target.checked)} />
+              TXT
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={exportAsJson} onChange={(e) => setExportAsJson(e.target.checked)} />
+              JSON
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setExportPickerOpen(false)}>Cancel</Button>
+              <Button variant="primary" onClick={confirmCardExportSelection} disabled={!exportAsTxt && !exportAsJson}>Export</Button>
             </div>
           </div>
         </Modal>
