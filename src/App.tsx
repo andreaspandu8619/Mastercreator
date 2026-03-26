@@ -4446,38 +4446,50 @@ ${feedback}`,
       ? (activeCard.characterIds || []).map((id) => characters.find((c) => c.id === id)).filter((c): c is Character => !!c)
       : fallbackCharacter ? [fallbackCharacter] : [];
 
-    const cardStory = activeCard?.relationshipStoryId
-      ? stories.find((s) => s.id === activeCard.relationshipStoryId) || null
-      : null;
-
-    const relationships = (cardStory?.relationships || []).map((r) => {
-      const from = cardChars.find((c) => c.id === r.fromCharacterId)?.name || r.fromCharacterId;
-      const to = cardChars.find((c) => c.id === r.toCharacterId)?.name || r.toCharacterId;
-      return `    <relationship from="${xmlEscape(from)}" to="${xmlEscape(to)}" alignment="${xmlEscape(r.alignment)}" type="${xmlEscape(r.relationType)}">${xmlEscape(r.details || "")}</relationship>`;
-    });
-
     const selectedRuleTexts = STORY_SYSTEM_RULE_CARDS
       .filter((r) => cardSelectedSystemRuleIds.includes(r.id))
       .map((r) => r.text);
+    const customRules = (cardSystemRules || "")
+      .split("\n")
+      .map((line) => collapseWhitespace(line))
+      .filter(Boolean);
+    const allRules = [...selectedRuleTexts, ...customRules];
+    const numberedRules = allRules.length
+      ? allRules.map((rule, idx) => `${idx + 1}. ${rule}`)
+      : ["1. "];
 
-    const xml = [
-      `<character_card name="${xmlEscape(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "Character Card")}">`,
-      `  <individual_character_info>`,
-      ...(cardChars.length ? cardChars.map((c) => characterToTxt(c)) : ["    <character />"]),
-      `  </individual_character_info>`,
-      `  <relationships>`,
-      ...(relationships.length ? relationships : ["    <relationship />"]),
-      `  </relationships>`,
-      `  <system_rules>`,
-      `    <selected_rule_cards>${xmlEscape(selectedRuleTexts.join(" | "))}</selected_rule_cards>`,
-      `    <custom_rules>${xmlEscape(cardSystemRules || "")}</custom_rules>`,
-      `  </system_rules>`,
-      `</character_card>`,
+    const characterBlocks = cardChars.length
+      ? cardChars.map((c) => {
+          const selectedBackstory = (c.backstory || []).length
+            ? (c.backstory || [])[Math.max(0, Math.min((c.backstory || []).length - 1, (c as any).selectedBackstoryIndex || 0))] || ""
+            : "";
+          const content = [
+            `Gender: ${c.gender || ""}`,
+            `Age: ${c.age === "" ? "" : String(c.age)}`,
+            `Height: ${c.height || ""}`,
+            `Origin: ${c.origins || ""}`,
+            `Race: ${c.race || ""}`,
+            `Personality: ${(c.personalities || []).join(", ")}`,
+            `Physical appearance: ${(c.physicalAppearance || []).join(", ")}`,
+            `Unique traits: ${(c.uniqueTraits || []).join(", ")}`,
+            `Behavior: ${[...(c.respondToProblems || []), ...(c.sexualBehavior || [])].join(", ")}`,
+            `Speech patterns: ${(c.speechPatterns || []).join(", ")}`,
+            `Backstory: ${selectedBackstory}`,
+          ].join("\n");
+          const tagName = collapseWhitespace(c.name) || "character";
+          return [`<${tagName}>`, content, `</${tagName}>`].join("\n");
+        })
+      : ["<character>\n\n</character>"];
+
+    const text = [
+      `<system>${numberedRules.join("\n")}</system>`,
+      "",
+      ...characterBlocks,
       "",
     ].join("\n");
 
     const exportName = filenameSafe(collapseWhitespace(characterCardNameInput) || activeCard?.name || fallbackCharacter?.name || "character_card") || "character_card";
-    downloadText(`${exportName}.txt`, xml);
+    downloadText(`${exportName}.txt`, text);
   }
 
 
@@ -6098,13 +6110,30 @@ ${feedback}`,
           </div>
         ) : page === "create" ? (
           <div className="anim-page mt-6 space-y-3">
-            <div className="flex flex-wrap gap-2">
-              {tabs.map((t) => (
-                <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
-              ))}
+            <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Character card</div>
+              <div className="flex items-center justify-between gap-2">
+                <Input value={characterCardNameInput} onChange={(e) => { const v = e.target.value; setCharacterCardNameInput(v); if (activeCharacterCardId) setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, name: v, updatedAt: new Date().toISOString() } : card)); }} placeholder="Character card name" />
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={updateWholeCharacterCard}><Pencil className="h-4 w-4" /> Update</Button>
+                  {selectedId ? <Button variant="secondary" onClick={() => deleteCharacter(selectedId)}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
+                </div>
+              </div>
             </div>
 
-            {tab === "relationships" ? (
+            {selectedId ? (
+              <div className="flex flex-wrap gap-2">
+                {tabs.map((t) => (
+                  <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn("rounded-xl border px-3 py-2 text-sm", tab === t.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>{t.label}</button>
+                ))}
+              </div>
+            ) : null}
+
+            {!selectedId ? (
+              <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                <Button variant="primary" className="w-full justify-center" onClick={createCharacterEntryInActiveCard}><Plus className="h-4 w-4" /> New character entry</Button>
+              </div>
+            ) : tab === "relationships" ? (
               <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 space-y-3">
                 <div className="text-sm text-[hsl(var(--muted-foreground))]">Use the exact drag-and-drop relationship board.</div>
                 <Button variant="secondary" onClick={openCardRelationshipBoard}>Open Relationship Board</Button>
@@ -6142,17 +6171,6 @@ ${feedback}`,
                 ) : null}
 
                 <div className="space-y-3 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex-1 space-y-2">
-                      <div className="text-lg font-semibold">Character Dashboard</div>
-                      <Input value={characterCardNameInput} onChange={(e) => { const v = e.target.value; setCharacterCardNameInput(v); if (activeCharacterCardId) setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, name: v, updatedAt: new Date().toISOString() } : card)); }} placeholder="Character card name" />
-                    </div>
-                    <div className="flex gap-2">
-                      <Button variant="secondary" onClick={updateWholeCharacterCard}><Pencil className="h-4 w-4" /> Update</Button>
-                      {selectedId ? <Button variant="secondary" onClick={() => deleteCharacter(selectedId)}><Trash2 className="h-4 w-4" /> Delete</Button> : null}
-                    </div>
-                  </div>
-
                   {tab === "definition" ? (
                     <div className="space-y-3">
                       <div className="grid gap-3 md:grid-cols-[160px,1fr]">
