@@ -170,6 +170,7 @@ type PersonaProfile = {
   id: string;
   name: string;
   description: string;
+  traitsRaw: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -932,6 +933,8 @@ export default function CharacterCreatorApp() {
   const [activePersonaId, setActivePersonaId] = useState("");
   const [personaNameInput, setPersonaNameInput] = useState("");
   const [personaDescriptionInput, setPersonaDescriptionInput] = useState("");
+  const [personaTraitsInput, setPersonaTraitsInput] = useState("");
+  const [personaEditingId, setPersonaEditingId] = useState<string | null>(null);
 
   const [chatCharacter, setChatCharacter] = useState<Character | null>(null);
   const [chatCardSelectionId, setChatCardSelectionId] = useState("");
@@ -1322,12 +1325,14 @@ export default function CharacterCreatorApp() {
           if (!p || typeof p !== "object") return null;
           const name = collapseWhitespace((p as any).name || "");
           const description = String((p as any).description || "");
+          const traitsRaw = typeof (p as any).traitsRaw === "string" ? (p as any).traitsRaw : "";
           if (!name) return null;
           const now = new Date().toISOString();
           return {
             id: typeof (p as any).id === "string" ? (p as any).id : uid(),
             name,
             description,
+            traitsRaw,
             createdAt: typeof (p as any).createdAt === "string" ? (p as any).createdAt : now,
             updatedAt: typeof (p as any).updatedAt === "string" ? (p as any).updatedAt : now,
           } as PersonaProfile;
@@ -2297,17 +2302,43 @@ export default function CharacterCreatorApp() {
   function createPersonaProfile() {
     const name = collapseWhitespace(personaNameInput);
     const description = personaDescriptionInput.trim();
+    const traitsRaw = personaTraitsInput.trim();
     if (!name) {
       alert("Please enter a persona name.");
       return;
     }
     const now = new Date().toISOString();
-    const profile: PersonaProfile = { id: uid(), name, description, createdAt: now, updatedAt: now };
-    setPersonas((prev) => [profile, ...prev]);
+    const profile: PersonaProfile = { id: personaEditingId || uid(), name, description, traitsRaw, createdAt: now, updatedAt: now };
+    setPersonas((prev) => {
+      if (personaEditingId) {
+        return prev.map((p) => (p.id === personaEditingId ? { ...p, name, description, traitsRaw, updatedAt: now } : p));
+      }
+      return [profile, ...prev];
+    });
     setActivePersonaId(profile.id);
     setPersonaNameInput("");
     setPersonaDescriptionInput("");
+    setPersonaTraitsInput("");
+    setPersonaEditingId(null);
     setPersonaOpen(false);
+  }
+
+  function loadPersonaIntoEditor(persona: PersonaProfile) {
+    setPersonaEditingId(persona.id);
+    setPersonaNameInput(persona.name);
+    setPersonaDescriptionInput(persona.description);
+    setPersonaTraitsInput(persona.traitsRaw || "");
+  }
+
+  function deletePersonaProfile(id: string) {
+    setPersonas((prev) => prev.filter((p) => p.id !== id));
+    if (activePersonaId === id) setActivePersonaId("");
+    if (personaEditingId === id) {
+      setPersonaEditingId(null);
+      setPersonaNameInput("");
+      setPersonaDescriptionInput("");
+      setPersonaTraitsInput("");
+    }
   }
 
   function startChatWithSelectedCard() {
@@ -2415,7 +2446,7 @@ export default function CharacterCreatorApp() {
   function buildCharacterChatSystemPrompt(c: Character) {
     const selectedPersona = personas.find((p) => p.id === activePersonaId) || null;
     const persona = collapseWhitespace(
-      selectedPersona ? `${selectedPersona.name}: ${selectedPersona.description}` : personaText
+      selectedPersona ? `${selectedPersona.name}: ${selectedPersona.description}. Traits: ${selectedPersona.traitsRaw || ""}` : personaText
     );
     return [
       "You are roleplaying as the following character. Stay in-character and speak naturally.",
@@ -3508,6 +3539,59 @@ ${prompt}`,
       commitGeneratedText(fieldKey, text, setBackstoryText, true);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Backstory revision failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  async function generateCardSynopsisOneClick() {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
+    if (!activeCard) return;
+    const cast = (activeCard.characterIds || [])
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c);
+    const relationshipStory = activeCard.relationshipStoryId
+      ? stories.find((s) => s.id === activeCard.relationshipStoryId) || null
+      : null;
+    if (!cast.length) {
+      setGenError("Add at least one character entry before generating synopsis.");
+      return;
+    }
+    const placeHint = relationshipStory?.scenario.match(/(?:at|in|inside|within)\s+([A-Z][A-Za-z0-9' -]{2,40})/)?.[1] || "";
+    const builtInPrompt = [
+      "Generate a comprehensive but natural synopsis for this character card.",
+      "Use this exact structure and order:",
+      "1) Overview",
+      "2) Character info list. For each character: **Name** then age || height.",
+      "3) Main plot / goal / conflict, written clearly and naturally without rhetoric or hyperbole.",
+      "4) Place (name only).",
+      "Rules: Keep it human-like and cohesive. Do not use em dashes.",
+    ].join("\n");
+    setGenLoading(true);
+    setGenError(null);
+    const fieldKey = `character-card-synopsis:${activeCard.id}`;
+    startGeneratedTextPage(fieldKey);
+    try {
+      const out = await callProxyChatCompletion({
+        system: builtInPrompt,
+        user: `Card name: ${activeCard.name}
+Card first messages: ${(activeCard.firstMessageMessages || []).join(" | ")}
+Card system rules: ${activeCard.systemRules || ""}
+Story scenario: ${relationshipStory?.scenario || ""}
+Story plot details: ${relationshipStory?.synopsis || ""}
+Story first message: ${relationshipStory?.firstMessage || ""}
+Place hint: ${placeHint}
+
+Characters:
+${cast.map((c) => `${c.name} | age: ${c.age === "" ? "" : c.age} | height: ${c.height} | summary: ${c.synopsis} | backstory: ${(c.backstory || []).join(" / ")}`).join("\n")}`,
+        maxTokens: proxyMaxTokens,
+        stream: proxyStreamingEnabled,
+        lorebookIds: getActiveCardLorebookIds(),
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setSynopsis),
+      });
+      commitGeneratedText(fieldKey, out, setSynopsis, true);
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Synopsis generation failed.");
     } finally {
       setGenLoading(false);
     }
@@ -4730,6 +4814,7 @@ ${feedback}`,
     { id: "relationships", label: "Relationships" },
     { id: "system", label: "System Rules" },
     { id: "intro", label: "First Message" },
+    { id: "synopsis", label: "Synopsis" },
   ];
 
   return (
@@ -6446,6 +6531,14 @@ ${feedback}`,
                     <div className="space-y-3"><div className="flex items-center justify-between"><div className="text-sm">Message {introIndex + 1} / {Math.max(1, introMessages.length)}</div><Button variant="secondary" onClick={() => { setIntroMessages((prev)=>[...prev, ""]); setIntroVersionHistories((prev)=>[...prev,[""]]); setIntroVersionIndices((prev)=>[...prev,0]); setIntroIndex(introMessages.length); }}><Plus className="h-4 w-4" /> New</Button></div><div className="flex items-center justify-between gap-2"><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.max(0,i-1))} disabled={introIndex<=0}><ChevronLeft className="h-4 w-4" /> Prev</Button><Button variant="secondary" onClick={() => setIntroIndex((i)=>Math.min(introMessages.length-1,i+1))} disabled={introIndex>=introMessages.length-1}>Next <ChevronRight className="h-4 w-4" /></Button></div><Textarea value={introMessages[clampIndex(introIndex, Math.max(1,introMessages.length))] || ""} onChange={(e) => { const v=e.target.value; setIntroMessages((prev)=>{const b=[...prev]; b[clampIndex(introIndex,b.length)] = v; return b;}); setIntroVersionHistories((prev)=>{const base = prev.length ? prev.map((h)=> (Array.isArray(h) && h.length ? [...h] : [""])) : [[""]]; const i = clampIndex(introIndex, Math.max(1, base.length)); while (base.length <= i) base.push([""]); const history = base[i]; const vi = clampIndex(introVersionIndices[i] || 0, history.length); history[vi] = v; return base;}); }} rows={9} placeholder="Write first message..." /><Textarea value={introPrompt} onChange={(e)=>setIntroPrompt(e.target.value)} rows={3} placeholder="Prompt for generation" /><div className="flex gap-2"><Button variant="secondary" onClick={generateSelectedIntro} disabled={genLoading || !collapseWhitespace(introPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseSelectedIntro} disabled={genLoading || !collapseWhitespace(introRevisionPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div><Textarea value={introRevisionPrompt} onChange={(e)=>setIntroRevisionPrompt(e.target.value)} rows={3} placeholder="Revision prompt" /></div>
                   ) : null}
 
+                  {tab === "synopsis" ? (
+                    <div className="space-y-3">
+                      <div className="text-sm text-[hsl(var(--muted-foreground))]">One-click synopsis generator with built-in structure prompt.</div>
+                      <Textarea value={synopsis} onChange={(e) => setSynopsis(e.target.value)} rows={10} placeholder="Synopsis..." />
+                      <Button variant="secondary" onClick={generateCardSynopsisOneClick} disabled={genLoading}><Sparkles className="h-4 w-4" /> Generate synopsis</Button>
+                    </div>
+                  ) : null}
+
                   {genError ? <div className="text-sm text-[hsl(0_75%_55%)]">{genError}</div> : null}
                 </div>
               </div>
@@ -7256,26 +7349,30 @@ ${feedback}`,
               <div className="text-sm font-semibold">Your personas</div>
               <div className="max-h-72 space-y-2 overflow-auto">
                 {personas.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setActivePersonaId(p.id)}
-                    className={cn("w-full rounded-lg border p-2 text-left", activePersonaId === p.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}
-                  >
-                    <div className="font-medium">{p.name}</div>
-                    <div className="text-xs text-[hsl(var(--muted-foreground))] line-clamp-2">{p.description || "No description"}</div>
-                  </button>
+                  <div key={p.id} className={cn("w-full rounded-lg border p-2 text-left", activePersonaId === p.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>
+                    <button type="button" className="w-full text-left" onClick={() => setActivePersonaId(p.id)}>
+                      <div className="font-medium">{p.name}</div>
+                      <div className="text-xs text-[hsl(var(--muted-foreground))] line-clamp-2">{p.description || "No description"}</div>
+                      <div className="mt-1 text-[11px] text-[hsl(var(--muted-foreground))]">Traits: {p.traitsRaw || "None"}</div>
+                    </button>
+                    <div className="mt-2 flex gap-2">
+                      <Button variant="secondary" onClick={() => loadPersonaIntoEditor(p)}><Pencil className="h-4 w-4" /> Edit</Button>
+                      <Button variant="danger" onClick={() => deletePersonaProfile(p.id)}><Trash2 className="h-4 w-4" /> Delete</Button>
+                    </div>
+                  </div>
                 ))}
                 {!personas.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No persona yet.</div> : null}
               </div>
             </div>
             <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] p-3">
-              <div className="text-sm font-semibold">Create persona</div>
+              <div className="text-sm font-semibold">{personaEditingId ? "Edit persona" : "Create persona"}</div>
               <Input value={personaNameInput} onChange={(e) => setPersonaNameInput(e.target.value)} placeholder="Persona name" />
+              <Input value={personaTraitsInput} onChange={(e) => setPersonaTraitsInput(e.target.value)} placeholder="Traits (comma separated)" />
               <Textarea value={personaDescriptionInput} onChange={(e) => setPersonaDescriptionInput(e.target.value)} rows={6} placeholder="Persona description" />
               <div className="flex justify-end gap-2">
+                {personaEditingId ? <Button variant="secondary" onClick={() => { setPersonaEditingId(null); setPersonaNameInput(""); setPersonaDescriptionInput(""); setPersonaTraitsInput(""); }}>Cancel edit</Button> : null}
                 <Button variant="secondary" onClick={() => setPersonaOpen(false)}>Close</Button>
-                <Button variant="primary" onClick={createPersonaProfile}>Save</Button>
+                <Button variant="primary" onClick={createPersonaProfile}>{personaEditingId ? "Update" : "Save"}</Button>
               </div>
             </div>
           </div>
