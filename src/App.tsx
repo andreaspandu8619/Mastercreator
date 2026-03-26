@@ -3366,8 +3366,11 @@ ${prompt}`,
 
   async function sendChatMessage() {
     if (!chatCharacter || !activeChatSessionId || genLoading) return;
-    if (!collapseWhitespace(proxyChatUrl) || !collapseWhitespace(proxyModel)) {
-      setChatWarning("Proxy is not configured. Please go to Proxy Configuration.");
+    const proxyReady = !!collapseWhitespace(proxyChatUrl) && !!collapseWhitespace(proxyModel) && !!collapseWhitespace(proxyApiKey);
+    if (!proxyReady) {
+      const msg = "Proxy is not configured for chat. Please set Chat URL, API key, and Model in Proxy Configuration.";
+      setChatWarning(msg);
+      setGenError(msg);
       return;
     }
     const text = collapseWhitespace(chatInput);
@@ -4960,8 +4963,11 @@ ${feedback}`,
                 <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 shadow-xl">
                   <div className="flex gap-2">
                     <Textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} rows={3} placeholder="Type your message...." disabled={!chatCharacter} onKeyDown={(e) => onEnterAdd(e, sendChatMessage)} />
-                    <Button variant="primary" onClick={sendChatMessage} disabled={!chatCharacter || !collapseWhitespace(chatInput) || genLoading}><SendHorizontal className="h-4 w-4" /></Button>
+                    <Button variant="primary" onClick={sendChatMessage} disabled={!chatCharacter || !collapseWhitespace(chatInput) || genLoading || !collapseWhitespace(proxyChatUrl) || !collapseWhitespace(proxyModel) || !collapseWhitespace(proxyApiKey)}><SendHorizontal className="h-4 w-4" /></Button>
                   </div>
+                  {(!collapseWhitespace(proxyChatUrl) || !collapseWhitespace(proxyModel) || !collapseWhitespace(proxyApiKey)) ? (
+                    <div className="mt-2 text-xs text-red-500">Proxy not configured for chat. Please open Proxy Configuration.</div>
+                  ) : null}
                 </div>
               </div>
             </div>
