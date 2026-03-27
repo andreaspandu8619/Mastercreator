@@ -276,6 +276,7 @@ const NOTEPAD_NOTES_KEY = "mastercreator_notepad_notes_v1";
 const ACCOUNTS_KEY = "mastercreator_accounts_v1";
 const SESSION_ACCOUNT_ID_KEY = "mastercreator_session_account_id_v1";
 const ACCOUNT_DATA_KEYS = [
+  THEME_KEY,
   STORAGE_KEY,
   PROXY_KEY,
   PERSONA_KEY,
@@ -1464,6 +1465,7 @@ export default function CharacterCreatorApp() {
   };
   const saveGlobalDataToAccount = (accountId: string) => {
     const blob: Record<string, string> = {
+      [THEME_KEY]: theme,
       [STORAGE_KEY]: JSON.stringify(characters),
       [PROXY_KEY]: JSON.stringify({
         chatUrl: proxyChatUrl,
@@ -1595,14 +1597,14 @@ export default function CharacterCreatorApp() {
   }, [proxyOpen, loadProxyModels]);
 
   useEffect(() => {
+    const savedTheme = localStorage.getItem(THEME_KEY);
+    if (savedTheme === "light" || savedTheme === "dark") setTheme(savedTheme);
     if (!currentAccountId) {
       setAccountDataReady(false);
       setHydrated(true);
       return;
     }
     setAccountDataReady(false);
-    const savedTheme = localStorage.getItem(THEME_KEY);
-    if (savedTheme === "light" || savedTheme === "dark") setTheme(savedTheme);
 
     const savedProxy = safeParseJSON(localStorage.getItem(PROXY_KEY) || "");
     if (savedProxy && typeof savedProxy === "object") {
@@ -2148,6 +2150,7 @@ export default function CharacterCreatorApp() {
     currentAccountId,
     hydrated,
     accountDataReady,
+    theme,
     characters,
     chatSessions,
     lorebooks,
