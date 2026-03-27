@@ -182,6 +182,14 @@ type PersonaProfile = {
   updatedAt: string;
 };
 
+type PromptPreset = {
+  id: string;
+  name: string;
+  prompt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Character = {
   id: string;
   name: string;
@@ -244,6 +252,8 @@ const STORIES_KEY = "mastercreator_stories_v1";
 const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
 const CHARACTER_CARDS_KEY = "mastercreator_character_cards_v1";
 const CHARACTER_EDITOR_DRAFT_KEY = "mastercreator_character_editor_draft_v1";
+const CHAT_PROMPT_PRESETS_KEY = "mastercreator_chat_prompt_presets_v1";
+const ACTIVE_CHAT_PROMPT_PRESET_KEY = "mastercreator_active_chat_prompt_preset_v1";
 
 const DEFAULT_PROXY: ProxyConfig = {
   chatUrl: "https://llm.chutes.ai/v1/chat/completions",
@@ -983,6 +993,12 @@ export default function CharacterCreatorApp() {
   const [personaTraitsInput, setPersonaTraitsInput] = useState("");
   const [personaImageDataUrlInput, setPersonaImageDataUrlInput] = useState("");
   const [personaEditingId, setPersonaEditingId] = useState<string | null>(null);
+  const [chatPromptPresetOpen, setChatPromptPresetOpen] = useState(false);
+  const [chatPromptPresets, setChatPromptPresets] = useState<PromptPreset[]>([]);
+  const [activeChatPromptPresetId, setActiveChatPromptPresetId] = useState("");
+  const [chatPromptPresetNameInput, setChatPromptPresetNameInput] = useState("");
+  const [chatPromptPresetTextInput, setChatPromptPresetTextInput] = useState("");
+  const [chatPromptPresetEditingId, setChatPromptPresetEditingId] = useState<string | null>(null);
 
   const [chatCharacter, setChatCharacter] = useState<Character | null>(null);
   const [chatCardSelectionId, setChatCardSelectionId] = useState("");
@@ -1463,6 +1479,29 @@ export default function CharacterCreatorApp() {
       if (normalized.length) setActivePersonaId(normalized[0].id);
     }
 
+    const savedChatPromptPresets = safeParseJSON(localStorage.getItem(CHAT_PROMPT_PRESETS_KEY) || "");
+    if (Array.isArray(savedChatPromptPresets)) {
+      const normalizedPresets = savedChatPromptPresets
+        .map((preset) => {
+          if (!preset || typeof preset !== "object") return null;
+          const name = collapseWhitespace((preset as any).name || "");
+          const prompt = typeof (preset as any).prompt === "string" ? (preset as any).prompt : "";
+          if (!name) return null;
+          const now = new Date().toISOString();
+          return {
+            id: typeof (preset as any).id === "string" ? (preset as any).id : uid(),
+            name,
+            prompt,
+            createdAt: typeof (preset as any).createdAt === "string" ? (preset as any).createdAt : now,
+            updatedAt: typeof (preset as any).updatedAt === "string" ? (preset as any).updatedAt : now,
+          } as PromptPreset;
+        })
+        .filter((preset): preset is PromptPreset => !!preset);
+      setChatPromptPresets(normalizedPresets);
+    }
+    const savedActivePreset = localStorage.getItem(ACTIVE_CHAT_PROMPT_PRESET_KEY);
+    if (typeof savedActivePreset === "string") setActiveChatPromptPresetId(savedActivePreset);
+
     const savedSessions = safeParseJSON(localStorage.getItem(CHAT_SESSIONS_KEY) || "");
     if (Array.isArray(savedSessions)) {
       const normalized = savedSessions
@@ -1778,6 +1817,29 @@ export default function CharacterCreatorApp() {
       setActivePersonaId(personas[0].id);
     }
   }, [personas, activePersonaId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHAT_PROMPT_PRESETS_KEY, JSON.stringify(chatPromptPresets));
+    } catch {}
+  }, [chatPromptPresets]);
+
+  useEffect(() => {
+    if (!chatPromptPresets.length) {
+      setActiveChatPromptPresetId("");
+      try {
+        localStorage.removeItem(ACTIVE_CHAT_PROMPT_PRESET_KEY);
+      } catch {}
+      return;
+    }
+    if (!activeChatPromptPresetId || !chatPromptPresets.some((p) => p.id === activeChatPromptPresetId)) {
+      setActiveChatPromptPresetId(chatPromptPresets[0].id);
+      return;
+    }
+    try {
+      localStorage.setItem(ACTIVE_CHAT_PROMPT_PRESET_KEY, activeChatPromptPresetId);
+    } catch {}
+  }, [chatPromptPresets, activeChatPromptPresetId]);
 
   useEffect(() => {
     localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(chatSessions));
@@ -2558,6 +2620,48 @@ export default function CharacterCreatorApp() {
       setPersonaDescriptionInput("");
       setPersonaTraitsInput("");
       setPersonaImageDataUrlInput("");
+    }
+  }
+
+  function saveChatPromptPreset() {
+    const name = collapseWhitespace(chatPromptPresetNameInput);
+    const prompt = chatPromptPresetTextInput.trim();
+    if (!name) return alert("Please enter a preset name.");
+    if (!prompt) return alert("Please enter a prompt.");
+    const now = new Date().toISOString();
+    const preset: PromptPreset = {
+      id: chatPromptPresetEditingId || uid(),
+      name,
+      prompt,
+      createdAt: chatPromptPresetEditingId
+        ? chatPromptPresets.find((p) => p.id === chatPromptPresetEditingId)?.createdAt || now
+        : now,
+      updatedAt: now,
+    };
+    setChatPromptPresets((prev) => {
+      if (chatPromptPresetEditingId) {
+        return prev.map((p) => (p.id === chatPromptPresetEditingId ? preset : p));
+      }
+      return [preset, ...prev];
+    });
+    setActiveChatPromptPresetId(preset.id);
+    setChatPromptPresetEditingId(null);
+    setChatPromptPresetNameInput("");
+    setChatPromptPresetTextInput("");
+  }
+
+  function editChatPromptPreset(preset: PromptPreset) {
+    setChatPromptPresetEditingId(preset.id);
+    setChatPromptPresetNameInput(preset.name);
+    setChatPromptPresetTextInput(preset.prompt);
+  }
+
+  function deleteChatPromptPreset(id: string) {
+    setChatPromptPresets((prev) => prev.filter((p) => p.id !== id));
+    if (chatPromptPresetEditingId === id) {
+      setChatPromptPresetEditingId(null);
+      setChatPromptPresetNameInput("");
+      setChatPromptPresetTextInput("");
     }
   }
 
@@ -3652,6 +3756,7 @@ Write the character's next reply to the latest user message.`;
         user,
         stream: proxyStreamingEnabled,
         lorebookIds: chatCharacter.assignedLorebookIds,
+        customPromptOverride: activeChatPromptPreset?.prompt ?? "",
         onStreamUpdate: (partial) => {
           updateGeneratedTextPage(fieldKey, partial);
           setChatMessages([...newHistory, { role: "assistant" as const, content: partial }]);
@@ -4146,6 +4251,7 @@ ${prompt}`,
     temperature?: number;
     stream?: boolean;
     lorebookIds?: string[];
+    customPromptOverride?: string;
     onStreamUpdate?: (text: string) => void;
   }) {
     const chatUrl = collapseWhitespace(proxyChatUrl);
@@ -4157,7 +4263,7 @@ ${prompt}`,
     if (!model) throw new Error("Please set a model name in Proxy.");
 
     const lorebookContext = getAssignedLorebookContext(args.lorebookIds || []);
-    const customPrompt = collapseWhitespace(proxyCustomPrompt);
+    const customPrompt = collapseWhitespace(args.customPromptOverride ?? proxyCustomPrompt);
     const effectiveSystem = [
       customPrompt ? `Global behavior instructions:
 ${customPrompt}` : "",
@@ -5019,6 +5125,7 @@ ${feedback}`,
 
   const draft = getDraftCharacter();
   const activePersona = personas.find((p) => p.id === activePersonaId) || null;
+  const activeChatPromptPreset = chatPromptPresets.find((p) => p.id === activeChatPromptPresetId) || null;
   function confirmCardExportSelection() {
     if (!draft) {
       alert("Please enter a character name before exporting.");
@@ -5162,6 +5269,10 @@ ${feedback}`,
               <div className={cn("fixed right-4 top-4 z-40 flex flex-wrap items-center gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl", chatSidebarOpen ? "left-4 lg:left-[260px]" : "left-4")}>
                 <Button variant="secondary" onClick={() => setChatSidebarOpen((v) => !v)}><Menu className="h-4 w-4" /></Button>
                 <Button variant="secondary" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Back</Button>
+                <Button variant="secondary" onClick={() => setProxyOpen(true)}><SlidersHorizontal className="h-4 w-4" /> Proxy</Button>
+                <Button variant="secondary" onClick={() => setChatPromptPresetOpen(true)}>
+                  <Pencil className="h-4 w-4" /> RP Prompt: {activeChatPromptPreset?.name || "Default"}
+                </Button>
                 <Input value={chatNameInput} onChange={(e) => setChatNameInput(e.target.value)} placeholder="Chat Name" className="max-w-md" />
                 <Button variant="primary" onClick={() => { setActiveChatSessionId(null); setChatCharacter(null); setChatMessages([]); setChatInput(""); }}>New Chat</Button>
                 <Button variant="secondary" onClick={() => chatCharacterCardImportRef.current?.click()}><Upload className="h-4 w-4" /> Import Card</Button>
@@ -7693,6 +7804,42 @@ ${feedback}`,
                 {personaEditingId ? <Button variant="secondary" onClick={() => { setPersonaEditingId(null); setPersonaNameInput(""); setPersonaDescriptionInput(""); setPersonaTraitsInput(""); setPersonaImageDataUrlInput(""); }}>Cancel edit</Button> : null}
                 <Button variant="secondary" onClick={() => setPersonaOpen(false)}>Close</Button>
                 <Button variant="primary" onClick={createPersonaProfile}>{personaEditingId ? "Update" : "Save"}</Button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal open={chatPromptPresetOpen} onClose={() => setChatPromptPresetOpen(false)} title="Roleplay Prompt Presets" widthClass="max-w-4xl">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] p-3">
+              <div className="text-sm font-semibold">Saved presets</div>
+              <div className="max-h-72 space-y-2 overflow-auto">
+                {chatPromptPresets.map((preset) => (
+                  <div key={preset.id} className={cn("rounded-lg border p-2", activeChatPromptPresetId === preset.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>
+                    <button type="button" className="w-full text-left" onClick={() => setActiveChatPromptPresetId(preset.id)}>
+                      <div className="font-medium">{preset.name}</div>
+                      <div className="line-clamp-3 text-xs text-[hsl(var(--muted-foreground))]">{preset.prompt}</div>
+                    </button>
+                    <div className="mt-2 flex gap-2">
+                      <Button variant="secondary" onClick={() => editChatPromptPreset(preset)}><Pencil className="h-4 w-4" /> Edit</Button>
+                      <Button variant="danger" onClick={() => deleteChatPromptPreset(preset.id)}><Trash2 className="h-4 w-4" /> Delete</Button>
+                    </div>
+                  </div>
+                ))}
+                {!chatPromptPresets.length ? <div className="text-sm text-[hsl(var(--muted-foreground))]">No prompt presets yet.</div> : null}
+              </div>
+            </div>
+            <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] p-3">
+              <div className="text-sm font-semibold">{chatPromptPresetEditingId ? "Edit preset" : "Create preset"}</div>
+              <Input value={chatPromptPresetNameInput} onChange={(e) => setChatPromptPresetNameInput(e.target.value)} placeholder="Preset name" />
+              <Textarea value={chatPromptPresetTextInput} onChange={(e) => setChatPromptPresetTextInput(e.target.value)} rows={10} placeholder="Write custom roleplay instructions for the LLM..." />
+              <div className="text-xs text-[hsl(var(--muted-foreground))]">
+                Active preset overrides Proxy custom prompt for chat roleplay replies.
+              </div>
+              <div className="flex justify-end gap-2">
+                {chatPromptPresetEditingId ? <Button variant="secondary" onClick={() => { setChatPromptPresetEditingId(null); setChatPromptPresetNameInput(""); setChatPromptPresetTextInput(""); }}>Cancel edit</Button> : null}
+                <Button variant="secondary" onClick={() => setChatPromptPresetOpen(false)}>Close</Button>
+                <Button variant="primary" onClick={saveChatPromptPreset}>{chatPromptPresetEditingId ? "Update" : "Save"}</Button>
               </div>
             </div>
           </div>
