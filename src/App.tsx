@@ -242,6 +242,7 @@ const CHAT_SESSIONS_KEY = "mastercreator_chat_sessions_v1";
 const STORIES_KEY = "mastercreator_stories_v1";
 const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
 const CHARACTER_CARDS_KEY = "mastercreator_character_cards_v1";
+const CHARACTER_EDITOR_DRAFT_KEY = "mastercreator_character_editor_draft_v1";
 
 const DEFAULT_PROXY: ProxyConfig = {
   chatUrl: "https://llm.chutes.ai/v1/chat/completions",
@@ -954,6 +955,7 @@ export default function CharacterCreatorApp() {
   const [activeCharacterCardId, setActiveCharacterCardId] = useState<string | null>(null);
   const [characterCardNameInput, setCharacterCardNameInput] = useState("");
   const [hydrated, setHydrated] = useState(false);
+  const [editorDraftRestored, setEditorDraftRestored] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -1943,6 +1945,7 @@ export default function CharacterCreatorApp() {
     setChatMessages([]);
     setChatInput("");
     setCharacterAssignedLorebookIds([]);
+    localStorage.removeItem(CHARACTER_EDITOR_DRAFT_KEY);
   }
 
   function addToList(
@@ -1993,6 +1996,18 @@ export default function CharacterCreatorApp() {
     if (racePreset === "Other" && !collapseWhitespace(customRace))
       return "Please enter a custom race.";
     return null;
+  }
+
+  function persistCharacterEditorDraft() {
+    const payload = {
+      selectedId,
+      backstoryText,
+      synopsis,
+      introMessages: Array.isArray(introMessages) && introMessages.length ? introMessages : [""],
+      introIndex: clampIndex(introIndex, Math.max(1, introMessages.length)),
+      updatedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(CHARACTER_EDITOR_DRAFT_KEY, JSON.stringify(payload));
   }
 
   function getDraftCharacter(): Character | null {
@@ -2050,6 +2065,39 @@ export default function CharacterCreatorApp() {
       updatedAt: now,
     };
   }
+
+  useEffect(() => {
+    if (!hydrated || editorDraftRestored) return;
+    const raw = safeParseJSON(localStorage.getItem(CHARACTER_EDITOR_DRAFT_KEY) || "");
+    setEditorDraftRestored(true);
+    if (!raw || typeof raw !== "object") return;
+
+    const draftSelectedId = typeof (raw as any).selectedId === "string" ? (raw as any).selectedId : null;
+    if (draftSelectedId) {
+      const existing = characters.find((c) => c.id === draftSelectedId);
+      if (existing) loadCharacterIntoForm(existing);
+    }
+
+    const restoredBackstory = typeof (raw as any).backstoryText === "string" ? (raw as any).backstoryText : "";
+    const restoredSynopsis = typeof (raw as any).synopsis === "string" ? (raw as any).synopsis : "";
+    const restoredIntroMessages = normalizeTextArray((raw as any).introMessages);
+    const nextIntroMessages = restoredIntroMessages.length ? restoredIntroMessages : [""];
+    const restoredIntroIndex = Number.isFinite(Number((raw as any).introIndex)) ? Math.max(0, Number((raw as any).introIndex)) : 0;
+
+    if (restoredBackstory || restoredSynopsis || nextIntroMessages.some((x) => collapseWhitespace(x))) {
+      setBackstoryText(restoredBackstory);
+      setSynopsis(restoredSynopsis);
+      setIntroMessages(nextIntroMessages);
+      setIntroVersionHistories(nextIntroMessages.map((text) => [text || ""]));
+      setIntroVersionIndices(nextIntroMessages.map(() => 0));
+      setIntroIndex(clampIndex(restoredIntroIndex, Math.max(1, nextIntroMessages.length)));
+    }
+  }, [hydrated, editorDraftRestored, characters]);
+
+  useEffect(() => {
+    if (!hydrated || !editorDraftRestored) return;
+    persistCharacterEditorDraft();
+  }, [hydrated, editorDraftRestored, selectedId, backstoryText, synopsis, introMessages, introIndex]);
 
 
   useEffect(() => {
@@ -2243,6 +2291,7 @@ export default function CharacterCreatorApp() {
     });
 
     setSelectedId(draft.id);
+    persistCharacterEditorDraft();
     if (activeCharacterCardId) {
       setCharacterCards((prev) => prev.map((card) => card.id !== activeCharacterCardId ? card : { ...card, characterIds: card.characterIds.includes(draft.id) ? card.characterIds : [...card.characterIds, draft.id], updatedAt: new Date().toISOString() }));
     }
@@ -6537,6 +6586,26 @@ ${feedback}`,
           </div>
         ) : page === "create" ? (
           <div className="anim-page mt-6 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+              <Button variant="secondary" onClick={() => navigateTo("characters")}>
+                <ArrowLeft className="h-4 w-4" /> Back
+              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    persistCharacterEditorDraft();
+                    setSaveToastOpen(true);
+                    window.setTimeout(() => setSaveToastOpen(false), 1400);
+                  }}
+                >
+                  Save Draft
+                </Button>
+                <Button variant="primary" onClick={saveCharacter}>
+                  Save Character
+                </Button>
+              </div>
+            </div>
             <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
               <div className="mb-1 text-xs font-medium uppercase tracking-wide text-[hsl(var(--muted-foreground))]">Character card</div>
               <div className="flex items-center justify-between gap-2">
