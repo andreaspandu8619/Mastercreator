@@ -1022,6 +1022,7 @@ export default function CharacterCreatorApp() {
   const [accounts, setAccounts] = useState<UserAccount[]>([]);
   const [currentAccountId, setCurrentAccountId] = useState<string>("");
   const [accountDataReady, setAccountDataReady] = useState(false);
+  const [authBootstrapped, setAuthBootstrapped] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [authUsername, setAuthUsername] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -1585,6 +1586,7 @@ export default function CharacterCreatorApp() {
       setCurrentAccountId(savedSessionId);
       loadAccountDataToGlobal(savedSessionId);
     }
+    setAuthBootstrapped(true);
   }, []);
 
   useEffect(() => {
@@ -2131,12 +2133,13 @@ export default function CharacterCreatorApp() {
   }, [accounts]);
 
   useEffect(() => {
+    if (!authBootstrapped) return;
     if (!currentAccountId) {
       localStorage.removeItem(SESSION_ACCOUNT_ID_KEY);
       return;
     }
     localStorage.setItem(SESSION_ACCOUNT_ID_KEY, currentAccountId);
-  }, [currentAccountId]);
+  }, [currentAccountId, authBootstrapped]);
 
   useEffect(() => {
     if (!currentAccountId || !hydrated || !accountDataReady) return;
