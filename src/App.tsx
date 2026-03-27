@@ -223,6 +223,7 @@ type CharacterCard = {
   id: string;
   name: string;
   characterIds: string[];
+  chatProfileCharacterId?: string;
   relationshipStoryId?: string;
   systemRules: string;
   selectedSystemRuleIds: string[];
@@ -247,6 +248,7 @@ const THEME_KEY = "mastercreator_theme";
 const PROXY_KEY = "mastercreator_proxy";
 const PERSONA_KEY = "mastercreator_persona";
 const PERSONAS_KEY = "mastercreator_personas_v1";
+const ACTIVE_PERSONA_ID_KEY = "mastercreator_active_persona_id_v1";
 const CHAT_SESSIONS_KEY = "mastercreator_chat_sessions_v1";
 const STORIES_KEY = "mastercreator_stories_v1";
 const LOREBOOKS_KEY = "mastercreator_lorebooks_v1";
@@ -740,6 +742,7 @@ function normalizeCharacterCard(x: any): CharacterCard | null {
     id: typeof x.id === "string" ? x.id : uid(),
     name: collapseWhitespace(x.name || "Character Card"),
     characterIds: normalizeStringArray(x.characterIds),
+    chatProfileCharacterId: typeof x.chatProfileCharacterId === "string" ? x.chatProfileCharacterId : "",
     relationshipStoryId: typeof x.relationshipStoryId === "string" ? x.relationshipStoryId : undefined,
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
     selectedSystemRuleIds: normalizeStringArray(x.selectedSystemRuleIds),
@@ -1478,6 +1481,8 @@ export default function CharacterCreatorApp() {
       setPersonas(normalized);
       if (normalized.length) setActivePersonaId(normalized[0].id);
     }
+    const savedActivePersonaId = localStorage.getItem(ACTIVE_PERSONA_ID_KEY);
+    if (typeof savedActivePersonaId === "string") setActivePersonaId(savedActivePersonaId);
 
     const savedChatPromptPresets = safeParseJSON(localStorage.getItem(CHAT_PROMPT_PRESETS_KEY) || "");
     if (Array.isArray(savedChatPromptPresets)) {
@@ -1811,11 +1816,18 @@ export default function CharacterCreatorApp() {
   useEffect(() => {
     if (!personas.length) {
       setActivePersonaId("");
+      try {
+        localStorage.removeItem(ACTIVE_PERSONA_ID_KEY);
+      } catch {}
       return;
     }
     if (!activePersonaId || !personas.some((p) => p.id === activePersonaId)) {
       setActivePersonaId(personas[0].id);
+      return;
     }
+    try {
+      localStorage.setItem(ACTIVE_PERSONA_ID_KEY, activePersonaId);
+    } catch {}
   }, [personas, activePersonaId]);
 
   useEffect(() => {
@@ -1908,7 +1920,7 @@ export default function CharacterCreatorApp() {
     if (!hydrated) return;
     if (!characterCards.length) {
       const now = new Date().toISOString();
-      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
+      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], chatProfileCharacterId: "", systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
       setCharacterCards([card]);
       setActiveCharacterCardId(card.id);
       setCharacterCardNameInput(card.name);
@@ -2382,6 +2394,14 @@ export default function CharacterCreatorApp() {
     setCharacters((prev) => prev.filter((c) => c.id !== id));
     if (selectedId === id) setSelectedId(null);
     if (previewId === id) setPreviewId(null);
+    setCharacterCards((prev) =>
+      prev.map((card) => {
+        const nextIds = card.characterIds.filter((cid) => cid !== id);
+        const nextChatProfileId = card.chatProfileCharacterId === id ? (nextIds[0] || "") : card.chatProfileCharacterId;
+        if (nextIds.length === card.characterIds.length && nextChatProfileId === card.chatProfileCharacterId) return card;
+        return { ...card, characterIds: nextIds, chatProfileCharacterId: nextChatProfileId, updatedAt: new Date().toISOString() };
+      })
+    );
     idbDeleteCharacter(id).catch(() => {});
   }
 
@@ -2668,7 +2688,10 @@ export default function CharacterCreatorApp() {
   function startChatWithSelectedCard(cardId?: string) {
     const selectedCard = characterCards.find((card) => card.id === (cardId || chatCardSelectionId));
     if (!selectedCard) return alert("Select a character card first.");
-    const selectedCharacter = selectedCard.characterIds
+    const preferredId = selectedCard.chatProfileCharacterId && selectedCard.characterIds.includes(selectedCard.chatProfileCharacterId)
+      ? selectedCard.chatProfileCharacterId
+      : selectedCard.characterIds[0];
+    const selectedCharacter = characters.find((c) => c.id === preferredId) || selectedCard.characterIds
       .map((id) => characters.find((c) => c.id === id))
       .find((c): c is Character => !!c);
     if (!selectedCharacter) return alert("This character card has no character entries yet.");
@@ -5301,7 +5324,8 @@ ${feedback}`,
                   <div className="max-h-[52vh] overflow-auto rounded-2xl border border-[hsl(var(--border))] p-3">
                     <div className="grid grid-cols-3 gap-3 md:grid-cols-5 lg:grid-cols-7">
                       {characterCards.map((card) => {
-                        const c = characters.find((x) => x.id === card.characterIds[0]);
+                        const preferredId = card.chatProfileCharacterId && card.characterIds.includes(card.chatProfileCharacterId) ? card.chatProfileCharacterId : card.characterIds[0];
+                        const c = characters.find((x) => x.id === preferredId);
                         return (
                           <button key={card.id} type="button" onClick={() => { setChatCardSelectionId(card.id); startChatWithSelectedCard(card.id); }} className="overflow-hidden rounded-xl border border-[hsl(var(--border))] text-left">
                             <div className="relative aspect-[3/4] bg-[hsl(var(--muted))]">
@@ -6696,7 +6720,7 @@ ${feedback}`,
               <div className="text-xl font-semibold">Character Dashboard</div>
               <Button variant="primary" onClick={() => {
                 const now = new Date().toISOString();
-                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
+                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], chatProfileCharacterId: "", systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
                 setCharacterCards((prev) => [newCard, ...prev]);
                 setActiveCharacterCardId(newCard.id);
                 setCharacterCardNameInput(newCard.name);
@@ -6852,8 +6876,27 @@ ${feedback}`,
                         }));
                         setDragCharacterId(null);
                       }} onClick={() => loadCharacterIntoForm(c)} className={cn("w-full rounded-xl border px-3 py-2 text-left text-sm", selectedId === c.id ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))]")}>
-                        <div className="font-medium">{c.name || "(no name)"}</div>
-                        <div className="text-xs text-[hsl(var(--muted-foreground))]">{c.gender || "—"}</div>
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="font-medium">{c.name || "(no name)"}</div>
+                            <div className="text-xs text-[hsl(var(--muted-foreground))]">{c.gender || "—"}</div>
+                          </div>
+                          <label className="flex items-center gap-1 text-[11px] text-[hsl(var(--muted-foreground))]" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={!!activeCharacterCardId && !!characterCards.find((card) => card.id === activeCharacterCardId && card.chatProfileCharacterId === c.id)}
+                              onChange={(e) => {
+                                if (!activeCharacterCardId) return;
+                                const checked = e.target.checked;
+                                setCharacterCards((prev) => prev.map((card) => {
+                                  if (card.id !== activeCharacterCardId) return card;
+                                  return { ...card, chatProfileCharacterId: checked ? c.id : "", updatedAt: new Date().toISOString() };
+                                }));
+                              }}
+                            />
+                            use as profile picture
+                          </label>
+                        </div>
                       </button>
                     ))}
                     {!filteredCharacters.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No entries.</div> : null}
