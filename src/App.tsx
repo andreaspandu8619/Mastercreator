@@ -190,6 +190,14 @@ type PromptPreset = {
   updatedAt: string;
 };
 
+type NotepadNote = {
+  id: string;
+  name: string;
+  text: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Character = {
   id: string;
   name: string;
@@ -256,6 +264,8 @@ const CHARACTER_CARDS_KEY = "mastercreator_character_cards_v1";
 const CHARACTER_EDITOR_DRAFT_KEY = "mastercreator_character_editor_draft_v1";
 const CHAT_PROMPT_PRESETS_KEY = "mastercreator_chat_prompt_presets_v1";
 const ACTIVE_CHAT_PROMPT_PRESET_KEY = "mastercreator_active_chat_prompt_preset_v1";
+const NOTEPAD_DRAFT_KEY = "mastercreator_notepad_draft_v1";
+const NOTEPAD_NOTES_KEY = "mastercreator_notepad_notes_v1";
 
 const DEFAULT_PROXY: ProxyConfig = {
   chatUrl: "https://llm.chutes.ai/v1/chat/completions",
@@ -1025,6 +1035,15 @@ export default function CharacterCreatorApp() {
   const [chatPromptPresetNameInput, setChatPromptPresetNameInput] = useState("");
   const [chatPromptPresetTextInput, setChatPromptPresetTextInput] = useState("");
   const [chatPromptPresetEditingId, setChatPromptPresetEditingId] = useState<string | null>(null);
+  const [notepadOpen, setNotepadOpen] = useState(false);
+  const [notepadText, setNotepadText] = useState("");
+  const [notepadNameInput, setNotepadNameInput] = useState("");
+  const [notepadNotes, setNotepadNotes] = useState<NotepadNote[]>([]);
+  const [notepadShowFileMenu, setNotepadShowFileMenu] = useState(false);
+  const [notepadPosition, setNotepadPosition] = useState({ x: 120, y: 120 });
+  const [notepadSize, setNotepadSize] = useState({ width: 520, height: 380 });
+  const [notepadDragging, setNotepadDragging] = useState(false);
+  const [notepadResizing, setNotepadResizing] = useState(false);
 
   const [chatCharacter, setChatCharacter] = useState<Character | null>(null);
   const [chatCardSelectionId, setChatCardSelectionId] = useState("");
@@ -1386,6 +1405,8 @@ export default function CharacterCreatorApp() {
   const chatCharacterCardImportRef = useRef<HTMLInputElement | null>(null);
   const personaImageFileRef = useRef<HTMLInputElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const notepadDragOffsetRef = useRef({ x: 0, y: 0 });
+  const notepadResizeStartRef = useRef({ x: 0, y: 0, width: 520, height: 380 });
 
   const loadProxyModels = React.useCallback(async () => {
     const modelsUrl = deriveModelsUrlFromChatUrl(proxyChatUrl);
@@ -1480,6 +1501,36 @@ export default function CharacterCreatorApp() {
 
     const savedPersona = localStorage.getItem(PERSONA_KEY);
     if (typeof savedPersona === "string") setPersonaText(savedPersona);
+    const savedNotepadDraft = safeParseJSON(localStorage.getItem(NOTEPAD_DRAFT_KEY) || "");
+    if (savedNotepadDraft && typeof savedNotepadDraft === "object") {
+      if (typeof (savedNotepadDraft as any).text === "string") setNotepadText((savedNotepadDraft as any).text);
+      if (typeof (savedNotepadDraft as any).name === "string") setNotepadNameInput((savedNotepadDraft as any).name);
+      const x = Number((savedNotepadDraft as any).x);
+      const y = Number((savedNotepadDraft as any).y);
+      const width = Number((savedNotepadDraft as any).width);
+      const height = Number((savedNotepadDraft as any).height);
+      if (Number.isFinite(x) && Number.isFinite(y)) setNotepadPosition({ x, y });
+      if (Number.isFinite(width) && Number.isFinite(height) && width >= 320 && height >= 220) setNotepadSize({ width, height });
+    }
+    const savedNotepadNotes = safeParseJSON(localStorage.getItem(NOTEPAD_NOTES_KEY) || "");
+    if (Array.isArray(savedNotepadNotes)) {
+      const normalizedNotes = savedNotepadNotes
+        .map((n) => {
+          if (!n || typeof n !== "object") return null;
+          const name = collapseWhitespace((n as any).name || "");
+          if (!name) return null;
+          const now = new Date().toISOString();
+          return {
+            id: typeof (n as any).id === "string" ? (n as any).id : uid(),
+            name,
+            text: typeof (n as any).text === "string" ? (n as any).text : "",
+            createdAt: typeof (n as any).createdAt === "string" ? (n as any).createdAt : now,
+            updatedAt: typeof (n as any).updatedAt === "string" ? (n as any).updatedAt : now,
+          } as NotepadNote;
+        })
+        .filter((n): n is NotepadNote => !!n);
+      setNotepadNotes(normalizedNotes);
+    }
     const savedPersonas = safeParseJSON(localStorage.getItem(PERSONAS_KEY) || "");
     if (Array.isArray(savedPersonas)) {
       const normalized = savedPersonas
@@ -1876,6 +1927,55 @@ export default function CharacterCreatorApp() {
       localStorage.setItem(ACTIVE_CHAT_PROMPT_PRESET_KEY, activeChatPromptPresetId);
     } catch {}
   }, [chatPromptPresets, activeChatPromptPresetId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        NOTEPAD_DRAFT_KEY,
+        JSON.stringify({
+          text: notepadText,
+          name: notepadNameInput,
+          x: notepadPosition.x,
+          y: notepadPosition.y,
+          width: notepadSize.width,
+          height: notepadSize.height,
+          updatedAt: new Date().toISOString(),
+        })
+      );
+    } catch {}
+  }, [notepadText, notepadNameInput, notepadPosition, notepadSize]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NOTEPAD_NOTES_KEY, JSON.stringify(notepadNotes));
+    } catch {}
+  }, [notepadNotes]);
+
+  useEffect(() => {
+    if (!notepadDragging && !notepadResizing) return;
+    const onMove = (e: MouseEvent) => {
+      if (notepadDragging) {
+        setNotepadPosition({
+          x: Math.max(8, e.clientX - notepadDragOffsetRef.current.x),
+          y: Math.max(8, e.clientY - notepadDragOffsetRef.current.y),
+        });
+      } else if (notepadResizing) {
+        const nextWidth = Math.max(320, notepadResizeStartRef.current.width + (e.clientX - notepadResizeStartRef.current.x));
+        const nextHeight = Math.max(220, notepadResizeStartRef.current.height + (e.clientY - notepadResizeStartRef.current.y));
+        setNotepadSize({ width: nextWidth, height: nextHeight });
+      }
+    };
+    const onUp = () => {
+      setNotepadDragging(false);
+      setNotepadResizing(false);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [notepadDragging, notepadResizing]);
 
   useEffect(() => {
     localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(chatSessions));
@@ -2708,6 +2808,34 @@ export default function CharacterCreatorApp() {
       setChatPromptPresetNameInput("");
       setChatPromptPresetTextInput("");
     }
+  }
+
+  function saveNotepadNote() {
+    const name = collapseWhitespace(notepadNameInput) || `Note ${new Date().toLocaleString()}`;
+    const now = new Date().toISOString();
+    const existing = notepadNotes.find((note) => note.name.toLowerCase() === name.toLowerCase());
+    const nextNote: NotepadNote = {
+      id: existing?.id || uid(),
+      name,
+      text: notepadText,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+    };
+    setNotepadNotes((prev) => {
+      const without = prev.filter((note) => note.id !== nextNote.id);
+      return [nextNote, ...without].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    });
+    setNotepadNameInput(name);
+  }
+
+  function loadNotepadNote(note: NotepadNote) {
+    setNotepadNameInput(note.name);
+    setNotepadText(note.text);
+    setNotepadShowFileMenu(false);
+  }
+
+  function deleteNotepadNote(noteId: string) {
+    setNotepadNotes((prev) => prev.filter((note) => note.id !== noteId));
   }
 
   function startChatWithSelectedCard(cardId?: string) {
@@ -5290,6 +5418,9 @@ ${feedback}`,
             </Button>
             <Button variant="secondary" onClick={() => setProxyOpen(true)}>
               <SlidersHorizontal className="h-4 w-4" /> Proxy Settings
+            </Button>
+            <Button variant="secondary" onClick={() => setNotepadOpen(true)}>
+              <Pencil className="h-4 w-4" /> Notepad
             </Button>
             <Button variant="secondary" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}>
               {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
@@ -8022,6 +8153,77 @@ ${feedback}`,
             </div>
           ) : null}
         </Modal>
+
+        {notepadOpen ? (
+          <div
+            className="fixed z-[90] rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-2xl"
+            style={{ left: notepadPosition.x, top: notepadPosition.y, width: notepadSize.width, height: notepadSize.height }}
+          >
+            <div
+              className="flex cursor-move items-center justify-between border-b border-[hsl(var(--border))] px-3 py-2"
+              onMouseDown={(e) => {
+                notepadDragOffsetRef.current = {
+                  x: e.clientX - notepadPosition.x,
+                  y: e.clientY - notepadPosition.y,
+                };
+                setNotepadDragging(true);
+              }}
+            >
+              <div className="relative">
+                <Button variant="secondary" type="button" onClick={() => setNotepadShowFileMenu((v) => !v)}>
+                  File
+                </Button>
+                {notepadShowFileMenu ? (
+                  <div className="absolute left-0 top-full mt-1 w-72 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-2 shadow-xl">
+                    <div className="mb-1 text-xs font-semibold text-[hsl(var(--muted-foreground))]">Saved notes</div>
+                    <div className="max-h-56 space-y-1 overflow-auto">
+                      {notepadNotes.map((note) => (
+                        <div key={note.id} className="flex items-center justify-between gap-2 rounded border border-[hsl(var(--border))] p-1">
+                          <button type="button" className="truncate text-left text-xs" onClick={() => loadNotepadNote(note)}>
+                            {note.name}
+                          </button>
+                          <button type="button" className="text-xs text-red-500" onClick={() => deleteNotepadNote(note.id)}>Delete</button>
+                        </div>
+                      ))}
+                      {!notepadNotes.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No saved notes.</div> : null}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-2" onMouseDown={(e) => e.stopPropagation()}>
+                <Input
+                  value={notepadNameInput}
+                  onChange={(e) => setNotepadNameInput(e.target.value)}
+                  placeholder="Note name"
+                  className="w-44"
+                />
+                <Button variant="primary" type="button" onClick={saveNotepadNote}>Save</Button>
+                <Button variant="secondary" type="button" onClick={() => setNotepadOpen(false)}>Close</Button>
+              </div>
+            </div>
+            <div className="h-[calc(100%-48px)] p-2">
+              <Textarea
+                value={notepadText}
+                onChange={(e) => setNotepadText(e.target.value)}
+                className="h-full resize-none"
+                placeholder="Write your notes..."
+              />
+            </div>
+            <div
+              className="absolute bottom-0 right-0 h-4 w-4 cursor-se-resize"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                notepadResizeStartRef.current = {
+                  x: e.clientX,
+                  y: e.clientY,
+                  width: notepadSize.width,
+                  height: notepadSize.height,
+                };
+                setNotepadResizing(true);
+              }}
+            />
+          </div>
+        ) : null}
 
         <div className="pointer-events-none fixed inset-x-0 bottom-3 px-4 text-center text-[10px] text-[hsl(var(--muted-foreground))] md:inset-x-auto md:bottom-4 md:right-4 md:px-0 md:text-xs">
           © {new Date().getFullYear()} Sancte™. All rights reserved.
