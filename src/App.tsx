@@ -2017,6 +2017,7 @@ export default function CharacterCreatorApp() {
 
 
   useEffect(() => {
+    if (page !== "library") return;
     const card = characterCards.find((c) => c.id === activeCharacterCardId);
     if (!card) return;
     setCardSystemRules(card.systemRules || "");
@@ -2026,10 +2027,10 @@ export default function CharacterCreatorApp() {
     setIntroIndex(clampIndex(card.selectedFirstMessageIndex || 0, msgs.length));
     setIntroVersionHistories(msgs.map((m) => [m || ""]));
     setIntroVersionIndices(msgs.map(() => 0));
-  }, [activeCharacterCardId]);
+  }, [activeCharacterCardId, page, characterCards]);
 
   useEffect(() => {
-    if (!hydrated || !activeCharacterCardId) return;
+    if (!hydrated || !activeCharacterCardId || page !== "library") return;
     setCharacterCards((prev) => prev.map((card) => card.id !== activeCharacterCardId ? card : {
       ...card,
       systemRules: cardSystemRules,
@@ -2038,7 +2039,7 @@ export default function CharacterCreatorApp() {
       selectedFirstMessageIndex: introIndex,
       updatedAt: new Date().toISOString(),
     }));
-  }, [hydrated, activeCharacterCardId, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex]);
+  }, [hydrated, activeCharacterCardId, page, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex]);
 
   useEffect(() => {
     if (!hydrated) return;
