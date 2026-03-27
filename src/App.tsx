@@ -177,6 +177,7 @@ type PersonaProfile = {
   name: string;
   description: string;
   traitsRaw: string;
+  imageDataUrl: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -980,6 +981,7 @@ export default function CharacterCreatorApp() {
   const [personaNameInput, setPersonaNameInput] = useState("");
   const [personaDescriptionInput, setPersonaDescriptionInput] = useState("");
   const [personaTraitsInput, setPersonaTraitsInput] = useState("");
+  const [personaImageDataUrlInput, setPersonaImageDataUrlInput] = useState("");
   const [personaEditingId, setPersonaEditingId] = useState<string | null>(null);
 
   const [chatCharacter, setChatCharacter] = useState<Character | null>(null);
@@ -1340,6 +1342,8 @@ export default function CharacterCreatorApp() {
   const sexualBehaviorImportRef = useRef<HTMLInputElement | null>(null);
   const characterCardImportRef = useRef<HTMLInputElement | null>(null);
   const chatCharacterCardImportRef = useRef<HTMLInputElement | null>(null);
+  const personaImageFileRef = useRef<HTMLInputElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   const loadProxyModels = React.useCallback(async () => {
     const modelsUrl = deriveModelsUrlFromChatUrl(proxyChatUrl);
@@ -1449,6 +1453,7 @@ export default function CharacterCreatorApp() {
             name,
             description,
             traitsRaw,
+            imageDataUrl: typeof (p as any).imageDataUrl === "string" ? (p as any).imageDataUrl : "",
             createdAt: typeof (p as any).createdAt === "string" ? (p as any).createdAt : now,
             updatedAt: typeof (p as any).updatedAt === "string" ? (p as any).updatedAt : now,
           } as PersonaProfile;
@@ -1769,6 +1774,11 @@ export default function CharacterCreatorApp() {
   useEffect(() => {
     localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(chatSessions));
   }, [chatSessions]);
+
+  useEffect(() => {
+    if (!activeChatSessionId) return;
+    scrollChatToBottom();
+  }, [activeChatSessionId, chatMessages.length]);
 
   useEffect(() => {
     localStorage.setItem(STORIES_KEY, JSON.stringify(stories));
@@ -2362,6 +2372,25 @@ export default function CharacterCreatorApp() {
     setPage(next);
   }
 
+  async function handlePickPersonaImage(file: File) {
+    const maxBytes = 10 * 1024 * 1024;
+    if (file.size > maxBytes || !file.type.startsWith("image/") || file.type === "image/svg+xml") return;
+    try {
+      const dataUrl = await normalizeImageDataUrl(file);
+      setPersonaImageDataUrlInput(dataUrl);
+    } catch {
+      // ignore invalid persona image
+    }
+  }
+
+  function scrollChatToBottom() {
+    const node = chatScrollRef.current;
+    if (!node) return;
+    requestAnimationFrame(() => {
+      node.scrollTop = node.scrollHeight;
+    });
+  }
+
   function loadCharacterIntoForm(c: Character) {
     setSelectedId(c.id);
 
@@ -2446,6 +2475,7 @@ export default function CharacterCreatorApp() {
     setChatInput("");
     setGenError(null);
     navigateTo("chat");
+    scrollChatToBottom();
   }
 
   function startChatWithCharacter(c: Character) {
@@ -2480,15 +2510,16 @@ export default function CharacterCreatorApp() {
     const name = collapseWhitespace(personaNameInput);
     const description = personaDescriptionInput.trim();
     const traitsRaw = personaTraitsInput.trim();
+    const imageDataUrl = personaImageDataUrlInput;
     if (!name) {
       alert("Please enter a persona name.");
       return;
     }
     const now = new Date().toISOString();
-    const profile: PersonaProfile = { id: personaEditingId || uid(), name, description, traitsRaw, createdAt: now, updatedAt: now };
+    const profile: PersonaProfile = { id: personaEditingId || uid(), name, description, traitsRaw, imageDataUrl, createdAt: now, updatedAt: now };
     setPersonas((prev) => {
       if (personaEditingId) {
-        return prev.map((p) => (p.id === personaEditingId ? { ...p, name, description, traitsRaw, updatedAt: now } : p));
+        return prev.map((p) => (p.id === personaEditingId ? { ...p, name, description, traitsRaw, imageDataUrl, updatedAt: now } : p));
       }
       return [profile, ...prev];
     });
@@ -2496,6 +2527,7 @@ export default function CharacterCreatorApp() {
     setPersonaNameInput("");
     setPersonaDescriptionInput("");
     setPersonaTraitsInput("");
+    setPersonaImageDataUrlInput("");
     setPersonaEditingId(null);
     setPersonaOpen(false);
   }
@@ -2505,6 +2537,7 @@ export default function CharacterCreatorApp() {
     setPersonaNameInput(persona.name);
     setPersonaDescriptionInput(persona.description);
     setPersonaTraitsInput(persona.traitsRaw || "");
+    setPersonaImageDataUrlInput(persona.imageDataUrl || "");
   }
 
   function deletePersonaProfile(id: string) {
@@ -2515,6 +2548,7 @@ export default function CharacterCreatorApp() {
       setPersonaNameInput("");
       setPersonaDescriptionInput("");
       setPersonaTraitsInput("");
+      setPersonaImageDataUrlInput("");
     }
   }
 
@@ -4975,6 +5009,7 @@ ${feedback}`,
 
 
   const draft = getDraftCharacter();
+  const activePersona = personas.find((p) => p.id === activePersonaId) || null;
   function confirmCardExportSelection() {
     if (!draft) {
       alert("Please enter a character name before exporting.");
@@ -5094,15 +5129,15 @@ ${feedback}`,
         ) : null}
 
         {page === "chat" ? (
-          <div className={cn("anim-page mt-2 grid gap-4", chatSidebarOpen ? "lg:grid-cols-[230px,1fr]" : "grid-cols-1")}>
+          <div className={cn("anim-page mt-2 grid h-[calc(100vh-2rem)] gap-4 overflow-hidden", chatSidebarOpen ? "lg:grid-cols-[230px,1fr]" : "grid-cols-1")}>
             {chatSidebarOpen ? (
-            <aside className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+            <aside className="flex h-full flex-col rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
               <div className="mb-2 text-sm font-semibold">Persona</div>
               <button type="button" onClick={() => setPersonaOpen(true)} className="mb-4 w-full rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-left">
                 {personas.find((p) => p.id === activePersonaId)?.name || "Select persona"}
               </button>
               <div className="mb-2 text-sm font-semibold">Chats</div>
-              <div className="max-h-[60vh] space-y-2 overflow-auto">
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
                 {chatSessions.map((s) => (
                   <button key={s.id} type="button" onClick={() => openChatSession(s)} className={cn("w-full rounded-xl border p-2 text-left", activeChatSessionId === s.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>
                     <div className="text-sm font-medium truncate">{s.characterName}</div>
@@ -5114,7 +5149,7 @@ ${feedback}`,
             </aside>
             ) : null}
 
-            <div className="space-y-4 pb-44 pt-24">
+            <div ref={chatScrollRef} className="h-full space-y-4 overflow-y-auto pb-44 pt-24 pr-1">
               <div className={cn("fixed right-4 top-4 z-40 flex flex-wrap items-center gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl", chatSidebarOpen ? "left-4 lg:left-[260px]" : "left-4")}>
                 <Button variant="secondary" onClick={() => setChatSidebarOpen((v) => !v)}><Menu className="h-4 w-4" /></Button>
                 <Button variant="secondary" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Back</Button>
@@ -5160,9 +5195,15 @@ ${feedback}`,
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="space-y-3">
+                  <div className="space-y-3 px-2 md:px-4">
                     {chatMessages.map((m, i) => (
-                      <div key={`${m.role}-${i}`} className={cn("rounded-xl border p-4", m.role === "user" ? "ml-auto max-w-[85%]" : "mr-auto max-w-[92%] bg-[hsl(var(--card))]")}>
+                      <div key={`${m.role}-${i}`} className={cn("flex items-end gap-2", m.role === "user" ? "justify-end" : "justify-start")}>
+                        {m.role === "assistant" ? (
+                          <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                            {chatCharacter?.imageDataUrl ? <img src={chatCharacter.imageDataUrl} alt={chatCharacter.name || "Character"} className="h-full w-full object-cover object-top" /> : null}
+                          </div>
+                        ) : null}
+                        <div className={cn("rounded-xl border p-4", m.role === "user" ? "max-w-[72%]" : "max-w-[72%] bg-[hsl(var(--card))]")}>
                         {editingMessageIndex === i ? (
                           <div className="space-y-2">
                             <Textarea value={editingMessageText} onChange={(e) => setEditingMessageText(e.target.value)} rows={4} />
@@ -5198,10 +5239,16 @@ ${feedback}`,
                             </div>
                           </>
                         )}
+                        </div>
+                        {m.role === "user" ? (
+                          <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                            {activePersona?.imageDataUrl ? <img src={activePersona.imageDataUrl} alt={activePersona.name || "User"} className="h-full w-full object-cover object-top" /> : null}
+                          </div>
+                        ) : null}
                       </div>
                     ))}
                     {genLoading ? (
-                      <div className="mr-auto max-w-[92%] rounded-xl border bg-[hsl(var(--card))] p-4">
+                      <div className="ml-11 max-w-[72%] rounded-xl border bg-[hsl(var(--card))] p-4">
                         <div className="flex items-center gap-1">
                           <span className="h-2 w-2 animate-bounce rounded-full bg-[hsl(var(--muted-foreground))]" />
                           <span className="h-2 w-2 animate-bounce rounded-full bg-[hsl(var(--muted-foreground))] [animation-delay:120ms]" />
@@ -7594,9 +7641,16 @@ ${feedback}`,
                 {personas.map((p) => (
                   <div key={p.id} className={cn("w-full rounded-lg border p-2 text-left", activePersonaId === p.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>
                     <button type="button" className="w-full text-left" onClick={() => setActivePersonaId(p.id)}>
-                      <div className="font-medium">{p.name}</div>
-                      <div className="text-xs text-[hsl(var(--muted-foreground))] line-clamp-2">{p.description || "No description"}</div>
-                      <div className="mt-1 text-[11px] text-[hsl(var(--muted-foreground))]">Traits: {p.traitsRaw || "None"}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="h-8 w-8 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                          {p.imageDataUrl ? <img src={p.imageDataUrl} alt={p.name} className="h-full w-full object-cover" /> : null}
+                        </div>
+                        <div>
+                          <div className="font-medium">{p.name}</div>
+                          <div className="text-xs text-[hsl(var(--muted-foreground))] line-clamp-2">{p.description || "No description"}</div>
+                          <div className="mt-1 text-[11px] text-[hsl(var(--muted-foreground))]">Traits: {p.traitsRaw || "None"}</div>
+                        </div>
+                      </div>
                     </button>
                     <div className="mt-2 flex gap-2">
                       <Button variant="secondary" onClick={() => loadPersonaIntoEditor(p)}><Pencil className="h-4 w-4" /> Edit</Button>
@@ -7609,11 +7663,25 @@ ${feedback}`,
             </div>
             <div className="space-y-2 rounded-xl border border-[hsl(var(--border))] p-3">
               <div className="text-sm font-semibold">{personaEditingId ? "Edit persona" : "Create persona"}</div>
+              <div className="flex items-center gap-3">
+                <div className="h-12 w-12 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                  {personaImageDataUrlInput ? <img src={personaImageDataUrlInput} alt="Persona" className="h-full w-full object-cover" /> : null}
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="secondary" type="button" onClick={() => personaImageFileRef.current?.click()}>
+                    <Upload className="h-4 w-4" /> Upload photo
+                  </Button>
+                  <Button variant="secondary" type="button" onClick={() => setPersonaImageDataUrlInput("")} disabled={!personaImageDataUrlInput}>
+                    Remove
+                  </Button>
+                </div>
+                <input ref={personaImageFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePickPersonaImage(f); e.currentTarget.value = ""; }} />
+              </div>
               <Input value={personaNameInput} onChange={(e) => setPersonaNameInput(e.target.value)} placeholder="Persona name" />
               <Input value={personaTraitsInput} onChange={(e) => setPersonaTraitsInput(e.target.value)} placeholder="Traits (comma separated)" />
               <Textarea value={personaDescriptionInput} onChange={(e) => setPersonaDescriptionInput(e.target.value)} rows={6} placeholder="Persona description" />
               <div className="flex justify-end gap-2">
-                {personaEditingId ? <Button variant="secondary" onClick={() => { setPersonaEditingId(null); setPersonaNameInput(""); setPersonaDescriptionInput(""); setPersonaTraitsInput(""); }}>Cancel edit</Button> : null}
+                {personaEditingId ? <Button variant="secondary" onClick={() => { setPersonaEditingId(null); setPersonaNameInput(""); setPersonaDescriptionInput(""); setPersonaTraitsInput(""); setPersonaImageDataUrlInput(""); }}>Cancel edit</Button> : null}
                 <Button variant="secondary" onClick={() => setPersonaOpen(false)}>Close</Button>
                 <Button variant="primary" onClick={createPersonaProfile}>{personaEditingId ? "Update" : "Save"}</Button>
               </div>
