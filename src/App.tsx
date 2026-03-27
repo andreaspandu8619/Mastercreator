@@ -280,6 +280,7 @@ const ACCOUNT_DATA_KEYS = [
   PROXY_KEY,
   PERSONA_KEY,
   PERSONAS_KEY,
+  ACTIVE_PERSONA_ID_KEY,
   CHAT_SESSIONS_KEY,
   STORIES_KEY,
   LOREBOOKS_KEY,
@@ -1456,8 +1457,42 @@ export default function CharacterCreatorApp() {
       if (typeof val === "string") localStorage.setItem(key, val);
     }
   };
-  const saveGlobalDataToAccount = (accountId: string) => {
+  const seedAccountFromLegacyGlobalData = (accountId: string) => {
     localStorage.setItem(accountBlobKey(accountId), JSON.stringify(snapshotGlobalData()));
+  };
+  const saveGlobalDataToAccount = (accountId: string) => {
+    const blob: Record<string, string> = {
+      [STORAGE_KEY]: JSON.stringify(characters),
+      [PROXY_KEY]: JSON.stringify({
+        chatUrl: proxyChatUrl,
+        apiKey: proxyApiKey,
+        model: proxyModel,
+        maxTokens: proxyMaxTokens,
+        temperature: proxyTemperature,
+        contextSize: proxyContextSize,
+        customPrompt: proxyCustomPrompt,
+        streamingEnabled: proxyStreamingEnabled,
+      }),
+      [PERSONA_KEY]: personaText,
+      [PERSONAS_KEY]: JSON.stringify(personas),
+      [ACTIVE_PERSONA_ID_KEY]: activePersonaId,
+      [CHAT_SESSIONS_KEY]: JSON.stringify(chatSessions),
+      [STORIES_KEY]: JSON.stringify(stories),
+      [LOREBOOKS_KEY]: JSON.stringify(lorebooks),
+      [CHARACTER_CARDS_KEY]: JSON.stringify(characterCards),
+      [CHAT_PROMPT_PRESETS_KEY]: JSON.stringify(chatPromptPresets),
+      [ACTIVE_CHAT_PROMPT_PRESET_KEY]: activeChatPromptPresetId,
+      [NOTEPAD_DRAFT_KEY]: JSON.stringify({
+        text: notepadText,
+        name: notepadNameInput,
+        x: notepadPosition.x,
+        y: notepadPosition.y,
+        width: notepadSize.width,
+        height: notepadSize.height,
+      }),
+      [NOTEPAD_NOTES_KEY]: JSON.stringify(notepadNotes),
+    };
+    localStorage.setItem(accountBlobKey(accountId), JSON.stringify(blob));
   };
 
   const loadProxyModels = React.useCallback(async () => {
@@ -2702,7 +2737,8 @@ export default function CharacterCreatorApp() {
       setAccounts(nextAccounts);
       localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(nextAccounts));
       // sync legacy data into newly created account
-      saveGlobalDataToAccount(account.id);
+      seedAccountFromLegacyGlobalData(account.id);
+      setHydrated(false);
       setCurrentAccountId(account.id);
       setAuthError(null);
       setAuthUsername("");
@@ -2715,6 +2751,7 @@ export default function CharacterCreatorApp() {
       return;
     }
     loadAccountDataToGlobal(match.id);
+    setHydrated(false);
     setCurrentAccountId(match.id);
     setAuthError(null);
     setAuthUsername("");
