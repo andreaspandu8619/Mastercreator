@@ -1709,7 +1709,8 @@ export default function CharacterCreatorApp() {
 
     (async () => {
       try {
-        const fromIdb = await idbGetAllCharacters();
+        const fromIdbRaw = await idbGetAllCharacters();
+        const fromIdb = fromIdbRaw.map((x) => normalizeCharacter(x)).filter((x): x is Character => !!x);
         const raw = localStorage.getItem(STORAGE_KEY);
         const fromLocal = raw && Array.isArray(safeParseJSON(raw))
           ? (safeParseJSON(raw) as any[]).map(normalizeCharacter).filter(Boolean) as Character[]
@@ -2569,11 +2570,12 @@ export default function CharacterCreatorApp() {
   }
 
   function startChatWithCharacter(c: Character) {
+    const normalizedCharacter = normalizeCharacter(c) || c;
     const now = new Date().toISOString();
-    const ownerCard = characterCards.find((card) => (card.characterIds || []).includes(c.id)) || null;
+    const ownerCard = characterCards.find((card) => (card.characterIds || []).includes(normalizedCharacter.id)) || null;
     const characterIntro = collapseWhitespace(
-      c.introMessages?.[
-        clampIndex(c.selectedIntroIndex || 0, Math.max(1, c.introMessages?.length || 1))
+      normalizedCharacter.introMessages?.[
+        clampIndex(normalizedCharacter.selectedIntroIndex || 0, Math.max(1, normalizedCharacter.introMessages?.length || 1))
       ] || ""
     );
     const cardIntro = collapseWhitespace(
@@ -2584,15 +2586,15 @@ export default function CharacterCreatorApp() {
     const greeting = characterIntro || cardIntro;
     const session: ChatSession = {
       id: uid(),
-      characterId: c.id,
-      characterName: c.name,
-      characterImageDataUrl: c.imageDataUrl || "",
+      characterId: normalizedCharacter.id,
+      characterName: normalizedCharacter.name,
+      characterImageDataUrl: normalizedCharacter.imageDataUrl || "",
       messages: greeting ? [{ role: "assistant", content: greeting }] : [],
       createdAt: now,
       updatedAt: now,
     };
     upsertChatSession(session);
-    setChatIntroIndex(clampIndex(c.selectedIntroIndex || 0, Math.max(1, c.introMessages?.length || 1)));
+    setChatIntroIndex(clampIndex(normalizedCharacter.selectedIntroIndex || 0, Math.max(1, normalizedCharacter.introMessages?.length || 1)));
     openChatSession(session);
   }
 
@@ -2686,16 +2688,22 @@ export default function CharacterCreatorApp() {
   }
 
   function startChatWithSelectedCard(cardId?: string) {
-    const selectedCard = characterCards.find((card) => card.id === (cardId || chatCardSelectionId));
-    if (!selectedCard) return alert("Select a character card first.");
-    const preferredId = selectedCard.chatProfileCharacterId && selectedCard.characterIds.includes(selectedCard.chatProfileCharacterId)
-      ? selectedCard.chatProfileCharacterId
-      : selectedCard.characterIds[0];
-    const selectedCharacter = characters.find((c) => c.id === preferredId) || selectedCard.characterIds
-      .map((id) => characters.find((c) => c.id === id))
-      .find((c): c is Character => !!c);
-    if (!selectedCharacter) return alert("This character card has no character entries yet.");
-    startChatWithCharacter(selectedCharacter);
+    try {
+      const selectedCard = characterCards.find((card) => card.id === (cardId || chatCardSelectionId));
+      if (!selectedCard) return alert("Select a character card first.");
+      const preferredId = selectedCard.chatProfileCharacterId && selectedCard.characterIds.includes(selectedCard.chatProfileCharacterId)
+        ? selectedCard.chatProfileCharacterId
+        : selectedCard.characterIds[0];
+      const selectedCharacter = characters.find((c) => c.id === preferredId) || selectedCard.characterIds
+        .map((id) => characters.find((c) => c.id === id))
+        .find((c): c is Character => !!c);
+      if (!selectedCharacter) return alert("This character card has no character entries yet.");
+      startChatWithCharacter(selectedCharacter);
+    } catch (e: any) {
+      const message = e?.message ? String(e.message) : "Failed to open this character for chat due to incompatible saved data.";
+      setChatWarning(message);
+      alert(message);
+    }
   }
 
   function updateActiveChatMessages(nextMessages: ChatMessage[]) {
