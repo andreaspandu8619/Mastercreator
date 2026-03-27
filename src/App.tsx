@@ -1941,8 +1941,9 @@ export default function CharacterCreatorApp() {
   }, [currentAccountId, authBootstrapped]);
 
   useEffect(() => {
+    if (!authBootstrapped) return;
     localStorage.setItem(THEME_KEY, theme);
-  }, [theme]);
+  }, [theme, authBootstrapped]);
 
   useEffect(() => {
     if (!genLoading) {
@@ -1981,6 +1982,7 @@ export default function CharacterCreatorApp() {
   }, []);
 
   useEffect(() => {
+    if (!hydrated) return;
     localStorage.setItem(
       PROXY_KEY,
       JSON.stringify({
@@ -1994,29 +1996,32 @@ export default function CharacterCreatorApp() {
         streamingEnabled: proxyStreamingEnabled,
       })
     );
-  }, [proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt, proxyStreamingEnabled]);
+  }, [proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt, proxyStreamingEnabled, hydrated]);
 
   useEffect(() => {
     setProxyTemperatureInput(String(proxyTemperature));
   }, [proxyTemperature]);
 
   useEffect(() => {
+    if (!hydrated) return;
     try {
       localStorage.setItem(PERSONA_KEY, personaText);
     } catch (e: any) {
       setStorageError(e?.message ? String(e.message) : "Failed to save persona text.");
     }
-  }, [personaText]);
+  }, [personaText, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
     try {
       localStorage.setItem(PERSONAS_KEY, JSON.stringify(personas));
     } catch (e: any) {
       setStorageError(e?.message ? String(e.message) : "Failed to save personas.");
     }
-  }, [personas]);
+  }, [personas, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
     if (!personas.length) {
       setActivePersonaId("");
       try {
@@ -2031,15 +2036,17 @@ export default function CharacterCreatorApp() {
     try {
       localStorage.setItem(ACTIVE_PERSONA_ID_KEY, activePersonaId);
     } catch {}
-  }, [personas, activePersonaId]);
+  }, [personas, activePersonaId, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
     try {
       localStorage.setItem(CHAT_PROMPT_PRESETS_KEY, JSON.stringify(chatPromptPresets));
     } catch {}
-  }, [chatPromptPresets]);
+  }, [chatPromptPresets, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
     if (!chatPromptPresets.length) {
       setActiveChatPromptPresetId("");
       try {
@@ -2054,9 +2061,10 @@ export default function CharacterCreatorApp() {
     try {
       localStorage.setItem(ACTIVE_CHAT_PROMPT_PRESET_KEY, activeChatPromptPresetId);
     } catch {}
-  }, [chatPromptPresets, activeChatPromptPresetId]);
+  }, [chatPromptPresets, activeChatPromptPresetId, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
     try {
       localStorage.setItem(
         NOTEPAD_DRAFT_KEY,
@@ -2071,13 +2079,14 @@ export default function CharacterCreatorApp() {
         })
       );
     } catch {}
-  }, [notepadText, notepadNameInput, notepadPosition, notepadSize]);
+  }, [notepadText, notepadNameInput, notepadPosition, notepadSize, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
     try {
       localStorage.setItem(NOTEPAD_NOTES_KEY, JSON.stringify(notepadNotes));
     } catch {}
-  }, [notepadNotes]);
+  }, [notepadNotes, hydrated]);
 
   useEffect(() => {
     if (!notepadDragging && !notepadResizing) return;
@@ -2106,8 +2115,9 @@ export default function CharacterCreatorApp() {
   }, [notepadDragging, notepadResizing]);
 
   useEffect(() => {
+    if (!hydrated) return;
     localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(chatSessions));
-  }, [chatSessions]);
+  }, [chatSessions, hydrated]);
 
   useEffect(() => {
     if (!activeChatSessionId) return;
@@ -2115,16 +2125,19 @@ export default function CharacterCreatorApp() {
   }, [activeChatSessionId, chatMessages.length]);
 
   useEffect(() => {
+    if (!hydrated) return;
     localStorage.setItem(STORIES_KEY, JSON.stringify(stories));
-  }, [stories]);
+  }, [stories, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
     localStorage.setItem(LOREBOOKS_KEY, JSON.stringify(lorebooks));
-  }, [lorebooks]);
+  }, [lorebooks, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
     localStorage.setItem(CHARACTER_CARDS_KEY, JSON.stringify(characterCards));
-  }, [characterCards]);
+  }, [characterCards, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -2132,8 +2145,9 @@ export default function CharacterCreatorApp() {
   }, [characters, hydrated]);
 
   useEffect(() => {
+    if (!authBootstrapped) return;
     localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-  }, [accounts]);
+  }, [accounts, authBootstrapped]);
 
   useEffect(() => {
     if (!authBootstrapped) return;
