@@ -1597,6 +1597,7 @@ export default function CharacterCreatorApp() {
   }, [proxyOpen, loadProxyModels]);
 
   useEffect(() => {
+    if (!authBootstrapped) return;
     const savedTheme = localStorage.getItem(THEME_KEY);
     if (savedTheme === "light" || savedTheme === "dark") setTheme(savedTheme);
     if (!currentAccountId) {
@@ -1937,7 +1938,7 @@ export default function CharacterCreatorApp() {
         setAccountDataReady(true);
       }
     })();
-  }, [currentAccountId]);
+  }, [currentAccountId, authBootstrapped]);
 
   useEffect(() => {
     localStorage.setItem(THEME_KEY, theme);
