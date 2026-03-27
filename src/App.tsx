@@ -198,6 +198,13 @@ type NotepadNote = {
   updatedAt: string;
 };
 
+type UserAccount = {
+  id: string;
+  username: string;
+  password: string;
+  createdAt: string;
+};
+
 type Character = {
   id: string;
   name: string;
@@ -266,6 +273,23 @@ const CHAT_PROMPT_PRESETS_KEY = "mastercreator_chat_prompt_presets_v1";
 const ACTIVE_CHAT_PROMPT_PRESET_KEY = "mastercreator_active_chat_prompt_preset_v1";
 const NOTEPAD_DRAFT_KEY = "mastercreator_notepad_draft_v1";
 const NOTEPAD_NOTES_KEY = "mastercreator_notepad_notes_v1";
+const ACCOUNTS_KEY = "mastercreator_accounts_v1";
+const SESSION_ACCOUNT_ID_KEY = "mastercreator_session_account_id_v1";
+const ACCOUNT_DATA_KEYS = [
+  STORAGE_KEY,
+  PROXY_KEY,
+  PERSONA_KEY,
+  PERSONAS_KEY,
+  CHAT_SESSIONS_KEY,
+  STORIES_KEY,
+  LOREBOOKS_KEY,
+  CHARACTER_CARDS_KEY,
+  CHAT_PROMPT_PRESETS_KEY,
+  ACTIVE_CHAT_PROMPT_PRESET_KEY,
+  CHARACTER_EDITOR_DRAFT_KEY,
+  NOTEPAD_DRAFT_KEY,
+  NOTEPAD_NOTES_KEY,
+] as const;
 
 const DEFAULT_PROXY: ProxyConfig = {
   chatUrl: "https://llm.chutes.ai/v1/chat/completions",
@@ -994,6 +1018,12 @@ function runTests() {
 
 export default function CharacterCreatorApp() {
   const [theme, setTheme] = useState<ThemeMode>("light");
+  const [accounts, setAccounts] = useState<UserAccount[]>([]);
+  const [currentAccountId, setCurrentAccountId] = useState<string>("");
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
   const [page, setPage] = useState<Page>("library");
   const [tab, setTab] = useState<CreateTab>("definition");
 
@@ -1408,6 +1438,28 @@ export default function CharacterCreatorApp() {
   const notepadDragOffsetRef = useRef({ x: 0, y: 0 });
   const notepadResizeStartRef = useRef({ x: 0, y: 0, width: 520, height: 380 });
 
+  const accountBlobKey = (accountId: string) => `mastercreator_account_blob_v1_${accountId}`;
+  const snapshotGlobalData = () => {
+    const out: Record<string, string> = {};
+    for (const key of ACCOUNT_DATA_KEYS) {
+      const value = localStorage.getItem(key);
+      if (value !== null) out[key] = value;
+    }
+    return out;
+  };
+  const loadAccountDataToGlobal = (accountId: string) => {
+    const blob = safeParseJSON(localStorage.getItem(accountBlobKey(accountId)) || "");
+    for (const key of ACCOUNT_DATA_KEYS) localStorage.removeItem(key);
+    if (!blob || typeof blob !== "object") return;
+    for (const key of ACCOUNT_DATA_KEYS) {
+      const val = (blob as any)[key];
+      if (typeof val === "string") localStorage.setItem(key, val);
+    }
+  };
+  const saveGlobalDataToAccount = (accountId: string) => {
+    localStorage.setItem(accountBlobKey(accountId), JSON.stringify(snapshotGlobalData()));
+  };
+
   const loadProxyModels = React.useCallback(async () => {
     const modelsUrl = deriveModelsUrlFromChatUrl(proxyChatUrl);
     setProxyModelsLoading(true);
@@ -1473,11 +1525,41 @@ export default function CharacterCreatorApp() {
   }, []);
 
   useEffect(() => {
+    const savedAccounts = safeParseJSON(localStorage.getItem(ACCOUNTS_KEY) || "");
+    if (Array.isArray(savedAccounts)) {
+      const normalized = savedAccounts
+        .map((a) => {
+          if (!a || typeof a !== "object") return null;
+          const username = collapseWhitespace((a as any).username || "");
+          const password = typeof (a as any).password === "string" ? (a as any).password : "";
+          if (!username || !password) return null;
+          return {
+            id: typeof (a as any).id === "string" ? (a as any).id : uid(),
+            username,
+            password,
+            createdAt: typeof (a as any).createdAt === "string" ? (a as any).createdAt : new Date().toISOString(),
+          } as UserAccount;
+        })
+        .filter((a): a is UserAccount => !!a);
+      setAccounts(normalized);
+    }
+    const savedSessionId = localStorage.getItem(SESSION_ACCOUNT_ID_KEY) || "";
+    if (savedSessionId) {
+      setCurrentAccountId(savedSessionId);
+      loadAccountDataToGlobal(savedSessionId);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!proxyOpen) return;
     loadProxyModels();
   }, [proxyOpen, loadProxyModels]);
 
   useEffect(() => {
+    if (!currentAccountId) {
+      setHydrated(true);
+      return;
+    }
     const savedTheme = localStorage.getItem(THEME_KEY);
     if (savedTheme === "light" || savedTheme === "dark") setTheme(savedTheme);
 
@@ -1810,7 +1892,7 @@ export default function CharacterCreatorApp() {
         setHydrated(true);
       }
     })();
-  }, []);
+  }, [currentAccountId]);
 
   useEffect(() => {
     localStorage.setItem(THEME_KEY, theme);
@@ -2002,6 +2084,23 @@ export default function CharacterCreatorApp() {
     if (!hydrated) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(characters));
   }, [characters, hydrated]);
+
+  useEffect(() => {
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+  }, [accounts]);
+
+  useEffect(() => {
+    if (!currentAccountId) {
+      localStorage.removeItem(SESSION_ACCOUNT_ID_KEY);
+      return;
+    }
+    localStorage.setItem(SESSION_ACCOUNT_ID_KEY, currentAccountId);
+  }, [currentAccountId]);
+
+  useEffect(() => {
+    if (!currentAccountId || !hydrated) return;
+    saveGlobalDataToAccount(currentAccountId);
+  }, [currentAccountId, hydrated, characters, chatSessions, lorebooks, stories, characterCards, personas, chatPromptPresets, notepadNotes, notepadText, notepadNameInput]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -2584,6 +2683,55 @@ export default function CharacterCreatorApp() {
 
   function navigateTo(next: Page) {
     setPage(next);
+  }
+
+  function handleAuthSubmit() {
+    const username = collapseWhitespace(authUsername).toLowerCase();
+    const password = authPassword;
+    if (!username || !password) {
+      setAuthError("Enter username and password.");
+      return;
+    }
+    if (authMode === "signup") {
+      if (accounts.some((a) => a.username.toLowerCase() === username)) {
+        setAuthError("Username already exists.");
+        return;
+      }
+      const account: UserAccount = { id: uid(), username, password, createdAt: new Date().toISOString() };
+      const nextAccounts = [account, ...accounts];
+      setAccounts(nextAccounts);
+      localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(nextAccounts));
+      // sync legacy data into newly created account
+      saveGlobalDataToAccount(account.id);
+      setCurrentAccountId(account.id);
+      setAuthError(null);
+      setAuthUsername("");
+      setAuthPassword("");
+      return;
+    }
+    const match = accounts.find((a) => a.username.toLowerCase() === username && a.password === password);
+    if (!match) {
+      setAuthError("Invalid username or password.");
+      return;
+    }
+    loadAccountDataToGlobal(match.id);
+    setCurrentAccountId(match.id);
+    setAuthError(null);
+    setAuthUsername("");
+    setAuthPassword("");
+  }
+
+  function logoutAccount() {
+    if (currentAccountId) saveGlobalDataToAccount(currentAccountId);
+    setCurrentAccountId("");
+    setHydrated(false);
+    setCharacters([]);
+    setChatSessions([]);
+    setStories([]);
+    setLorebooks([]);
+    setCharacterCards([]);
+    setPersonas([]);
+    setPage("library");
   }
 
   async function handlePickPersonaImage(file: File) {
@@ -5327,6 +5475,30 @@ ${feedback}`,
     { id: "synopsis", label: "Synopsis" },
   ];
 
+  if (!currentAccountId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[hsl(var(--background))] p-4" style={themeVars(theme)}>
+        <div className="w-full max-w-md rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 space-y-3">
+          <div className="text-xl font-semibold">{authMode === "login" ? "Login required" : "Create account"}</div>
+          <Input value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} placeholder="Username" />
+          <Input value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="Password" type="password" />
+          {authError ? <div className="text-sm text-red-500">{authError}</div> : null}
+          <div className="flex gap-2">
+            <Button variant="primary" onClick={handleAuthSubmit} className="flex-1">
+              {authMode === "login" ? "Login" : "Register"}
+            </Button>
+            <Button variant="secondary" onClick={() => { setAuthMode((m) => (m === "login" ? "signup" : "login")); setAuthError(null); }}>
+              {authMode === "login" ? "Need account?" : "Have account?"}
+            </Button>
+          </div>
+          <div className="text-xs text-[hsl(var(--muted-foreground))]">
+            You must be logged in to use the app. New signups will sync your existing local creations into the account.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <AppErrorBoundary>
     <div
@@ -5424,6 +5596,9 @@ ${feedback}`,
             </Button>
             <Button variant="secondary" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}>
               {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "light" ? "Dark" : "Light"}
+            </Button>
+            <Button variant="secondary" onClick={logoutAccount}>
+              Logout
             </Button>
           </div>
           </div>
