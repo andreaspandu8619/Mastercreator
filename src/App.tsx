@@ -1754,11 +1754,19 @@ export default function CharacterCreatorApp() {
   }, [proxyTemperature]);
 
   useEffect(() => {
-    localStorage.setItem(PERSONA_KEY, personaText);
+    try {
+      localStorage.setItem(PERSONA_KEY, personaText);
+    } catch (e: any) {
+      setStorageError(e?.message ? String(e.message) : "Failed to save persona text.");
+    }
   }, [personaText]);
 
   useEffect(() => {
-    localStorage.setItem(PERSONAS_KEY, JSON.stringify(personas));
+    try {
+      localStorage.setItem(PERSONAS_KEY, JSON.stringify(personas));
+    } catch (e: any) {
+      setStorageError(e?.message ? String(e.message) : "Failed to save personas.");
+    }
   }, [personas]);
 
   useEffect(() => {
@@ -2516,7 +2524,8 @@ export default function CharacterCreatorApp() {
       return;
     }
     const now = new Date().toISOString();
-    const profile: PersonaProfile = { id: personaEditingId || uid(), name, description, traitsRaw, imageDataUrl, createdAt: now, updatedAt: now };
+    const existingProfile = personaEditingId ? personas.find((p) => p.id === personaEditingId) : null;
+    const profile: PersonaProfile = { id: personaEditingId || uid(), name, description, traitsRaw, imageDataUrl, createdAt: existingProfile?.createdAt || now, updatedAt: now };
     setPersonas((prev) => {
       if (personaEditingId) {
         return prev.map((p) => (p.id === personaEditingId ? { ...p, name, description, traitsRaw, imageDataUrl, updatedAt: now } : p));
@@ -5242,7 +5251,7 @@ ${feedback}`,
                         </div>
                         {m.role === "user" ? (
                           <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
-                            {activePersona?.imageDataUrl ? <img src={activePersona.imageDataUrl} alt={activePersona.name || "User"} className="h-full w-full object-cover object-top" /> : null}
+                            {activePersona?.imageDataUrl ? <img src={activePersona.imageDataUrl} alt={activePersona?.name || "User"} className="h-full w-full object-cover object-top" /> : null}
                           </div>
                         ) : null}
                       </div>
