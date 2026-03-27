@@ -2144,7 +2144,36 @@ export default function CharacterCreatorApp() {
   useEffect(() => {
     if (!currentAccountId || !hydrated || !accountDataReady) return;
     saveGlobalDataToAccount(currentAccountId);
-  }, [currentAccountId, hydrated, accountDataReady, characters, chatSessions, lorebooks, stories, characterCards, personas, chatPromptPresets, notepadNotes, notepadText, notepadNameInput]);
+  }, [
+    currentAccountId,
+    hydrated,
+    accountDataReady,
+    characters,
+    chatSessions,
+    lorebooks,
+    stories,
+    characterCards,
+    proxyChatUrl,
+    proxyApiKey,
+    proxyModel,
+    proxyMaxTokens,
+    proxyTemperature,
+    proxyContextSize,
+    proxyCustomPrompt,
+    proxyStreamingEnabled,
+    personaText,
+    personas,
+    activePersonaId,
+    chatPromptPresets,
+    activeChatPromptPresetId,
+    notepadNotes,
+    notepadText,
+    notepadNameInput,
+    notepadPosition.x,
+    notepadPosition.y,
+    notepadSize.width,
+    notepadSize.height,
+  ]);
 
   useEffect(() => {
     if (!hydrated) return;
