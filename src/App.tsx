@@ -1021,6 +1021,7 @@ export default function CharacterCreatorApp() {
   const [theme, setTheme] = useState<ThemeMode>("light");
   const [accounts, setAccounts] = useState<UserAccount[]>([]);
   const [currentAccountId, setCurrentAccountId] = useState<string>("");
+  const [accountDataReady, setAccountDataReady] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [authUsername, setAuthUsername] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -1580,6 +1581,7 @@ export default function CharacterCreatorApp() {
     }
     const savedSessionId = localStorage.getItem(SESSION_ACCOUNT_ID_KEY) || "";
     if (savedSessionId) {
+      setAccountDataReady(false);
       setCurrentAccountId(savedSessionId);
       loadAccountDataToGlobal(savedSessionId);
     }
@@ -1592,9 +1594,11 @@ export default function CharacterCreatorApp() {
 
   useEffect(() => {
     if (!currentAccountId) {
+      setAccountDataReady(false);
       setHydrated(true);
       return;
     }
+    setAccountDataReady(false);
     const savedTheme = localStorage.getItem(THEME_KEY);
     if (savedTheme === "light" || savedTheme === "dark") setTheme(savedTheme);
 
@@ -1922,9 +1926,11 @@ export default function CharacterCreatorApp() {
           } catch {}
         }
         setHydrated(true);
+        setAccountDataReady(true);
       } catch (e: any) {
         setStorageError(e?.message ? String(e.message) : "Failed to load saved data.");
         setHydrated(true);
+        setAccountDataReady(true);
       }
     })();
   }, [currentAccountId]);
@@ -2133,9 +2139,9 @@ export default function CharacterCreatorApp() {
   }, [currentAccountId]);
 
   useEffect(() => {
-    if (!currentAccountId || !hydrated) return;
+    if (!currentAccountId || !hydrated || !accountDataReady) return;
     saveGlobalDataToAccount(currentAccountId);
-  }, [currentAccountId, hydrated, characters, chatSessions, lorebooks, stories, characterCards, personas, chatPromptPresets, notepadNotes, notepadText, notepadNameInput]);
+  }, [currentAccountId, hydrated, accountDataReady, characters, chatSessions, lorebooks, stories, characterCards, personas, chatPromptPresets, notepadNotes, notepadText, notepadNameInput]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -2739,6 +2745,7 @@ export default function CharacterCreatorApp() {
       // sync legacy data into newly created account
       seedAccountFromLegacyGlobalData(account.id);
       setHydrated(false);
+      setAccountDataReady(false);
       setCurrentAccountId(account.id);
       setAuthError(null);
       setAuthUsername("");
@@ -2752,6 +2759,7 @@ export default function CharacterCreatorApp() {
     }
     loadAccountDataToGlobal(match.id);
     setHydrated(false);
+    setAccountDataReady(false);
     setCurrentAccountId(match.id);
     setAuthError(null);
     setAuthUsername("");
@@ -2762,6 +2770,7 @@ export default function CharacterCreatorApp() {
     if (currentAccountId) saveGlobalDataToAccount(currentAccountId);
     setCurrentAccountId("");
     setHydrated(false);
+    setAccountDataReady(false);
     setCharacters([]);
     setChatSessions([]);
     setStories([]);
