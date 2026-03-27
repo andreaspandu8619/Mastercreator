@@ -891,6 +891,29 @@ function Modal({
   );
 }
 
+class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="m-4 rounded-2xl border border-red-400 bg-red-50 p-4 text-sm text-red-700">
+          <div className="font-semibold">A runtime error occurred.</div>
+          <div className="mt-1 whitespace-pre-wrap">{this.state.error.message || "Unknown error"}</div>
+        </div>
+      );
+    }
+    return this.props.children as any;
+  }
+}
+
 function clampIndex(i: number, len: number) {
   if (len <= 0) return 0;
   return ((i % len) + len) % len;
@@ -5177,6 +5200,7 @@ ${feedback}`,
   ];
 
   return (
+    <AppErrorBoundary>
     <div
       className="min-h-screen w-full bg-[hsl(var(--background))] p-4 text-[hsl(var(--foreground))] md:p-8"
       style={themeVars(theme)}
@@ -8019,5 +8043,6 @@ ${feedback}`,
         ) : null}
       </div>
     </div>
+    </AppErrorBoundary>
   );
 }
