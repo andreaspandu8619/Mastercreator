@@ -2608,6 +2608,19 @@ export default function CharacterCreatorApp() {
   function loadCharacterIntoForm(c: Character) {
     setSelectedId(c.id);
 
+    const normalizedBackstory = Array.isArray(c.backstory) ? c.backstory : [];
+    const safeBackstoryIndex = clampIndex(c.selectedBackstoryIndex ?? 0, Math.max(1, normalizedBackstory.length));
+    const selectedBackstoryText = normalizedBackstory[safeBackstoryIndex] || "";
+
+    setGeneratedTextStates((prev) => ({
+      ...prev,
+      "character:backstory": { pages: [], activeIndex: 0 },
+    }));
+    setIterationSelections((prev) => ({
+      ...prev,
+      "character:backstory": "",
+    }));
+
     setImageDataUrl(c.imageDataUrl || "");
     setImageError(null);
 
@@ -2627,7 +2640,9 @@ export default function CharacterCreatorApp() {
     setProblemBehavior(Array.isArray(c.respondToProblems) ? [...c.respondToProblems] : []);
     setSexualBehavior(Array.isArray(c.sexualBehavior) ? [...c.sexualBehavior] : []);
     setSpeechPatterns(Array.isArray(c.speechPatterns) ? [...c.speechPatterns] : []);
-    setBackstory(Array.isArray(c.backstory) ? [...c.backstory] : []);
+    setBackstory([...normalizedBackstory]);
+    setBackstoryText(selectedBackstoryText);
+    setBackstoryPrompt("");
     setTraitInput("");
     setAppearanceInput("");
     setSexualBehaviorInput("");
