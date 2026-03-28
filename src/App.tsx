@@ -4155,10 +4155,10 @@ ${prompt}`,
       "Generate a comprehensive but natural synopsis for this character card.",
       "Use this exact structure and order:",
       "1) Overview",
-      "2) Character info list. For each character: **Name** then age || height.",
+      "2) Character info list. For each character: **Name** then age || height, followed by 1-2 natural-language sentences explaining who they are at face value in the story.",
       "3) Main plot / goal / conflict, written clearly and naturally without rhetoric or hyperbole.",
       "4) Place (name only).",
-      "Rules: Keep it human-like and cohesive. Do not use em dashes.",
+      "Rules: Keep it human-like and cohesive. Do not use em dashes. Do not expose hidden secrets unless they are already public in the provided context.",
     ].join("\n");
     setGenLoading(true);
     setGenError(null);
@@ -5123,7 +5123,7 @@ ${feedback}`,
     startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
-        system: `Write a ${storySynopsisStyle} story synopsis that fits roleplay setup. Return only synopsis text.`,
+        system: `Write a ${storySynopsisStyle} story synopsis that fits roleplay setup. When referencing cast members, briefly explain who each character is in natural language at face value (avoid obvious spoilers or hidden secrets unless explicitly provided as public facts). Keep prose grounded and concise. Return only synopsis text.`,
         user: `Character context:
 ${storyCharacterContext}
 
@@ -5160,7 +5160,7 @@ Prompt: ${prompt}`,
     startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
-        system: "Revise story synopsis based on user feedback while preserving continuity. Return only revised synopsis text.",
+        system: "Revise story synopsis based on user feedback while preserving continuity. Keep character references natural and face-value (avoid exposing hidden secrets unless explicitly requested). Keep prose grounded and concise. Return only revised synopsis text.",
         user: `Current synopsis:
 ${activeStory.synopsis || "(empty)"}
 
