@@ -2338,9 +2338,9 @@ export default function CharacterCreatorApp() {
   }, [hydrated, editorDraftRestored, characters]);
 
   useEffect(() => {
-    if (!hydrated || !editorDraftRestored) return;
+    if (!hydrated || !editorDraftRestored || page !== "create") return;
     persistCharacterEditorDraft();
-  }, [hydrated, editorDraftRestored, selectedId, backstoryText, synopsis, introMessages, introIndex]);
+  }, [hydrated, editorDraftRestored, page, selectedId, backstoryText, synopsis, introMessages, introIndex]);
 
 
   useEffect(() => {
