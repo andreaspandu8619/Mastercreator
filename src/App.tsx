@@ -17,7 +17,7 @@ import {
   Upload,
   X,
   Sparkles,
-  Menu,
+  MoreHorizontal,
   SendHorizontal,
 } from "lucide-react";
 
@@ -1055,8 +1055,9 @@ export default function CharacterCreatorApp() {
   const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null);
   const [editingMessageText, setEditingMessageText] = useState("");
   const [chatIntroIndex, setChatIntroIndex] = useState(0);
-  const [chatSidebarOpen, setChatSidebarOpen] = useState(true);
   const [chatWarning, setChatWarning] = useState<string | null>(null);
+  const [chatTopMenuOpen, setChatTopMenuOpen] = useState(false);
+  const [characterCardActionId, setCharacterCardActionId] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [dragCharacterId, setDragCharacterId] = useState<string | null>(null);
@@ -2058,6 +2059,21 @@ export default function CharacterCreatorApp() {
   }, [hydrated, characterCards, activeCharacterCardId]);
 
   useEffect(() => {
+    if (!hydrated) return;
+    setCharacterCards((prev) =>
+      prev.map((card) => {
+        if (!card.characterIds.length) return card;
+        if (card.chatProfileCharacterId && card.characterIds.includes(card.chatProfileCharacterId)) return card;
+        return {
+          ...card,
+          chatProfileCharacterId: card.characterIds[0],
+          updatedAt: new Date().toISOString(),
+        };
+      })
+    );
+  }, [hydrated]);
+
+  useEffect(() => {
     if (!characterCards.length) {
       setChatCardSelectionId("");
       return;
@@ -2510,7 +2526,14 @@ export default function CharacterCreatorApp() {
     setSelectedId(draft.id);
     persistCharacterEditorDraft();
     if (activeCharacterCardId) {
-      setCharacterCards((prev) => prev.map((card) => card.id !== activeCharacterCardId ? card : { ...card, characterIds: card.characterIds.includes(draft.id) ? card.characterIds : [...card.characterIds, draft.id], updatedAt: new Date().toISOString() }));
+      setCharacterCards((prev) => prev.map((card) => {
+        if (card.id !== activeCharacterCardId) return card;
+        const nextIds = card.characterIds.includes(draft.id) ? card.characterIds : [...card.characterIds, draft.id];
+        const nextChatProfileId = card.chatProfileCharacterId && nextIds.includes(card.chatProfileCharacterId)
+          ? card.chatProfileCharacterId
+          : (nextIds[0] || "");
+        return { ...card, characterIds: nextIds, chatProfileCharacterId: nextChatProfileId, updatedAt: new Date().toISOString() };
+      }));
     }
     navigateTo("create");
   }
@@ -5419,6 +5442,25 @@ ${feedback}`,
     { id: "synopsis", label: "Synopsis" },
   ];
 
+  function openCharacterCardForEditing(card: CharacterCard) {
+    setActiveCharacterCardId(card.id);
+    setCharacterCardNameInput(card.name);
+    setSelectedId(card.characterIds[0] || null);
+    if (card.characterIds[0]) {
+      const c = characters.find((x) => x.id === card.characterIds[0]);
+      if (c) loadCharacterIntoForm(c);
+    } else {
+      resetForm();
+    }
+    navigateTo("create");
+  }
+
+  function openChatFromCharacterCard(card: CharacterCard) {
+    setChatCardSelectionId(card.id);
+    startChatWithSelectedCard(card.id);
+    setCharacterCardActionId(null);
+  }
+
   return (
     <AppErrorBoundary>
     <div
@@ -5523,37 +5565,22 @@ ${feedback}`,
         ) : null}
 
         {page === "chat" ? (
-          <div className={cn("anim-page mt-2 grid h-[calc(100vh-2rem)] gap-4 overflow-hidden", chatSidebarOpen ? "lg:grid-cols-[230px,1fr]" : "grid-cols-1")}>
-            {chatSidebarOpen ? (
-            <aside className="flex h-full flex-col rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-              <div className="mb-2 text-sm font-semibold">Persona</div>
-              <button type="button" onClick={() => setPersonaOpen(true)} className="mb-4 w-full rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-left">
-                {personas.find((p) => p.id === activePersonaId)?.name || "Select persona"}
-              </button>
-              <div className="mb-2 text-sm font-semibold">Chats</div>
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                {chatSessions.map((s) => (
-                  <button key={s.id} type="button" onClick={() => openChatSession(s)} className={cn("w-full rounded-xl border p-2 text-left", activeChatSessionId === s.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>
-                    <div className="text-sm font-medium truncate">{s.characterName}</div>
-                    <div className="text-xs text-[hsl(var(--muted-foreground))] truncate">{(Array.isArray(s.messages) ? s.messages[s.messages.length - 1]?.content : "") || "No messages yet."}</div>
-                  </button>
-                ))}
-                {!chatSessions.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No chats yet.</div> : null}
-              </div>
-            </aside>
-            ) : null}
-
-            <div ref={chatScrollRef} className="h-full space-y-4 overflow-y-auto pb-44 pt-24 pr-1">
-              <div className={cn("fixed right-4 top-4 z-40 flex flex-wrap items-center gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl", chatSidebarOpen ? "left-4 lg:left-[260px]" : "left-4")}>
-                <Button variant="secondary" onClick={() => setChatSidebarOpen((v) => !v)}><Menu className="h-4 w-4" /></Button>
-                <Button variant="secondary" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Back</Button>
-                <Button variant="secondary" onClick={() => setProxyOpen(true)}><SlidersHorizontal className="h-4 w-4" /> Proxy</Button>
-                <Button variant="secondary" onClick={() => setChatPromptPresetOpen(true)}>
-                  <Pencil className="h-4 w-4" /> RP Prompt: {activeChatPromptPreset?.name || "Default"}
-                </Button>
-                <Input value={chatNameInput} onChange={(e) => setChatNameInput(e.target.value)} placeholder="Chat Name" className="max-w-md" />
-                <Button variant="primary" onClick={() => { setActiveChatSessionId(null); setChatCharacter(null); setChatMessages([]); setChatInput(""); }}>New Chat</Button>
-                <Button variant="secondary" onClick={() => chatCharacterCardImportRef.current?.click()}><Upload className="h-4 w-4" /> Import Card</Button>
+          <div className="anim-page mt-2 h-[calc(100vh-2rem)] overflow-hidden">
+            <div ref={chatScrollRef} className="h-full space-y-4 overflow-y-auto pb-44 pt-24 text-sm lg:px-[300px]">
+              <div className="fixed left-4 right-4 top-4 z-40 flex items-center justify-between rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl lg:left-[300px] lg:right-[300px]">
+                <Button variant="secondary" onClick={() => navigateTo("library")}><ChevronLeft className="h-4 w-4" /></Button>
+                <div className="relative">
+                  <Button variant="secondary" onClick={() => setChatTopMenuOpen((v) => !v)}><MoreHorizontal className="h-4 w-4" /></Button>
+                  {chatTopMenuOpen ? (
+                    <div className="absolute right-0 top-12 z-50 w-60 space-y-1 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-2xl">
+                      <Button variant="secondary" className="w-full justify-start" onClick={() => { setPersonaOpen(true); setChatTopMenuOpen(false); }}>Persona</Button>
+                      <Button variant="secondary" className="w-full justify-start" onClick={() => { setProxyOpen(true); setChatTopMenuOpen(false); }}><SlidersHorizontal className="h-4 w-4" /> Proxy</Button>
+                      <Button variant="secondary" className="w-full justify-start" onClick={() => { setChatPromptPresetOpen(true); setChatTopMenuOpen(false); }}><Pencil className="h-4 w-4" /> RP Prompt</Button>
+                      <Button variant="secondary" className="w-full justify-start" onClick={() => { setActiveChatSessionId(null); setChatCharacter(null); setChatMessages([]); setChatInput(""); setChatTopMenuOpen(false); }}>New Chat</Button>
+                      <Button variant="secondary" className="w-full justify-start" onClick={() => { chatCharacterCardImportRef.current?.click(); setChatTopMenuOpen(false); }}><Upload className="h-4 w-4" /> Import Card</Button>
+                    </div>
+                  ) : null}
+                </div>
                 <input
                   ref={chatCharacterCardImportRef}
                   type="file"
@@ -5574,22 +5601,7 @@ ${feedback}`,
                 <div className="space-y-3">
                   <div>
                     <div className="text-xl font-semibold">No Character Yet</div>
-                    <div className="text-sm text-[hsl(var(--muted-foreground))]">Select character below.</div>
-                  </div>
-                  <div className="max-h-[52vh] overflow-auto rounded-2xl border border-[hsl(var(--border))] p-3">
-                    <div className="grid grid-cols-3 gap-3 md:grid-cols-5 lg:grid-cols-7">
-                      {characterCards.map((card) => {
-                        const preferredId = card.chatProfileCharacterId && card.characterIds.includes(card.chatProfileCharacterId) ? card.chatProfileCharacterId : card.characterIds[0];
-                        const c = characters.find((x) => x.id === preferredId);
-                        return (
-                          <button key={card.id} type="button" onClick={() => { setChatCardSelectionId(card.id); startChatWithSelectedCard(card.id); }} className="overflow-hidden rounded-xl border border-[hsl(var(--border))] text-left">
-                            <div className="relative aspect-[3/4] bg-[hsl(var(--muted))]">
-                              {c?.imageDataUrl ? <img src={c.imageDataUrl} alt={card.name} className="absolute inset-0 h-full w-full object-cover" /> : null}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <div className="text-sm text-[hsl(var(--muted-foreground))]">Open Character Dashboard and use Chat from a character card.</div>
                   </div>
                 </div>
               ) : (
@@ -5598,11 +5610,11 @@ ${feedback}`,
                     {chatMessages.map((m, i) => (
                       <div key={`${m.role}-${i}`} className={cn("flex items-end gap-2", m.role === "user" ? "justify-end" : "justify-start")}>
                         {m.role === "assistant" ? (
-                          <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                          <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
                             {chatCharacter?.imageDataUrl ? <img src={chatCharacter.imageDataUrl} alt={chatCharacter.name || "Character"} className="h-full w-full object-cover object-top" /> : null}
                           </div>
                         ) : null}
-                        <div className={cn("rounded-xl border p-4", m.role === "user" ? "max-w-[72%]" : "max-w-[72%] bg-[hsl(var(--card))]")}>
+                        <div className={cn("rounded-xl border p-4 text-sm", m.role === "user" ? "max-w-[72%]" : "max-w-[72%] bg-[hsl(var(--card))]")}>
                         {editingMessageIndex === i ? (
                           <div className="space-y-2">
                             <Textarea value={editingMessageText} onChange={(e) => setEditingMessageText(e.target.value)} rows={4} />
@@ -5640,7 +5652,7 @@ ${feedback}`,
                         )}
                         </div>
                         {m.role === "user" ? (
-                          <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                          <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
                             {activePersona?.imageDataUrl ? <img src={activePersona.imageDataUrl} alt={activePersona?.name || "User"} className="h-full w-full object-cover object-top" /> : null}
                           </div>
                         ) : null}
@@ -5667,7 +5679,7 @@ ${feedback}`,
                 </div>
               )}
 
-              <div className={cn("fixed bottom-4 right-4 z-40", chatSidebarOpen ? "left-4 lg:left-[260px]" : "left-4")}>
+              <div className="fixed bottom-4 left-4 right-4 z-40 lg:left-[300px] lg:right-[300px]">
                 <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 shadow-xl">
                   <div className="flex gap-2">
                     <Textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} rows={3} placeholder="Type your message...." disabled={!chatCharacter} onKeyDown={(e) => onEnterAdd(e, sendChatMessage)} />
@@ -6956,8 +6968,8 @@ ${feedback}`,
                   onClick={() => navigateTo("chat")}
                   className="aspect-[3/4] rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-8 text-left shadow-sm"
                 >
-                  <div className="text-3xl font-semibold">Chat</div>
-                  <div className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">Open chatbot interface and start a conversation.</div>
+                  <div className="text-3xl font-semibold">Chats</div>
+                  <div className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">View and resume existing chat sessions.</div>
                 </button>
                 <button
                   type="button"
@@ -6986,39 +6998,21 @@ ${feedback}`,
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {characterCards.map((card) => {
-                const previewCharacters = card.characterIds
-                  .slice(0, 4)
-                  .map((id) => characters.find((c) => c.id === id))
-                  .filter((c): c is Character => !!c);
+                const preferredId = card.chatProfileCharacterId && card.characterIds.includes(card.chatProfileCharacterId)
+                  ? card.chatProfileCharacterId
+                  : card.characterIds[0];
+                const previewCharacter = preferredId ? (characters.find((c) => c.id === preferredId) || null) : null;
                 return (
-                  <button key={card.id} type="button" onClick={() => {
-                    setActiveCharacterCardId(card.id);
-                    setCharacterCardNameInput(card.name);
-                    setSelectedId(card.characterIds[0] || null);
-                    if (card.characterIds[0]) {
-                      const c = characters.find((x) => x.id === card.characterIds[0]);
-                      if (c) loadCharacterIntoForm(c);
-                    } else {
-                      resetForm();
-                    }
-                    navigateTo("create");
-                  }} className="text-left rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                  <button key={card.id} type="button" onClick={() => setCharacterCardActionId(card.id)} className="text-left rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
                     <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-[hsl(var(--border))]">
-                      {previewCharacters.length ? (
-                        <div className="absolute inset-0 grid grid-cols-2 grid-rows-2">
-                          {previewCharacters.map((character) => (
-                            <div key={character.id} className="relative overflow-hidden border border-[hsl(var(--border))/0.5] bg-[hsl(var(--muted))]">
-                              {character.imageDataUrl ? (
-                                <img src={character.imageDataUrl} alt={character.name} className="absolute inset-0 h-full w-full object-cover object-top" />
-                              ) : (
-                                <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
-                              )}
-                            </div>
-                          ))}
-                          {Array.from({ length: Math.max(0, 4 - previewCharacters.length) }).map((_, i) => (
-                            <div key={`empty-${i}`} className="border border-[hsl(var(--border))/0.5] bg-[hsl(var(--muted))]" />
-                          ))}
-                        </div>
+                      {previewCharacter ? (
+                        <>
+                          {previewCharacter.imageDataUrl ? (
+                            <img src={previewCharacter.imageDataUrl} alt={previewCharacter.name} className="absolute inset-0 h-full w-full object-cover object-top" />
+                          ) : (
+                            <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
+                          )}
+                        </>
                       ) : (
                         <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>
                       )}
@@ -7029,6 +7023,33 @@ ${feedback}`,
                 );
               })}
             </div>
+            <Modal open={!!characterCardActionId} onClose={() => setCharacterCardActionId(null)} title="Character Card" widthClass="max-w-2xl">
+              {(() => {
+                const card = characterCards.find((c) => c.id === characterCardActionId) || null;
+                if (!card) return <div className="text-sm text-[hsl(var(--muted-foreground))]">Card not found.</div>;
+                const preferredId = card.chatProfileCharacterId && card.characterIds.includes(card.chatProfileCharacterId) ? card.chatProfileCharacterId : card.characterIds[0];
+                const profileCharacter = preferredId ? (characters.find((c) => c.id === preferredId) || null) : null;
+                return (
+                  <div className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-[220px,1fr]">
+                      <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                        {profileCharacter?.imageDataUrl ? <img src={profileCharacter.imageDataUrl} alt={profileCharacter.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : null}
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        <div className="text-lg font-semibold">{card.name || "Character Card"}</div>
+                        <div><span className="font-medium">Profile character:</span> {profileCharacter?.name || "None selected"}</div>
+                        <div><span className="font-medium">Characters:</span> {card.characterIds.length}</div>
+                        <div><span className="font-medium">System rules:</span> {collapseWhitespace(card.systemRules) || "(none)"}</div>
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="secondary" onClick={() => { setCharacterCardActionId(null); openCharacterCardForEditing(card); }}>Edit</Button>
+                      <Button variant="primary" onClick={() => openChatFromCharacterCard(card)} disabled={!card.characterIds.length}>Chat</Button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </Modal>
           </div>
         ) : page === "create" ? (
           <div className="anim-page mt-6 space-y-3">
