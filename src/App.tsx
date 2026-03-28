@@ -2224,6 +2224,14 @@ export default function CharacterCreatorApp() {
       : collapseWhitespace(customRace);
   }
 
+  function getCharacterBackstoryFieldKey(characterId?: string | null) {
+    return `character:backstory:${characterId || "draft"}`;
+  }
+
+  function getCharacterSynopsisFieldKey(characterId?: string | null) {
+    return `character:synopsis:${characterId || "draft"}`;
+  }
+
   function validate(): string | null {
     if (age !== "" && (Number.isNaN(Number(age)) || Number(age) < 0))
       return "Age must be a positive number.";
@@ -2254,11 +2262,12 @@ export default function CharacterCreatorApp() {
     const baseIntro = introMessages.length ? introMessages : [""];
     const safeIntroIndex = clampIndex(introIndex, Math.max(1, baseIntro.length));
 
-    const backstoryPages = generatedTextStates["character:backstory"]?.pages || [];
+    const backstoryFieldKey = getCharacterBackstoryFieldKey(selectedId);
+    const backstoryPages = generatedTextStates[backstoryFieldKey]?.pages || [];
     const backstoryVersions = backstoryPages.length
       ? backstoryPages.map((p) => p.text).filter((x) => collapseWhitespace(x))
       : (collapseWhitespace(backstoryText) ? [backstoryText] : []);
-    const selectedBackstoryPageId = iterationSelections["character:backstory"];
+    const selectedBackstoryPageId = iterationSelections[backstoryFieldKey];
     const selectedBackstoryIndex = backstoryPages.length && selectedBackstoryPageId
       ? Math.max(0, backstoryPages.findIndex((p) => p.id === selectedBackstoryPageId))
       : Math.max(0, backstoryVersions.length - 1);
@@ -2636,14 +2645,15 @@ export default function CharacterCreatorApp() {
     const normalizedBackstory = Array.isArray(c.backstory) ? c.backstory : [];
     const safeBackstoryIndex = clampIndex(c.selectedBackstoryIndex ?? 0, Math.max(1, normalizedBackstory.length));
     const selectedBackstoryText = normalizedBackstory[safeBackstoryIndex] || "";
+    const backstoryFieldKey = getCharacterBackstoryFieldKey(c.id);
 
     setGeneratedTextStates((prev) => ({
       ...prev,
-      "character:backstory": { pages: [], activeIndex: 0 },
+      [backstoryFieldKey]: { pages: [], activeIndex: 0 },
     }));
     setIterationSelections((prev) => ({
       ...prev,
-      "character:backstory": "",
+      [backstoryFieldKey]: "",
     }));
 
     setImageDataUrl(c.imageDataUrl || "");
@@ -4130,7 +4140,7 @@ Write the character's next reply to the latest user message.`;
       setGenError("Write a backstory prompt first.");
       return;
     }
-    const fieldKey = "character:backstory";
+    const fieldKey = getCharacterBackstoryFieldKey(selectedId);
     setGenError(null);
     setGenLoading(true);
     startGeneratedTextPage(fieldKey);
@@ -4795,7 +4805,7 @@ ${more}`.trim();
 
   async function generateSynopsis() {
     setGenError(null);
-    const fieldKey = "character:synopsis";
+    const fieldKey = getCharacterSynopsisFieldKey(selectedId);
 
     const system =
       "You are a creative editor generating a SYNOPSIS for a roleplay character sheet. The synopsis must be hooky, cinematic, and invite roleplay. Write 3–6 sentences. Include (subtly) a core desire, a flaw, and a tension/stake. Avoid lists, avoid headings, avoid quotes. Do not mention that you are an AI. Return ONLY the synopsis.";
@@ -4918,7 +4928,7 @@ Return only the revised intro message.`;
 
   async function reviseSynopsis() {
     setGenError(null);
-    const fieldKey = "character:synopsis";
+    const fieldKey = getCharacterSynopsisFieldKey(selectedId);
     const feedback = collapseWhitespace(synopsisRevisionFeedback);
     if (!collapseWhitespace(synopsis)) {
       setGenError("Generate or write a synopsis before revising it.");
@@ -7280,7 +7290,7 @@ ${feedback}`,
                       <div><div className="mb-1 text-sm font-medium">Physical appearance</div><div className="flex gap-2"><Input value={appearanceInput} onChange={(e) => setAppearanceInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, () => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput("")))} /><Button variant="secondary" onClick={() => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{physicalAppearance.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setPhysicalAppearance)}>{x} ×</button>)}</div></div>
                       <div><div className="mb-1 text-sm font-medium">Unique traits</div><div className="flex gap-2"><Input value={traitInput} onChange={(e)=>setTraitInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput("")))} /><Button variant="secondary" onClick={()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{traits.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setTraits)}>{x} ×</button>)}</div></div>
                       <div><div className="mb-1 text-sm font-medium">Speech patterns</div><div className="flex gap-2"><Input value={speechPatternInput} onChange={(e)=>setSpeechPatternInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(speechPatternInput, speechPatterns, setSpeechPatterns, ()=>setSpeechPatternInput("")))} /><Button variant="secondary" onClick={()=>addToList(speechPatternInput, speechPatterns, setSpeechPatterns, ()=>setSpeechPatternInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{speechPatterns.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setSpeechPatterns)}>{x} ×</button>)}</div></div>
-                      <div className="space-y-2"><div className="text-sm font-medium">Backstory</div>{renderGeneratedTextarea({ fieldKey: "character:backstory", value: backstoryText, onChange: setBackstoryText, rows: 8, placeholder: "Write backstory here..." })}<Textarea value={backstoryPrompt} onChange={(e) => setBackstoryPrompt(e.target.value)} rows={3} placeholder="Prompt for generate/revise" /><div className="flex gap-2"><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div></div>
+                      <div className="space-y-2"><div className="text-sm font-medium">Backstory</div>{renderGeneratedTextarea({ fieldKey: getCharacterBackstoryFieldKey(selectedId), value: backstoryText, onChange: setBackstoryText, rows: 8, placeholder: "Write backstory here..." })}<Textarea value={backstoryPrompt} onChange={(e) => setBackstoryPrompt(e.target.value)} rows={3} placeholder="Prompt for generate/revise" /><div className="flex gap-2"><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div></div>
                     </div>
                   ) : null}
 
@@ -7475,7 +7485,7 @@ ${feedback}`,
                     <div className="space-y-4">
                       <div className="text-lg font-semibold">Backstory</div>
                       {renderGeneratedTextarea({
-                        fieldKey: "character:backstory",
+                        fieldKey: getCharacterBackstoryFieldKey(selectedId),
                         value: backstoryText,
                         onChange: setBackstoryText,
                         rows: 14,
@@ -7691,7 +7701,7 @@ ${feedback}`,
                         </Button>
                       </div>
                       {renderGeneratedTextarea({
-                        fieldKey: "character:synopsis",
+                        fieldKey: getCharacterSynopsisFieldKey(selectedId),
                         value: synopsis,
                         onChange: setSynopsis,
                         rows: 10,
