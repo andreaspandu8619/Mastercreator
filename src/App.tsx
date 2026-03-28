@@ -264,6 +264,7 @@ const CHARACTER_CARDS_KEY = "mastercreator_character_cards_v1";
 const CHARACTER_EDITOR_DRAFT_KEY = "mastercreator_character_editor_draft_v1";
 const CHAT_PROMPT_PRESETS_KEY = "mastercreator_chat_prompt_presets_v1";
 const ACTIVE_CHAT_PROMPT_PRESET_KEY = "mastercreator_active_chat_prompt_preset_v1";
+const LOCAL_SECRETS_FILENAME = "secrets.json";
 const NOTEPAD_DRAFT_KEY = "mastercreator_notepad_draft_v1";
 const NOTEPAD_NOTES_KEY = "mastercreator_notepad_notes_v1";
 
@@ -1405,6 +1406,7 @@ export default function CharacterCreatorApp() {
   const sexualBehaviorImportRef = useRef<HTMLInputElement | null>(null);
   const characterCardImportRef = useRef<HTMLInputElement | null>(null);
   const chatCharacterCardImportRef = useRef<HTMLInputElement | null>(null);
+  const proxySecretsImportRef = useRef<HTMLInputElement | null>(null);
   const personaImageFileRef = useRef<HTMLInputElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const notepadDragOffsetRef = useRef({ x: 0, y: 0 });
@@ -1486,7 +1488,6 @@ export default function CharacterCreatorApp() {
     const savedProxy = safeParseJSON(localStorage.getItem(PROXY_KEY) || "");
     if (savedProxy && typeof savedProxy === "object") {
       if (typeof (savedProxy as any).chatUrl === "string") setProxyChatUrl((savedProxy as any).chatUrl);
-      if (typeof (savedProxy as any).apiKey === "string") setProxyApiKey((savedProxy as any).apiKey);
       if (typeof (savedProxy as any).model === "string") setProxyModel((savedProxy as any).model);
       const mt = Number((savedProxy as any).maxTokens);
       if (Number.isFinite(mt) && mt > 0) setProxyMaxTokens(Math.floor(mt));
@@ -1859,7 +1860,6 @@ export default function CharacterCreatorApp() {
       PROXY_KEY,
       JSON.stringify({
         chatUrl: proxyChatUrl,
-        apiKey: proxyApiKey,
         model: proxyModel,
         maxTokens: proxyMaxTokens,
         temperature: proxyTemperature,
@@ -1868,7 +1868,7 @@ export default function CharacterCreatorApp() {
         streamingEnabled: proxyStreamingEnabled,
       })
     );
-  }, [proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt, proxyStreamingEnabled]);
+  }, [proxyChatUrl, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt, proxyStreamingEnabled]);
 
   useEffect(() => {
     setProxyTemperatureInput(String(proxyTemperature));
@@ -5213,6 +5213,31 @@ ${feedback}`,
     }
   }
 
+  function exportProxySecretsToFile() {
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      proxyApiKey: proxyApiKey || "",
+    };
+    downloadJSON(LOCAL_SECRETS_FILENAME, payload);
+  }
+
+  async function importProxySecretsFromFile(file: File) {
+    try {
+      const raw = await file.text();
+      const parsed = safeParseJSON(raw);
+      if (!parsed || typeof parsed !== "object") return;
+      const key = typeof (parsed as any).proxyApiKey === "string"
+        ? (parsed as any).proxyApiKey
+        : typeof (parsed as any).apiKey === "string"
+          ? (parsed as any).apiKey
+          : "";
+      if (key) setProxyApiKey(key);
+    } catch {
+      // ignore malformed secrets file
+    }
+  }
+
   function renderLoreEntryFields(
     entry: LorebookEntry,
     onPatch: (patch: Partial<LorebookEntry>) => void,
@@ -8028,6 +8053,28 @@ ${feedback}`,
                 placeholder="Bearer token"
                 type="password"
               />
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" type="button" onClick={() => proxySecretsImportRef.current?.click()}>
+                  <Upload className="h-4 w-4" /> Import secrets.json
+                </Button>
+                <Button variant="secondary" type="button" onClick={exportProxySecretsToFile} disabled={!collapseWhitespace(proxyApiKey)}>
+                  <Download className="h-4 w-4" /> Export secrets.json
+                </Button>
+                <input
+                  ref={proxySecretsImportRef}
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (f) await importProxySecretsFromFile(f);
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </div>
+              <div className="text-xs text-[hsl(var(--muted-foreground))]">
+                API keys are stored locally on your device via <code>secrets.json</code> export/import and are not synced through app settings storage.
+              </div>
             </div>
             <div className="space-y-2">
               <div className="text-sm font-medium">Model name</div>
