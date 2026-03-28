@@ -2933,6 +2933,42 @@ export default function CharacterCreatorApp() {
     }
   }
 
+  function buildCharacterMemoryRecord(c: Character) {
+    const selectedBackstoryIndex = clampIndex(c.selectedBackstoryIndex || 0, Math.max(1, c.backstory?.length || 1));
+    const selectedBackstory = (c.backstory || [""])[selectedBackstoryIndex] || "";
+    const selectedIntroIndex = clampIndex(c.selectedIntroIndex || 0, Math.max(1, c.introMessages?.length || 1));
+    const selectedIntro = (c.introMessages || [""])[selectedIntroIndex] || "";
+
+    return [
+      `Character ID: ${c.id}`,
+      `Name: ${c.name || ""}`,
+      `Gender: ${c.gender || ""}`,
+      `Age: ${c.age === "" ? "" : String(c.age)}`,
+      `Height: ${c.height || ""}`,
+      `Origins: ${c.origins || ""}`,
+      `Race preset: ${c.racePreset || ""}`,
+      `Race: ${c.race || ""}`,
+      `Personalities: ${(c.personalities || []).join(" | ")}`,
+      `Unique traits: ${(c.uniqueTraits || []).join(" | ")}`,
+      `Physical appearance: ${(c.physicalAppearance || []).join(" | ")}`,
+      `Problem response behavior: ${(c.respondToProblems || []).join(" | ")}`,
+      `Sexual behavior: ${(c.sexualBehavior || []).join(" | ")}`,
+      `Speech patterns: ${(c.speechPatterns || []).join(" | ")}`,
+      `Backstory versions: ${(c.backstory || []).join(" || ")}`,
+      `Selected backstory index: ${selectedBackstoryIndex}`,
+      `Selected backstory: ${selectedBackstory}`,
+      `System rules: ${c.systemRules || ""}`,
+      `Selected system rule IDs: ${(c.selectedSystemRuleIds || []).join(", ")}`,
+      `Synopsis: ${c.synopsis || ""}`,
+      `Intro message versions: ${(c.introMessages || []).join(" || ")}`,
+      `Selected intro index: ${selectedIntroIndex}`,
+      `Selected intro message: ${selectedIntro}`,
+      `Assigned lorebooks: ${(c.assignedLorebookIds || []).join(", ")}`,
+      `Created at: ${c.createdAt || ""}`,
+      `Updated at: ${c.updatedAt || ""}`,
+    ].join("\n");
+  }
+
   function getCardContextForCharacter(c: Character) {
     const ownerCard = characterCards.find((card) => (card.characterIds || []).includes(c.id));
     if (!ownerCard) return "Card context: (none)";
@@ -2944,16 +2980,28 @@ export default function CharacterCreatorApp() {
       : null;
 
     return [
+      "PERMANENT MEMORY BLOCK (treat as canonical for the full chat session):",
+      "- Store and preserve every detail below as long-term token memory.",
+      "- Never contradict these records unless the user explicitly updates them in chat.",
+      `Card ID: ${ownerCard.id}`,
       `Card name: ${ownerCard.name || ""}`,
+      `Card chat profile character ID: ${ownerCard.chatProfileCharacterId || ""}`,
       `Card system rules: ${ownerCard.systemRules || ""}`,
-      `Card selected rules: ${ownerCard.selectedSystemRuleIds.join(", ")}`,
-      `Card first messages: ${(ownerCard.firstMessageMessages || []).join(" | ")}`,
+      `Card selected rule IDs: ${(ownerCard.selectedSystemRuleIds || []).join(", ")}`,
+      `Card first messages: ${(ownerCard.firstMessageMessages || []).join(" || ")}`,
+      `Card selected first message index: ${clampIndex(ownerCard.selectedFirstMessageIndex || 0, Math.max(1, ownerCard.firstMessageMessages?.length || 1))}`,
+      `Relationship story ID: ${ownerCard.relationshipStoryId || ""}`,
       `Scenario: ${relationshipStory?.scenario || ""}`,
       `Story first message: ${relationshipStory?.firstMessage || ""}`,
+      `Story first message versions: ${(relationshipStory?.firstMessageVersions || []).join(" || ")}`,
+      `Story first message selected index: ${relationshipStory?.selectedFirstMessageIndex ?? 0}`,
       `Story system rules: ${relationshipStory?.systemRules || ""}`,
+      `Story selected system rule IDs: ${(relationshipStory?.selectedSystemRuleIds || []).join(", ")}`,
       `Story synopsis: ${relationshipStory?.synopsis || ""}`,
+      `Story assigned lorebooks: ${(relationshipStory?.assignedLorebookIds || []).join(", ")}`,
       `Relationships: ${(relationshipStory?.relationships || []).map((r) => `${r.fromCharacterId}->${r.toCharacterId} (${r.relationType}/${r.alignment}) ${r.details}`).join(" | ")}`,
-      `All card characters context:\n${cardCharacters.map((ch) => characterToTxt(ch)).join("\n")}`,
+      "All character records in this card:",
+      ...cardCharacters.map((ch, idx) => `--- Character ${idx + 1} ---\n${buildCharacterMemoryRecord(ch)}`),
     ].join("\n");
   }
 
@@ -2970,8 +3018,19 @@ export default function CharacterCreatorApp() {
     const persona = collapseWhitespace(
       selectedPersona ? `${selectedPersona.name}: ${selectedPersona.description}. Traits: ${selectedPersona.traitsRaw || ""}` : personaText
     );
+    const selectedBackstoryIndex = clampIndex(c.selectedBackstoryIndex || 0, Math.max(1, c.backstory?.length || 1));
+    const selectedIntroIndex = clampIndex(c.selectedIntroIndex || 0, Math.max(1, c.introMessages?.length || 1));
     return [
-      "You are roleplaying as the following character. Stay in-character and speak naturally.",
+      "LOW-LEVEL ROLEPLAY CORE (ALWAYS ACTIVE)",
+      "1) Identity lock: You are ONLY the selected character. Never break character unless user explicitly asks for OOC.",
+      "2) Canon lock: Treat all character/card memory in this prompt as permanent session memory and canonical truth.",
+      "3) Personality lock: Every line must match the character's personalities, traits, speech patterns, and behavior rules.",
+      "4) Style lock: Keep writing concise and natural. Avoid verbosity, grandiose rhetoric, hyperbole, purple prose, or melodramatic flourishes.",
+      "5) Continuity lock: Keep continuity with prior messages and known lore. If details conflict, prefer explicit user corrections in chat.",
+      "6) Scope lock: Do not invent major facts that contradict the memory block. Ask short clarifying questions when necessary.",
+      "7) Output lock: Return only the in-character reply text (no meta commentary, no bullet points unless user requests).",
+      "",
+      "ACTIVE CHARACTER RECORD:",
       `Name: ${c.name}`,
       `Gender: ${c.gender || ""}`,
       `Age: ${c.age === "" ? "" : String(c.age)}`,
@@ -2980,12 +3039,23 @@ export default function CharacterCreatorApp() {
       `Race: ${c.race || ""}`,
       `Personalities: ${(c.personalities || []).join(", ")}`,
       `Unique traits: ${(c.uniqueTraits || []).join(", ")}`,
-      `Backstory: ${(c.backstory || []).join(" | ")}`,
+      `Physical appearance: ${(c.physicalAppearance || []).join(", ")}`,
+      `Respond-to-problems behavior: ${(c.respondToProblems || []).join(", ")}`,
+      `Sexual behavior: ${(c.sexualBehavior || []).join(", ")}`,
+      `Speech patterns: ${(c.speechPatterns || []).join(", ")}`,
+      `Backstory versions: ${(c.backstory || []).join(" || ")}`,
+      `Selected backstory index: ${selectedBackstoryIndex}`,
+      `Selected backstory: ${(c.backstory || [""])[selectedBackstoryIndex] || ""}`,
       `Synopsis: ${c.synopsis || ""}`,
       `System rules: ${c.systemRules || ""}`,
+      `Selected system rule IDs: ${(c.selectedSystemRuleIds || []).join(", ")}`,
+      `Intro messages: ${(c.introMessages || []).join(" || ")}`,
+      `Selected intro index: ${selectedIntroIndex}`,
+      `Selected intro message: ${(c.introMessages || [""])[selectedIntroIndex] || ""}`,
+      `Assigned lorebooks: ${(c.assignedLorebookIds || []).join(", ")}`,
       getCardContextForCharacter(c),
       persona ? `User persona: ${persona}` : "User persona: (not provided)",
-      "Respond as the character in chat. Keep continuity with prior messages.",
+      "Respond as this character in chat.",
     ].join("\n");
   }
 
@@ -4462,13 +4532,19 @@ ${prompt}`,
 
     const lorebookContext = getAssignedLorebookContext(args.lorebookIds || []);
     const customPrompt = collapseWhitespace(args.customPromptOverride ?? proxyCustomPrompt);
-    const effectiveSystem = [
-      customPrompt ? `Global behavior instructions:
-${customPrompt}` : "",
+    const defaultSystem = [
       args.system,
       lorebookContext ? `Always-active assigned lorebooks context:
 ${lorebookContext}` : "",
     ].filter(Boolean).join("\n\n");
+    const effectiveSystem = customPrompt
+      ? [
+          `USER CUSTOM PROMPT (HIGHEST PRIORITY, unless it conflicts with safety policy):
+${customPrompt}`,
+          `DEFAULT SYSTEM PROMPT (still required):
+${defaultSystem}`,
+        ].join("\n\n")
+      : defaultSystem;
 
     const res = await fetch(chatUrl, {
       method: "POST",
