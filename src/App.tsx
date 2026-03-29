@@ -265,6 +265,7 @@ const CHARACTER_EDITOR_DRAFT_KEY = "mastercreator_character_editor_draft_v1";
 const CHAT_PROMPT_PRESETS_KEY = "mastercreator_chat_prompt_presets_v1";
 const ACTIVE_CHAT_PROMPT_PRESET_KEY = "mastercreator_active_chat_prompt_preset_v1";
 const LOCAL_SECRETS_FILENAME = "secrets.json";
+const LOCAL_PROXY_API_KEY_KEY = "mastercreator_proxy_api_key_local_v1";
 const NOTEPAD_DRAFT_KEY = "mastercreator_notepad_draft_v1";
 const NOTEPAD_NOTES_KEY = "mastercreator_notepad_notes_v1";
 
@@ -1501,6 +1502,8 @@ export default function CharacterCreatorApp() {
       if (typeof (savedProxy as any).customPrompt === "string") setProxyCustomPrompt((savedProxy as any).customPrompt);
       if (typeof (savedProxy as any).streamingEnabled === "boolean") setProxyStreamingEnabled((savedProxy as any).streamingEnabled);
     }
+    const savedProxyApiKey = localStorage.getItem(LOCAL_PROXY_API_KEY_KEY);
+    if (typeof savedProxyApiKey === "string") setProxyApiKey(savedProxyApiKey);
 
     const savedPersona = localStorage.getItem(PERSONA_KEY);
     if (typeof savedPersona === "string") setPersonaText(savedPersona);
@@ -1869,6 +1872,10 @@ export default function CharacterCreatorApp() {
       })
     );
   }, [proxyChatUrl, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt, proxyStreamingEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem(LOCAL_PROXY_API_KEY_KEY, proxyApiKey || "");
+  }, [proxyApiKey]);
 
   useEffect(() => {
     setProxyTemperatureInput(String(proxyTemperature));
@@ -8073,7 +8080,7 @@ ${feedback}`,
                 />
               </div>
               <div className="text-xs text-[hsl(var(--muted-foreground))]">
-                API keys are stored locally on your device via <code>secrets.json</code> export/import and are not synced through app settings storage.
+                API keys are saved locally on this device (persist across reloads/restarts). You can also export/import <code>secrets.json</code> as backup.
               </div>
             </div>
             <div className="space-y-2">
