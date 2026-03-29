@@ -5494,7 +5494,6 @@ ${feedback}`,
     { id: "definition", label: "Characters" },
     { id: "relationships", label: "Relationships" },
     { id: "system", label: "System Rules" },
-    { id: "intro", label: "First Message" },
     { id: "synopsis", label: "Synopsis" },
   ];
 
@@ -6315,7 +6314,6 @@ ${feedback}`,
             <div className="flex flex-wrap gap-2">
               {[
                 ["scenario", "Scenario"],
-                ["first_message", "First Message"],
                 ["system_rules", "System Rules"],
                 ["relationships", "Relationships"],
                 ["synopsis", "Synopsis"],
@@ -7094,20 +7092,7 @@ ${feedback}`,
           )
         ) : page === "library" ? (
             <div className="anim-page mt-10">
-              <div className="mx-auto grid max-w-4xl gap-6 md:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setChatCharacter(null);
-                    setActiveChatSessionId(null);
-                    setChatMessages([]);
-                    navigateTo("chat");
-                  }}
-                  className="aspect-[3/4] rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-8 text-left shadow-sm"
-                >
-                  <div className="text-3xl font-semibold">Chats</div>
-                  <div className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">View and resume existing chat sessions.</div>
-                </button>
+              <div className="mx-auto grid max-w-2xl gap-6">
                 <button
                   type="button"
                   onClick={() => navigateTo("characters")}
@@ -7193,7 +7178,6 @@ ${feedback}`,
                         <Trash2 className="h-4 w-4" /> Delete
                       </Button>
                       <Button variant="secondary" onClick={() => { setCharacterCardActionId(null); openCharacterCardForEditing(card); }}>Edit</Button>
-                      <Button variant="primary" onClick={() => openChatFromCharacterCard(card)} disabled={!card.characterIds.length}>Chat</Button>
                     </div>
                   </div>
                 );
