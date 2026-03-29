@@ -5504,6 +5504,13 @@ ${feedback}`,
     setCharacterCardActionId(null);
   }
 
+  function deleteCharacterCard(cardId: string) {
+    setCharacterCards((prev) => prev.filter((card) => card.id !== cardId));
+    if (activeCharacterCardId === cardId) setActiveCharacterCardId(null);
+    if (chatCardSelectionId === cardId) setChatCardSelectionId("");
+    if (characterCardActionId === cardId) setCharacterCardActionId(null);
+  }
+
   return (
     <AppErrorBoundary>
     <div
@@ -7163,6 +7170,15 @@ ${feedback}`,
                       </div>
                     </div>
                     <div className="flex justify-end gap-2">
+                      <Button
+                        variant="danger"
+                        onClick={() => {
+                          if (!window.confirm(`Delete "${card.name || "Character Card"}"?`)) return;
+                          deleteCharacterCard(card.id);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" /> Delete
+                      </Button>
                       <Button variant="secondary" onClick={() => { setCharacterCardActionId(null); openCharacterCardForEditing(card); }}>Edit</Button>
                       <Button variant="primary" onClick={() => openChatFromCharacterCard(card)} disabled={!card.characterIds.length}>Chat</Button>
                     </div>
