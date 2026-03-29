@@ -17,7 +17,7 @@ import {
   Upload,
   X,
   Sparkles,
-  Menu,
+  MoreHorizontal,
   SendHorizontal,
 } from "lucide-react";
 
@@ -264,6 +264,8 @@ const CHARACTER_CARDS_KEY = "mastercreator_character_cards_v1";
 const CHARACTER_EDITOR_DRAFT_KEY = "mastercreator_character_editor_draft_v1";
 const CHAT_PROMPT_PRESETS_KEY = "mastercreator_chat_prompt_presets_v1";
 const ACTIVE_CHAT_PROMPT_PRESET_KEY = "mastercreator_active_chat_prompt_preset_v1";
+const LOCAL_SECRETS_FILENAME = "secrets.json";
+const LOCAL_PROXY_API_KEY_KEY = "mastercreator_proxy_api_key_local_v1";
 const NOTEPAD_DRAFT_KEY = "mastercreator_notepad_draft_v1";
 const NOTEPAD_NOTES_KEY = "mastercreator_notepad_notes_v1";
 
@@ -756,7 +758,7 @@ function normalizeCharacterCard(x: any): CharacterCard | null {
     relationshipStoryId: typeof x.relationshipStoryId === "string" ? x.relationshipStoryId : undefined,
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
     selectedSystemRuleIds: normalizeStringArray(x.selectedSystemRuleIds),
-    firstMessageMessages: normalizeStringArray(x.firstMessageMessages).length ? normalizeStringArray(x.firstMessageMessages) : [""],
+    firstMessageMessages: normalizeTextArray(x.firstMessageMessages).length ? normalizeTextArray(x.firstMessageMessages) : [""],
     selectedFirstMessageIndex: Number.isFinite(Number(x.selectedFirstMessageIndex)) ? Math.max(0, Number(x.selectedFirstMessageIndex)) : 0,
     createdAt: typeof x.createdAt === "string" ? x.createdAt : now,
     updatedAt: typeof x.updatedAt === "string" ? x.updatedAt : now,
@@ -1055,8 +1057,10 @@ export default function CharacterCreatorApp() {
   const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null);
   const [editingMessageText, setEditingMessageText] = useState("");
   const [chatIntroIndex, setChatIntroIndex] = useState(0);
-  const [chatSidebarOpen, setChatSidebarOpen] = useState(true);
   const [chatWarning, setChatWarning] = useState<string | null>(null);
+  const [chatTopMenuOpen, setChatTopMenuOpen] = useState(false);
+  const [characterCardActionId, setCharacterCardActionId] = useState<string | null>(null);
+  const [newChatPickerOpen, setNewChatPickerOpen] = useState(false);
 
   const [query, setQuery] = useState("");
   const [dragCharacterId, setDragCharacterId] = useState<string | null>(null);
@@ -1403,6 +1407,7 @@ export default function CharacterCreatorApp() {
   const sexualBehaviorImportRef = useRef<HTMLInputElement | null>(null);
   const characterCardImportRef = useRef<HTMLInputElement | null>(null);
   const chatCharacterCardImportRef = useRef<HTMLInputElement | null>(null);
+  const proxySecretsImportRef = useRef<HTMLInputElement | null>(null);
   const personaImageFileRef = useRef<HTMLInputElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const notepadDragOffsetRef = useRef({ x: 0, y: 0 });
@@ -1484,7 +1489,6 @@ export default function CharacterCreatorApp() {
     const savedProxy = safeParseJSON(localStorage.getItem(PROXY_KEY) || "");
     if (savedProxy && typeof savedProxy === "object") {
       if (typeof (savedProxy as any).chatUrl === "string") setProxyChatUrl((savedProxy as any).chatUrl);
-      if (typeof (savedProxy as any).apiKey === "string") setProxyApiKey((savedProxy as any).apiKey);
       if (typeof (savedProxy as any).model === "string") setProxyModel((savedProxy as any).model);
       const mt = Number((savedProxy as any).maxTokens);
       if (Number.isFinite(mt) && mt > 0) setProxyMaxTokens(Math.floor(mt));
@@ -1498,6 +1502,8 @@ export default function CharacterCreatorApp() {
       if (typeof (savedProxy as any).customPrompt === "string") setProxyCustomPrompt((savedProxy as any).customPrompt);
       if (typeof (savedProxy as any).streamingEnabled === "boolean") setProxyStreamingEnabled((savedProxy as any).streamingEnabled);
     }
+    const savedProxyApiKey = localStorage.getItem(LOCAL_PROXY_API_KEY_KEY);
+    if (typeof savedProxyApiKey === "string") setProxyApiKey(savedProxyApiKey);
 
     const savedPersona = localStorage.getItem(PERSONA_KEY);
     if (typeof savedPersona === "string") setPersonaText(savedPersona);
@@ -1853,11 +1859,11 @@ export default function CharacterCreatorApp() {
   }, []);
 
   useEffect(() => {
+    if (!hydrated) return;
     localStorage.setItem(
       PROXY_KEY,
       JSON.stringify({
         chatUrl: proxyChatUrl,
-        apiKey: proxyApiKey,
         model: proxyModel,
         maxTokens: proxyMaxTokens,
         temperature: proxyTemperature,
@@ -1866,29 +1872,37 @@ export default function CharacterCreatorApp() {
         streamingEnabled: proxyStreamingEnabled,
       })
     );
-  }, [proxyChatUrl, proxyApiKey, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt, proxyStreamingEnabled]);
+  }, [hydrated, proxyChatUrl, proxyModel, proxyMaxTokens, proxyTemperature, proxyContextSize, proxyCustomPrompt, proxyStreamingEnabled]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(LOCAL_PROXY_API_KEY_KEY, proxyApiKey || "");
+  }, [hydrated, proxyApiKey]);
 
   useEffect(() => {
     setProxyTemperatureInput(String(proxyTemperature));
   }, [proxyTemperature]);
 
   useEffect(() => {
+    if (!hydrated) return;
     try {
       localStorage.setItem(PERSONA_KEY, personaText);
     } catch (e: any) {
       setStorageError(e?.message ? String(e.message) : "Failed to save persona text.");
     }
-  }, [personaText]);
+  }, [hydrated, personaText]);
 
   useEffect(() => {
+    if (!hydrated) return;
     try {
       localStorage.setItem(PERSONAS_KEY, JSON.stringify(personas));
     } catch (e: any) {
       setStorageError(e?.message ? String(e.message) : "Failed to save personas.");
     }
-  }, [personas]);
+  }, [hydrated, personas]);
 
   useEffect(() => {
+    if (!hydrated) return;
     if (!personas.length) {
       setActivePersonaId("");
       try {
@@ -1903,15 +1917,17 @@ export default function CharacterCreatorApp() {
     try {
       localStorage.setItem(ACTIVE_PERSONA_ID_KEY, activePersonaId);
     } catch {}
-  }, [personas, activePersonaId]);
+  }, [hydrated, personas, activePersonaId]);
 
   useEffect(() => {
+    if (!hydrated) return;
     try {
       localStorage.setItem(CHAT_PROMPT_PRESETS_KEY, JSON.stringify(chatPromptPresets));
     } catch {}
-  }, [chatPromptPresets]);
+  }, [hydrated, chatPromptPresets]);
 
   useEffect(() => {
+    if (!hydrated) return;
     if (!chatPromptPresets.length) {
       setActiveChatPromptPresetId("");
       try {
@@ -1926,9 +1942,10 @@ export default function CharacterCreatorApp() {
     try {
       localStorage.setItem(ACTIVE_CHAT_PROMPT_PRESET_KEY, activeChatPromptPresetId);
     } catch {}
-  }, [chatPromptPresets, activeChatPromptPresetId]);
+  }, [hydrated, chatPromptPresets, activeChatPromptPresetId]);
 
   useEffect(() => {
+    if (!hydrated) return;
     try {
       localStorage.setItem(
         NOTEPAD_DRAFT_KEY,
@@ -1943,13 +1960,14 @@ export default function CharacterCreatorApp() {
         })
       );
     } catch {}
-  }, [notepadText, notepadNameInput, notepadPosition, notepadSize]);
+  }, [hydrated, notepadText, notepadNameInput, notepadPosition, notepadSize]);
 
   useEffect(() => {
+    if (!hydrated) return;
     try {
       localStorage.setItem(NOTEPAD_NOTES_KEY, JSON.stringify(notepadNotes));
     } catch {}
-  }, [notepadNotes]);
+  }, [hydrated, notepadNotes]);
 
   useEffect(() => {
     if (!notepadDragging && !notepadResizing) return;
@@ -1978,8 +1996,9 @@ export default function CharacterCreatorApp() {
   }, [notepadDragging, notepadResizing]);
 
   useEffect(() => {
+    if (!hydrated) return;
     localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(chatSessions));
-  }, [chatSessions]);
+  }, [hydrated, chatSessions]);
 
   useEffect(() => {
     if (!activeChatSessionId) return;
@@ -1987,16 +2006,19 @@ export default function CharacterCreatorApp() {
   }, [activeChatSessionId, chatMessages.length]);
 
   useEffect(() => {
+    if (!hydrated) return;
     localStorage.setItem(STORIES_KEY, JSON.stringify(stories));
-  }, [stories]);
+  }, [hydrated, stories]);
 
   useEffect(() => {
+    if (!hydrated) return;
     localStorage.setItem(LOREBOOKS_KEY, JSON.stringify(lorebooks));
-  }, [lorebooks]);
+  }, [hydrated, lorebooks]);
 
   useEffect(() => {
+    if (!hydrated) return;
     localStorage.setItem(CHARACTER_CARDS_KEY, JSON.stringify(characterCards));
-  }, [characterCards]);
+  }, [hydrated, characterCards]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -2017,6 +2039,7 @@ export default function CharacterCreatorApp() {
 
 
   useEffect(() => {
+    if (page !== "library") return;
     const card = characterCards.find((c) => c.id === activeCharacterCardId);
     if (!card) return;
     setCardSystemRules(card.systemRules || "");
@@ -2026,10 +2049,10 @@ export default function CharacterCreatorApp() {
     setIntroIndex(clampIndex(card.selectedFirstMessageIndex || 0, msgs.length));
     setIntroVersionHistories(msgs.map((m) => [m || ""]));
     setIntroVersionIndices(msgs.map(() => 0));
-  }, [activeCharacterCardId]);
+  }, [activeCharacterCardId, page, characterCards]);
 
   useEffect(() => {
-    if (!hydrated || !activeCharacterCardId) return;
+    if (!hydrated || !activeCharacterCardId || page !== "library") return;
     setCharacterCards((prev) => prev.map((card) => card.id !== activeCharacterCardId ? card : {
       ...card,
       systemRules: cardSystemRules,
@@ -2038,7 +2061,7 @@ export default function CharacterCreatorApp() {
       selectedFirstMessageIndex: introIndex,
       updatedAt: new Date().toISOString(),
     }));
-  }, [hydrated, activeCharacterCardId, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex]);
+  }, [hydrated, activeCharacterCardId, page, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -2055,6 +2078,21 @@ export default function CharacterCreatorApp() {
       setCharacterCardNameInput(characterCards[0].name);
     }
   }, [hydrated, characterCards, activeCharacterCardId]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    setCharacterCards((prev) =>
+      prev.map((card) => {
+        if (!card.characterIds.length) return card;
+        if (card.chatProfileCharacterId && card.characterIds.includes(card.chatProfileCharacterId)) return card;
+        return {
+          ...card,
+          chatProfileCharacterId: card.characterIds[0],
+          updatedAt: new Date().toISOString(),
+        };
+      })
+    );
+  }, [hydrated]);
 
   useEffect(() => {
     if (!characterCards.length) {
@@ -2206,6 +2244,14 @@ export default function CharacterCreatorApp() {
       : collapseWhitespace(customRace);
   }
 
+  function getCharacterBackstoryFieldKey(characterId?: string | null) {
+    return `character:backstory:${characterId || "draft"}`;
+  }
+
+  function getCharacterSynopsisFieldKey(characterId?: string | null) {
+    return `character:synopsis:${characterId || "draft"}`;
+  }
+
   function validate(): string | null {
     if (age !== "" && (Number.isNaN(Number(age)) || Number(age) < 0))
       return "Age must be a positive number.";
@@ -2236,11 +2282,12 @@ export default function CharacterCreatorApp() {
     const baseIntro = introMessages.length ? introMessages : [""];
     const safeIntroIndex = clampIndex(introIndex, Math.max(1, baseIntro.length));
 
-    const backstoryPages = generatedTextStates["character:backstory"]?.pages || [];
+    const backstoryFieldKey = getCharacterBackstoryFieldKey(selectedId);
+    const backstoryPages = generatedTextStates[backstoryFieldKey]?.pages || [];
     const backstoryVersions = backstoryPages.length
       ? backstoryPages.map((p) => p.text).filter((x) => collapseWhitespace(x))
       : (collapseWhitespace(backstoryText) ? [backstoryText] : []);
-    const selectedBackstoryPageId = iterationSelections["character:backstory"];
+    const selectedBackstoryPageId = iterationSelections[backstoryFieldKey];
     const selectedBackstoryIndex = backstoryPages.length && selectedBackstoryPageId
       ? Math.max(0, backstoryPages.findIndex((p) => p.id === selectedBackstoryPageId))
       : Math.max(0, backstoryVersions.length - 1);
@@ -2311,9 +2358,9 @@ export default function CharacterCreatorApp() {
   }, [hydrated, editorDraftRestored, characters]);
 
   useEffect(() => {
-    if (!hydrated || !editorDraftRestored) return;
+    if (!hydrated || !editorDraftRestored || page !== "create") return;
     persistCharacterEditorDraft();
-  }, [hydrated, editorDraftRestored, selectedId, backstoryText, synopsis, introMessages, introIndex]);
+  }, [hydrated, editorDraftRestored, page, selectedId, backstoryText, synopsis, introMessages, introIndex]);
 
 
   useEffect(() => {
@@ -2509,7 +2556,14 @@ export default function CharacterCreatorApp() {
     setSelectedId(draft.id);
     persistCharacterEditorDraft();
     if (activeCharacterCardId) {
-      setCharacterCards((prev) => prev.map((card) => card.id !== activeCharacterCardId ? card : { ...card, characterIds: card.characterIds.includes(draft.id) ? card.characterIds : [...card.characterIds, draft.id], updatedAt: new Date().toISOString() }));
+      setCharacterCards((prev) => prev.map((card) => {
+        if (card.id !== activeCharacterCardId) return card;
+        const nextIds = card.characterIds.includes(draft.id) ? card.characterIds : [...card.characterIds, draft.id];
+        const nextChatProfileId = card.chatProfileCharacterId && nextIds.includes(card.chatProfileCharacterId)
+          ? card.chatProfileCharacterId
+          : (nextIds[0] || "");
+        return { ...card, characterIds: nextIds, chatProfileCharacterId: nextChatProfileId, updatedAt: new Date().toISOString() };
+      }));
     }
     navigateTo("create");
   }
@@ -2608,6 +2662,20 @@ export default function CharacterCreatorApp() {
   function loadCharacterIntoForm(c: Character) {
     setSelectedId(c.id);
 
+    const normalizedBackstory = Array.isArray(c.backstory) ? c.backstory : [];
+    const safeBackstoryIndex = clampIndex(c.selectedBackstoryIndex ?? 0, Math.max(1, normalizedBackstory.length));
+    const selectedBackstoryText = normalizedBackstory[safeBackstoryIndex] || "";
+    const backstoryFieldKey = getCharacterBackstoryFieldKey(c.id);
+
+    setGeneratedTextStates((prev) => ({
+      ...prev,
+      [backstoryFieldKey]: { pages: [], activeIndex: 0 },
+    }));
+    setIterationSelections((prev) => ({
+      ...prev,
+      [backstoryFieldKey]: "",
+    }));
+
     setImageDataUrl(c.imageDataUrl || "");
     setImageError(null);
 
@@ -2627,7 +2695,9 @@ export default function CharacterCreatorApp() {
     setProblemBehavior(Array.isArray(c.respondToProblems) ? [...c.respondToProblems] : []);
     setSexualBehavior(Array.isArray(c.sexualBehavior) ? [...c.sexualBehavior] : []);
     setSpeechPatterns(Array.isArray(c.speechPatterns) ? [...c.speechPatterns] : []);
-    setBackstory(Array.isArray(c.backstory) ? [...c.backstory] : []);
+    setBackstory([...normalizedBackstory]);
+    setBackstoryText(selectedBackstoryText);
+    setBackstoryPrompt("");
     setTraitInput("");
     setAppearanceInput("");
     setSexualBehaviorInput("");
@@ -2917,6 +2987,42 @@ export default function CharacterCreatorApp() {
     }
   }
 
+  function buildCharacterMemoryRecord(c: Character) {
+    const selectedBackstoryIndex = clampIndex(c.selectedBackstoryIndex || 0, Math.max(1, c.backstory?.length || 1));
+    const selectedBackstory = (c.backstory || [""])[selectedBackstoryIndex] || "";
+    const selectedIntroIndex = clampIndex(c.selectedIntroIndex || 0, Math.max(1, c.introMessages?.length || 1));
+    const selectedIntro = (c.introMessages || [""])[selectedIntroIndex] || "";
+
+    return [
+      `Character ID: ${c.id}`,
+      `Name: ${c.name || ""}`,
+      `Gender: ${c.gender || ""}`,
+      `Age: ${c.age === "" ? "" : String(c.age)}`,
+      `Height: ${c.height || ""}`,
+      `Origins: ${c.origins || ""}`,
+      `Race preset: ${c.racePreset || ""}`,
+      `Race: ${c.race || ""}`,
+      `Personalities: ${(c.personalities || []).join(" | ")}`,
+      `Unique traits: ${(c.uniqueTraits || []).join(" | ")}`,
+      `Physical appearance: ${(c.physicalAppearance || []).join(" | ")}`,
+      `Problem response behavior: ${(c.respondToProblems || []).join(" | ")}`,
+      `Sexual behavior: ${(c.sexualBehavior || []).join(" | ")}`,
+      `Speech patterns: ${(c.speechPatterns || []).join(" | ")}`,
+      `Backstory versions: ${(c.backstory || []).join(" || ")}`,
+      `Selected backstory index: ${selectedBackstoryIndex}`,
+      `Selected backstory: ${selectedBackstory}`,
+      `System rules: ${c.systemRules || ""}`,
+      `Selected system rule IDs: ${(c.selectedSystemRuleIds || []).join(", ")}`,
+      `Synopsis: ${c.synopsis || ""}`,
+      `Intro message versions: ${(c.introMessages || []).join(" || ")}`,
+      `Selected intro index: ${selectedIntroIndex}`,
+      `Selected intro message: ${selectedIntro}`,
+      `Assigned lorebooks: ${(c.assignedLorebookIds || []).join(", ")}`,
+      `Created at: ${c.createdAt || ""}`,
+      `Updated at: ${c.updatedAt || ""}`,
+    ].join("\n");
+  }
+
   function getCardContextForCharacter(c: Character) {
     const ownerCard = characterCards.find((card) => (card.characterIds || []).includes(c.id));
     if (!ownerCard) return "Card context: (none)";
@@ -2928,16 +3034,28 @@ export default function CharacterCreatorApp() {
       : null;
 
     return [
+      "PERMANENT MEMORY BLOCK (treat as canonical for the full chat session):",
+      "- Store and preserve every detail below as long-term token memory.",
+      "- Never contradict these records unless the user explicitly updates them in chat.",
+      `Card ID: ${ownerCard.id}`,
       `Card name: ${ownerCard.name || ""}`,
+      `Card chat profile character ID: ${ownerCard.chatProfileCharacterId || ""}`,
       `Card system rules: ${ownerCard.systemRules || ""}`,
-      `Card selected rules: ${ownerCard.selectedSystemRuleIds.join(", ")}`,
-      `Card first messages: ${(ownerCard.firstMessageMessages || []).join(" | ")}`,
+      `Card selected rule IDs: ${(ownerCard.selectedSystemRuleIds || []).join(", ")}`,
+      `Card first messages: ${(ownerCard.firstMessageMessages || []).join(" || ")}`,
+      `Card selected first message index: ${clampIndex(ownerCard.selectedFirstMessageIndex || 0, Math.max(1, ownerCard.firstMessageMessages?.length || 1))}`,
+      `Relationship story ID: ${ownerCard.relationshipStoryId || ""}`,
       `Scenario: ${relationshipStory?.scenario || ""}`,
       `Story first message: ${relationshipStory?.firstMessage || ""}`,
+      `Story first message versions: ${(relationshipStory?.firstMessageVersions || []).join(" || ")}`,
+      `Story first message selected index: ${relationshipStory?.selectedFirstMessageIndex ?? 0}`,
       `Story system rules: ${relationshipStory?.systemRules || ""}`,
+      `Story selected system rule IDs: ${(relationshipStory?.selectedSystemRuleIds || []).join(", ")}`,
       `Story synopsis: ${relationshipStory?.synopsis || ""}`,
+      `Story assigned lorebooks: ${(relationshipStory?.assignedLorebookIds || []).join(", ")}`,
       `Relationships: ${(relationshipStory?.relationships || []).map((r) => `${r.fromCharacterId}->${r.toCharacterId} (${r.relationType}/${r.alignment}) ${r.details}`).join(" | ")}`,
-      `All card characters context:\n${cardCharacters.map((ch) => characterToTxt(ch)).join("\n")}`,
+      "All character records in this card:",
+      ...cardCharacters.map((ch, idx) => `--- Character ${idx + 1} ---\n${buildCharacterMemoryRecord(ch)}`),
     ].join("\n");
   }
 
@@ -2954,8 +3072,19 @@ export default function CharacterCreatorApp() {
     const persona = collapseWhitespace(
       selectedPersona ? `${selectedPersona.name}: ${selectedPersona.description}. Traits: ${selectedPersona.traitsRaw || ""}` : personaText
     );
+    const selectedBackstoryIndex = clampIndex(c.selectedBackstoryIndex || 0, Math.max(1, c.backstory?.length || 1));
+    const selectedIntroIndex = clampIndex(c.selectedIntroIndex || 0, Math.max(1, c.introMessages?.length || 1));
     return [
-      "You are roleplaying as the following character. Stay in-character and speak naturally.",
+      "LOW-LEVEL ROLEPLAY CORE (ALWAYS ACTIVE)",
+      "1) Identity lock: You are ONLY the selected character. Never break character unless user explicitly asks for OOC.",
+      "2) Canon lock: Treat all character/card memory in this prompt as permanent session memory and canonical truth.",
+      "3) Personality lock: Every line must match the character's personalities, traits, speech patterns, and behavior rules.",
+      "4) Style lock: Keep writing concise and natural. Avoid verbosity, grandiose rhetoric, hyperbole, purple prose, or melodramatic flourishes.",
+      "5) Continuity lock: Keep continuity with prior messages and known lore. If details conflict, prefer explicit user corrections in chat.",
+      "6) Scope lock: Do not invent major facts that contradict the memory block. Ask short clarifying questions when necessary.",
+      "7) Output lock: Return only the in-character reply text (no meta commentary, no bullet points unless user requests).",
+      "",
+      "ACTIVE CHARACTER RECORD:",
       `Name: ${c.name}`,
       `Gender: ${c.gender || ""}`,
       `Age: ${c.age === "" ? "" : String(c.age)}`,
@@ -2964,12 +3093,23 @@ export default function CharacterCreatorApp() {
       `Race: ${c.race || ""}`,
       `Personalities: ${(c.personalities || []).join(", ")}`,
       `Unique traits: ${(c.uniqueTraits || []).join(", ")}`,
-      `Backstory: ${(c.backstory || []).join(" | ")}`,
+      `Physical appearance: ${(c.physicalAppearance || []).join(", ")}`,
+      `Respond-to-problems behavior: ${(c.respondToProblems || []).join(", ")}`,
+      `Sexual behavior: ${(c.sexualBehavior || []).join(", ")}`,
+      `Speech patterns: ${(c.speechPatterns || []).join(", ")}`,
+      `Backstory versions: ${(c.backstory || []).join(" || ")}`,
+      `Selected backstory index: ${selectedBackstoryIndex}`,
+      `Selected backstory: ${(c.backstory || [""])[selectedBackstoryIndex] || ""}`,
       `Synopsis: ${c.synopsis || ""}`,
       `System rules: ${c.systemRules || ""}`,
+      `Selected system rule IDs: ${(c.selectedSystemRuleIds || []).join(", ")}`,
+      `Intro messages: ${(c.introMessages || []).join(" || ")}`,
+      `Selected intro index: ${selectedIntroIndex}`,
+      `Selected intro message: ${(c.introMessages || [""])[selectedIntroIndex] || ""}`,
+      `Assigned lorebooks: ${(c.assignedLorebookIds || []).join(", ")}`,
       getCardContextForCharacter(c),
       persona ? `User persona: ${persona}` : "User persona: (not provided)",
-      "Respond as the character in chat. Keep continuity with prior messages.",
+      "Respond as this character in chat.",
     ].join("\n");
   }
 
@@ -4020,7 +4160,7 @@ Write the character's next reply to the latest user message.`;
       setGenError("Write a backstory prompt first.");
       return;
     }
-    const fieldKey = "character:backstory";
+    const fieldKey = getCharacterBackstoryFieldKey(selectedId);
     setGenError(null);
     setGenLoading(true);
     startGeneratedTextPage(fieldKey);
@@ -4069,10 +4209,10 @@ ${prompt}`,
       "Generate a comprehensive but natural synopsis for this character card.",
       "Use this exact structure and order:",
       "1) Overview",
-      "2) Character info list. For each character: **Name** then age || height.",
+      "2) Character info list. For each character: **Name** then age || height, followed by 1-2 natural-language sentences explaining who they are at face value in the story.",
       "3) Main plot / goal / conflict, written clearly and naturally without rhetoric or hyperbole.",
       "4) Place (name only).",
-      "Rules: Keep it human-like and cohesive. Do not use em dashes.",
+      "Rules: Keep it human-like and cohesive. Do not use em dashes. Do not expose hidden secrets unless they are already public in the provided context.",
     ].join("\n");
     setGenLoading(true);
     setGenError(null);
@@ -4446,13 +4586,19 @@ ${prompt}`,
 
     const lorebookContext = getAssignedLorebookContext(args.lorebookIds || []);
     const customPrompt = collapseWhitespace(args.customPromptOverride ?? proxyCustomPrompt);
-    const effectiveSystem = [
-      customPrompt ? `Global behavior instructions:
-${customPrompt}` : "",
+    const defaultSystem = [
       args.system,
       lorebookContext ? `Always-active assigned lorebooks context:
 ${lorebookContext}` : "",
     ].filter(Boolean).join("\n\n");
+    const effectiveSystem = customPrompt
+      ? [
+          `USER CUSTOM PROMPT (HIGHEST PRIORITY, unless it conflicts with safety policy):
+${customPrompt}`,
+          `DEFAULT SYSTEM PROMPT (still required):
+${defaultSystem}`,
+        ].join("\n\n")
+      : defaultSystem;
 
     const res = await fetch(chatUrl, {
       method: "POST",
@@ -4679,7 +4825,7 @@ ${more}`.trim();
 
   async function generateSynopsis() {
     setGenError(null);
-    const fieldKey = "character:synopsis";
+    const fieldKey = getCharacterSynopsisFieldKey(selectedId);
 
     const system =
       "You are a creative editor generating a SYNOPSIS for a roleplay character sheet. The synopsis must be hooky, cinematic, and invite roleplay. Write 3–6 sentences. Include (subtly) a core desire, a flaw, and a tension/stake. Avoid lists, avoid headings, avoid quotes. Do not mention that you are an AI. Return ONLY the synopsis.";
@@ -4802,7 +4948,7 @@ Return only the revised intro message.`;
 
   async function reviseSynopsis() {
     setGenError(null);
-    const fieldKey = "character:synopsis";
+    const fieldKey = getCharacterSynopsisFieldKey(selectedId);
     const feedback = collapseWhitespace(synopsisRevisionFeedback);
     if (!collapseWhitespace(synopsis)) {
       setGenError("Generate or write a synopsis before revising it.");
@@ -5031,7 +5177,7 @@ ${feedback}`,
     startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
-        system: `Write a ${storySynopsisStyle} story synopsis that fits roleplay setup. Return only synopsis text.`,
+        system: `Write a ${storySynopsisStyle} story synopsis that fits roleplay setup. When referencing cast members, briefly explain who each character is in natural language at face value (avoid obvious spoilers or hidden secrets unless explicitly provided as public facts). Keep prose grounded and concise. Return only synopsis text.`,
         user: `Character context:
 ${storyCharacterContext}
 
@@ -5068,7 +5214,7 @@ Prompt: ${prompt}`,
     startGeneratedTextPage(fieldKey);
     try {
       const out = await callProxyChatCompletion({
-        system: "Revise story synopsis based on user feedback while preserving continuity. Return only revised synopsis text.",
+        system: "Revise story synopsis based on user feedback while preserving continuity. Keep character references natural and face-value (avoid exposing hidden secrets unless explicitly requested). Keep prose grounded and concise. Return only revised synopsis text.",
         user: `Current synopsis:
 ${activeStory.synopsis || "(empty)"}
 
@@ -5084,6 +5230,31 @@ ${feedback}`,
       setGenError(e?.message ? String(e.message) : "Synopsis revision failed.");
     } finally {
       setGenLoading(false);
+    }
+  }
+
+  function exportProxySecretsToFile() {
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      proxyApiKey: proxyApiKey || "",
+    };
+    downloadJSON(LOCAL_SECRETS_FILENAME, payload);
+  }
+
+  async function importProxySecretsFromFile(file: File) {
+    try {
+      const raw = await file.text();
+      const parsed = safeParseJSON(raw);
+      if (!parsed || typeof parsed !== "object") return;
+      const key = typeof (parsed as any).proxyApiKey === "string"
+        ? (parsed as any).proxyApiKey
+        : typeof (parsed as any).apiKey === "string"
+          ? (parsed as any).apiKey
+          : "";
+      if (key) setProxyApiKey(key);
+    } catch {
+      // ignore malformed secrets file
     }
   }
 
@@ -5327,6 +5498,32 @@ ${feedback}`,
     { id: "synopsis", label: "Synopsis" },
   ];
 
+  function openCharacterCardForEditing(card: CharacterCard) {
+    setActiveCharacterCardId(card.id);
+    setCharacterCardNameInput(card.name);
+    setSelectedId(card.characterIds[0] || null);
+    if (card.characterIds[0]) {
+      const c = characters.find((x) => x.id === card.characterIds[0]);
+      if (c) loadCharacterIntoForm(c);
+    } else {
+      resetForm();
+    }
+    navigateTo("create");
+  }
+
+  function openChatFromCharacterCard(card: CharacterCard) {
+    setChatCardSelectionId(card.id);
+    startChatWithSelectedCard(card.id);
+    setCharacterCardActionId(null);
+  }
+
+  function deleteCharacterCard(cardId: string) {
+    setCharacterCards((prev) => prev.filter((card) => card.id !== cardId));
+    if (activeCharacterCardId === cardId) setActiveCharacterCardId(null);
+    if (chatCardSelectionId === cardId) setChatCardSelectionId("");
+    if (characterCardActionId === cardId) setCharacterCardActionId(null);
+  }
+
   return (
     <AppErrorBoundary>
     <div
@@ -5431,37 +5628,22 @@ ${feedback}`,
         ) : null}
 
         {page === "chat" ? (
-          <div className={cn("anim-page mt-2 grid h-[calc(100vh-2rem)] gap-4 overflow-hidden", chatSidebarOpen ? "lg:grid-cols-[230px,1fr]" : "grid-cols-1")}>
-            {chatSidebarOpen ? (
-            <aside className="flex h-full flex-col rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-              <div className="mb-2 text-sm font-semibold">Persona</div>
-              <button type="button" onClick={() => setPersonaOpen(true)} className="mb-4 w-full rounded-xl border border-[hsl(var(--border))] px-3 py-2 text-left">
-                {personas.find((p) => p.id === activePersonaId)?.name || "Select persona"}
-              </button>
-              <div className="mb-2 text-sm font-semibold">Chats</div>
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                {chatSessions.map((s) => (
-                  <button key={s.id} type="button" onClick={() => openChatSession(s)} className={cn("w-full rounded-xl border p-2 text-left", activeChatSessionId === s.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}>
-                    <div className="text-sm font-medium truncate">{s.characterName}</div>
-                    <div className="text-xs text-[hsl(var(--muted-foreground))] truncate">{(Array.isArray(s.messages) ? s.messages[s.messages.length - 1]?.content : "") || "No messages yet."}</div>
-                  </button>
-                ))}
-                {!chatSessions.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No chats yet.</div> : null}
-              </div>
-            </aside>
-            ) : null}
-
-            <div ref={chatScrollRef} className="h-full space-y-4 overflow-y-auto pb-44 pt-24 pr-1">
-              <div className={cn("fixed right-4 top-4 z-40 flex flex-wrap items-center gap-2 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl", chatSidebarOpen ? "left-4 lg:left-[260px]" : "left-4")}>
-                <Button variant="secondary" onClick={() => setChatSidebarOpen((v) => !v)}><Menu className="h-4 w-4" /></Button>
-                <Button variant="secondary" onClick={() => navigateTo("library")}><ArrowLeft className="h-4 w-4" /> Back</Button>
-                <Button variant="secondary" onClick={() => setProxyOpen(true)}><SlidersHorizontal className="h-4 w-4" /> Proxy</Button>
-                <Button variant="secondary" onClick={() => setChatPromptPresetOpen(true)}>
-                  <Pencil className="h-4 w-4" /> RP Prompt: {activeChatPromptPreset?.name || "Default"}
-                </Button>
-                <Input value={chatNameInput} onChange={(e) => setChatNameInput(e.target.value)} placeholder="Chat Name" className="max-w-md" />
-                <Button variant="primary" onClick={() => { setActiveChatSessionId(null); setChatCharacter(null); setChatMessages([]); setChatInput(""); }}>New Chat</Button>
-                <Button variant="secondary" onClick={() => chatCharacterCardImportRef.current?.click()}><Upload className="h-4 w-4" /> Import Card</Button>
+          <div className="anim-page mt-2 h-[calc(100vh-2rem)] overflow-hidden">
+            <div ref={chatScrollRef} className="h-full space-y-4 overflow-y-auto pb-44 pt-24 text-sm lg:px-[300px]">
+              <div className="fixed left-4 right-4 top-4 z-40 flex items-center justify-between rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-xl lg:left-[300px] lg:right-[300px]">
+                <Button variant="secondary" onClick={() => navigateTo("library")}><ChevronLeft className="h-4 w-4" /></Button>
+                <div className="relative">
+                  <Button variant="secondary" onClick={() => setChatTopMenuOpen((v) => !v)}><MoreHorizontal className="h-4 w-4" /></Button>
+                  {chatTopMenuOpen ? (
+                    <div className="absolute right-0 top-12 z-50 w-60 space-y-1 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-2 shadow-2xl">
+                      <Button variant="secondary" className="w-full justify-start" onClick={() => { setPersonaOpen(true); setChatTopMenuOpen(false); }}>Persona</Button>
+                      <Button variant="secondary" className="w-full justify-start" onClick={() => { setProxyOpen(true); setChatTopMenuOpen(false); }}><SlidersHorizontal className="h-4 w-4" /> Proxy</Button>
+                      <Button variant="secondary" className="w-full justify-start" onClick={() => { setChatPromptPresetOpen(true); setChatTopMenuOpen(false); }}><Pencil className="h-4 w-4" /> RP Prompt</Button>
+                      <Button variant="secondary" className="w-full justify-start" onClick={() => { setNewChatPickerOpen(true); setChatTopMenuOpen(false); }}>New Chat</Button>
+                      <Button variant="secondary" className="w-full justify-start" onClick={() => { chatCharacterCardImportRef.current?.click(); setChatTopMenuOpen(false); }}><Upload className="h-4 w-4" /> Import Card</Button>
+                    </div>
+                  ) : null}
+                </div>
                 <input
                   ref={chatCharacterCardImportRef}
                   type="file"
@@ -5480,23 +5662,54 @@ ${feedback}`,
 
               {!chatCharacter ? (
                 <div className="space-y-3">
-                  <div>
-                    <div className="text-xl font-semibold">No Character Yet</div>
-                    <div className="text-sm text-[hsl(var(--muted-foreground))]">Select character below.</div>
-                  </div>
-                  <div className="max-h-[52vh] overflow-auto rounded-2xl border border-[hsl(var(--border))] p-3">
-                    <div className="grid grid-cols-3 gap-3 md:grid-cols-5 lg:grid-cols-7">
-                      {characterCards.map((card) => {
-                        const preferredId = card.chatProfileCharacterId && card.characterIds.includes(card.chatProfileCharacterId) ? card.chatProfileCharacterId : card.characterIds[0];
-                        const c = characters.find((x) => x.id === preferredId);
-                        return (
-                          <button key={card.id} type="button" onClick={() => { setChatCardSelectionId(card.id); startChatWithSelectedCard(card.id); }} className="overflow-hidden rounded-xl border border-[hsl(var(--border))] text-left">
-                            <div className="relative aspect-[3/4] bg-[hsl(var(--muted))]">
-                              {c?.imageDataUrl ? <img src={c.imageDataUrl} alt={card.name} className="absolute inset-0 h-full w-full object-cover" /> : null}
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                      <div className="mb-3 flex items-center justify-between">
+                        <div className="text-sm font-semibold">Character Cards</div>
+                        <Button variant="secondary" onClick={() => setNewChatPickerOpen(true)}>New Chat</Button>
+                      </div>
+                      <div className="max-h-[62vh] overflow-y-auto pr-1">
+                        <div className="grid grid-cols-4 gap-2">
+                          {characterCards.map((card) => {
+                            const preferredId = card.chatProfileCharacterId && card.characterIds.includes(card.chatProfileCharacterId) ? card.chatProfileCharacterId : card.characterIds[0];
+                            const c = preferredId ? (characters.find((x) => x.id === preferredId) || null) : null;
+                            return (
+                              <button
+                                key={card.id}
+                                type="button"
+                                onClick={() => openChatFromCharacterCard(card)}
+                                className="overflow-hidden rounded-lg border border-[hsl(var(--border))] text-left"
+                              >
+                                <div className="relative aspect-[3/4] bg-[hsl(var(--muted))]">
+                                  {c?.imageDataUrl ? <img src={c.imageDataUrl} alt={card.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : null}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4">
+                      <div className="mb-3 text-sm font-semibold">Chat History</div>
+                      <div className="max-h-[62vh] space-y-2 overflow-y-auto pr-1">
+                        {chatSessions.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => openChatSession(s)}
+                            className={cn("w-full rounded-xl border p-3 text-left", activeChatSessionId === s.id ? "border-[hsl(var(--hover-accent))]" : "border-[hsl(var(--border))]")}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="truncate text-sm font-semibold">{s.characterName || "Unnamed chat"}</div>
+                              <div className="shrink-0 text-[11px] text-[hsl(var(--muted-foreground))]">{new Date(s.updatedAt || s.createdAt).toLocaleString()}</div>
+                            </div>
+                            <div className="mt-1 truncate text-xs text-[hsl(var(--muted-foreground))]">
+                              {(Array.isArray(s.messages) ? s.messages[s.messages.length - 1]?.content : "") || "No messages yet."}
                             </div>
                           </button>
-                        );
-                      })}
+                        ))}
+                        {!chatSessions.length ? <div className="text-xs text-[hsl(var(--muted-foreground))]">No chats yet.</div> : null}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -5506,11 +5719,11 @@ ${feedback}`,
                     {chatMessages.map((m, i) => (
                       <div key={`${m.role}-${i}`} className={cn("flex items-end gap-2", m.role === "user" ? "justify-end" : "justify-start")}>
                         {m.role === "assistant" ? (
-                          <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                          <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
                             {chatCharacter?.imageDataUrl ? <img src={chatCharacter.imageDataUrl} alt={chatCharacter.name || "Character"} className="h-full w-full object-cover object-top" /> : null}
                           </div>
                         ) : null}
-                        <div className={cn("rounded-xl border p-4", m.role === "user" ? "max-w-[72%]" : "max-w-[72%] bg-[hsl(var(--card))]")}>
+                        <div className={cn("rounded-xl border p-4 text-sm", m.role === "user" ? "max-w-[72%]" : "max-w-[72%] bg-[hsl(var(--card))]")}>
                         {editingMessageIndex === i ? (
                           <div className="space-y-2">
                             <Textarea value={editingMessageText} onChange={(e) => setEditingMessageText(e.target.value)} rows={4} />
@@ -5548,7 +5761,7 @@ ${feedback}`,
                         )}
                         </div>
                         {m.role === "user" ? (
-                          <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                          <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
                             {activePersona?.imageDataUrl ? <img src={activePersona.imageDataUrl} alt={activePersona?.name || "User"} className="h-full w-full object-cover object-top" /> : null}
                           </div>
                         ) : null}
@@ -5575,7 +5788,7 @@ ${feedback}`,
                 </div>
               )}
 
-              <div className={cn("fixed bottom-4 right-4 z-40", chatSidebarOpen ? "left-4 lg:left-[260px]" : "left-4")}>
+              <div className="fixed bottom-4 left-4 right-4 z-40 lg:left-[300px] lg:right-[300px]">
                 <div className="rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 shadow-xl">
                   <div className="flex gap-2">
                     <Textarea value={chatInput} onChange={(e) => setChatInput(e.target.value)} rows={3} placeholder="Type your message...." disabled={!chatCharacter} onKeyDown={(e) => onEnterAdd(e, sendChatMessage)} />
@@ -5586,6 +5799,29 @@ ${feedback}`,
                   ) : null}
                 </div>
               </div>
+              <Modal open={newChatPickerOpen} onClose={() => setNewChatPickerOpen(false)} title="Start New Chat" widthClass="max-w-6xl">
+                <div className="max-h-[70vh] overflow-y-auto pr-1">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                    {characterCards.map((card) => {
+                      const preferredId = card.chatProfileCharacterId && card.characterIds.includes(card.chatProfileCharacterId) ? card.chatProfileCharacterId : card.characterIds[0];
+                      const c = preferredId ? (characters.find((x) => x.id === preferredId) || null) : null;
+                      return (
+                        <button
+                          key={card.id}
+                          type="button"
+                          onClick={() => { setNewChatPickerOpen(false); openChatFromCharacterCard(card); }}
+                          className="overflow-hidden rounded-xl border border-[hsl(var(--border))] text-left"
+                        >
+                          <div className="relative aspect-[3/4] bg-[hsl(var(--muted))]">
+                            {c?.imageDataUrl ? <img src={c.imageDataUrl} alt={card.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : null}
+                          </div>
+                          <div className="truncate border-t border-[hsl(var(--border))] px-2 py-1 text-xs">{card.name || "Character Card"}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </Modal>
             </div>
           </div>
         ) : page === "storywriting" ? (
@@ -6861,11 +7097,16 @@ ${feedback}`,
               <div className="mx-auto grid max-w-4xl gap-6 md:grid-cols-2">
                 <button
                   type="button"
-                  onClick={() => navigateTo("chat")}
+                  onClick={() => {
+                    setChatCharacter(null);
+                    setActiveChatSessionId(null);
+                    setChatMessages([]);
+                    navigateTo("chat");
+                  }}
                   className="aspect-[3/4] rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-8 text-left shadow-sm"
                 >
-                  <div className="text-3xl font-semibold">Chat</div>
-                  <div className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">Open chatbot interface and start a conversation.</div>
+                  <div className="text-3xl font-semibold">Chats</div>
+                  <div className="mt-3 text-sm text-[hsl(var(--muted-foreground))]">View and resume existing chat sessions.</div>
                 </button>
                 <button
                   type="button"
@@ -6880,7 +7121,10 @@ ${feedback}`,
         ) : page === "characters" ? (
           <div className="anim-page mt-6 space-y-4">
             <div className="flex items-center justify-between">
-              <div className="text-xl font-semibold">Character Dashboard</div>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" onClick={() => navigateTo("library")}><ChevronLeft className="h-4 w-4" /></Button>
+                <div className="text-xl font-semibold">Character Dashboard</div>
+              </div>
               <Button variant="primary" onClick={() => {
                 const now = new Date().toISOString();
                 const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], chatProfileCharacterId: "", systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
@@ -6894,39 +7138,21 @@ ${feedback}`,
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {characterCards.map((card) => {
-                const previewCharacters = card.characterIds
-                  .slice(0, 4)
-                  .map((id) => characters.find((c) => c.id === id))
-                  .filter((c): c is Character => !!c);
+                const preferredId = card.chatProfileCharacterId && card.characterIds.includes(card.chatProfileCharacterId)
+                  ? card.chatProfileCharacterId
+                  : card.characterIds[0];
+                const previewCharacter = preferredId ? (characters.find((c) => c.id === preferredId) || null) : null;
                 return (
-                  <button key={card.id} type="button" onClick={() => {
-                    setActiveCharacterCardId(card.id);
-                    setCharacterCardNameInput(card.name);
-                    setSelectedId(card.characterIds[0] || null);
-                    if (card.characterIds[0]) {
-                      const c = characters.find((x) => x.id === card.characterIds[0]);
-                      if (c) loadCharacterIntoForm(c);
-                    } else {
-                      resetForm();
-                    }
-                    navigateTo("create");
-                  }} className="text-left rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                  <button key={card.id} type="button" onClick={() => setCharacterCardActionId(card.id)} className="text-left rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
                     <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-[hsl(var(--border))]">
-                      {previewCharacters.length ? (
-                        <div className="absolute inset-0 grid grid-cols-2 grid-rows-2">
-                          {previewCharacters.map((character) => (
-                            <div key={character.id} className="relative overflow-hidden border border-[hsl(var(--border))/0.5] bg-[hsl(var(--muted))]">
-                              {character.imageDataUrl ? (
-                                <img src={character.imageDataUrl} alt={character.name} className="absolute inset-0 h-full w-full object-cover object-top" />
-                              ) : (
-                                <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
-                              )}
-                            </div>
-                          ))}
-                          {Array.from({ length: Math.max(0, 4 - previewCharacters.length) }).map((_, i) => (
-                            <div key={`empty-${i}`} className="border border-[hsl(var(--border))/0.5] bg-[hsl(var(--muted))]" />
-                          ))}
-                        </div>
+                      {previewCharacter ? (
+                        <>
+                          {previewCharacter.imageDataUrl ? (
+                            <img src={previewCharacter.imageDataUrl} alt={previewCharacter.name} className="absolute inset-0 h-full w-full object-cover object-top" />
+                          ) : (
+                            <div className="absolute inset-0 bg-[hsl(var(--muted))]" />
+                          )}
+                        </>
                       ) : (
                         <div className="absolute inset-0 flex items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">No image</div>
                       )}
@@ -6937,6 +7163,42 @@ ${feedback}`,
                 );
               })}
             </div>
+            <Modal open={!!characterCardActionId} onClose={() => setCharacterCardActionId(null)} title="Character Card" widthClass="max-w-2xl">
+              {(() => {
+                const card = characterCards.find((c) => c.id === characterCardActionId) || null;
+                if (!card) return <div className="text-sm text-[hsl(var(--muted-foreground))]">Card not found.</div>;
+                const preferredId = card.chatProfileCharacterId && card.characterIds.includes(card.chatProfileCharacterId) ? card.chatProfileCharacterId : card.characterIds[0];
+                const profileCharacter = preferredId ? (characters.find((c) => c.id === preferredId) || null) : null;
+                return (
+                  <div className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-[220px,1fr]">
+                      <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                        {profileCharacter?.imageDataUrl ? <img src={profileCharacter.imageDataUrl} alt={profileCharacter.name} className="absolute inset-0 h-full w-full object-cover object-top" /> : null}
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        <div className="text-lg font-semibold">{card.name || "Character Card"}</div>
+                        <div><span className="font-medium">Profile character:</span> {profileCharacter?.name || "None selected"}</div>
+                        <div><span className="font-medium">Characters:</span> {card.characterIds.length}</div>
+                        <div><span className="font-medium">System rules:</span> {collapseWhitespace(card.systemRules) || "(none)"}</div>
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="danger"
+                        onClick={() => {
+                          if (!window.confirm(`Delete "${card.name || "Character Card"}"?`)) return;
+                          deleteCharacterCard(card.id);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" /> Delete
+                      </Button>
+                      <Button variant="secondary" onClick={() => { setCharacterCardActionId(null); openCharacterCardForEditing(card); }}>Edit</Button>
+                      <Button variant="primary" onClick={() => openChatFromCharacterCard(card)} disabled={!card.characterIds.length}>Chat</Button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </Modal>
           </div>
         ) : page === "create" ? (
           <div className="anim-page mt-6 space-y-3">
@@ -7089,7 +7351,7 @@ ${feedback}`,
                       <div><div className="mb-1 text-sm font-medium">Physical appearance</div><div className="flex gap-2"><Input value={appearanceInput} onChange={(e) => setAppearanceInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, () => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput("")))} /><Button variant="secondary" onClick={() => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{physicalAppearance.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setPhysicalAppearance)}>{x} ×</button>)}</div></div>
                       <div><div className="mb-1 text-sm font-medium">Unique traits</div><div className="flex gap-2"><Input value={traitInput} onChange={(e)=>setTraitInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput("")))} /><Button variant="secondary" onClick={()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{traits.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setTraits)}>{x} ×</button>)}</div></div>
                       <div><div className="mb-1 text-sm font-medium">Speech patterns</div><div className="flex gap-2"><Input value={speechPatternInput} onChange={(e)=>setSpeechPatternInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(speechPatternInput, speechPatterns, setSpeechPatterns, ()=>setSpeechPatternInput("")))} /><Button variant="secondary" onClick={()=>addToList(speechPatternInput, speechPatterns, setSpeechPatterns, ()=>setSpeechPatternInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{speechPatterns.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setSpeechPatterns)}>{x} ×</button>)}</div></div>
-                      <div className="space-y-2"><div className="text-sm font-medium">Backstory</div>{renderGeneratedTextarea({ fieldKey: "character:backstory", value: backstoryText, onChange: setBackstoryText, rows: 8, placeholder: "Write backstory here..." })}<Textarea value={backstoryPrompt} onChange={(e) => setBackstoryPrompt(e.target.value)} rows={3} placeholder="Prompt for generate/revise" /><div className="flex gap-2"><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div></div>
+                      <div className="space-y-2"><div className="text-sm font-medium">Backstory</div>{renderGeneratedTextarea({ fieldKey: getCharacterBackstoryFieldKey(selectedId), value: backstoryText, onChange: setBackstoryText, rows: 8, placeholder: "Write backstory here..." })}<Textarea value={backstoryPrompt} onChange={(e) => setBackstoryPrompt(e.target.value)} rows={3} placeholder="Prompt for generate/revise" /><div className="flex gap-2"><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div></div>
                     </div>
                   ) : null}
 
@@ -7284,7 +7546,7 @@ ${feedback}`,
                     <div className="space-y-4">
                       <div className="text-lg font-semibold">Backstory</div>
                       {renderGeneratedTextarea({
-                        fieldKey: "character:backstory",
+                        fieldKey: getCharacterBackstoryFieldKey(selectedId),
                         value: backstoryText,
                         onChange: setBackstoryText,
                         rows: 14,
@@ -7500,7 +7762,7 @@ ${feedback}`,
                         </Button>
                       </div>
                       {renderGeneratedTextarea({
-                        fieldKey: "character:synopsis",
+                        fieldKey: getCharacterSynopsisFieldKey(selectedId),
                         value: synopsis,
                         onChange: setSynopsis,
                         rows: 10,
@@ -7827,6 +8089,28 @@ ${feedback}`,
                 placeholder="Bearer token"
                 type="password"
               />
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" type="button" onClick={() => proxySecretsImportRef.current?.click()}>
+                  <Upload className="h-4 w-4" /> Import secrets.json
+                </Button>
+                <Button variant="secondary" type="button" onClick={exportProxySecretsToFile} disabled={!collapseWhitespace(proxyApiKey)}>
+                  <Download className="h-4 w-4" /> Export secrets.json
+                </Button>
+                <input
+                  ref={proxySecretsImportRef}
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (f) await importProxySecretsFromFile(f);
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </div>
+              <div className="text-xs text-[hsl(var(--muted-foreground))]">
+                API keys are saved locally on this device (persist across reloads/restarts). You can also export/import <code>secrets.json</code> as backup.
+              </div>
             </div>
             <div className="space-y-2">
               <div className="text-sm font-medium">Model name</div>
