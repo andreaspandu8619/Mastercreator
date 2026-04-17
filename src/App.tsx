@@ -24,7 +24,7 @@ import {
 type ThemeMode = "light" | "dark";
 type Gender = "Male" | "Female" | "";
 type Page = "library" | "characters" | "create" | "chat" | "storywriting" | "my_stories" | "story_editor" | "story_relationship_board" | "lorebooks" | "lorebook_create";
-type CreateTab = "overview" | "personality" | "behavior" | "definition" | "system" | "intro" | "synopsis" | "relationships";
+type CreateTab = "overview" | "personality" | "behavior" | "definition" | "system" | "intro" | "synopsis" | "relationships" | "scenario";
 type StoryTab = "scenario" | "first_message" | "system_rules" | "relationships" | "synopsis";
 type LorebookTab = "overview" | "world" | "locations" | "factions" | "rules" | "items" | "specials";
 
@@ -206,6 +206,7 @@ type Character = {
   age: number | "";
   height: string;
   origins: string;
+  motivation: string;
   racePreset: string;
   race: string;
   personalities: string[];
@@ -214,6 +215,7 @@ type Character = {
   respondToProblems: string[];
   sexualBehavior: string[];
   speechPatterns: string[];
+  intimacyDetails: string;
   backstory: string[];
   selectedBackstoryIndex: number;
   systemRules: string;
@@ -233,6 +235,9 @@ type CharacterCard = {
   characterIds: string[];
   chatProfileCharacterId?: string;
   relationshipStoryId?: string;
+  scenarioSetting: string;
+  scenarioOverallTone: string;
+  scenarioPremise: string;
   systemRules: string;
   selectedSystemRuleIds: string[];
   firstMessageMessages: string[];
@@ -726,6 +731,7 @@ function normalizeCharacter(x: any): Character | null {
     age: x.age ?? "",
     height: typeof x.height === "string" ? collapseWhitespace(x.height) : "",
     origins: typeof x.origins === "string" ? collapseWhitespace(x.origins) : "",
+    motivation: typeof x.motivation === "string" ? x.motivation : "",
     racePreset,
     race,
     personalities: normalizeStringArray(x.personalities ?? x.personality),
@@ -734,6 +740,7 @@ function normalizeCharacter(x: any): Character | null {
     respondToProblems: normalizeStringArray(x.respondToProblems),
     sexualBehavior: normalizeStringArray(x.sexualBehavior),
     speechPatterns: normalizeStringArray((x as any).speechPatterns),
+    intimacyDetails: typeof x.intimacyDetails === "string" ? x.intimacyDetails : "",
     backstory: normalizeTextArray(x.backstory),
     selectedBackstoryIndex: Number.isFinite(Number(x.selectedBackstoryIndex)) ? Math.max(0, Number(x.selectedBackstoryIndex)) : 0,
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
@@ -756,6 +763,9 @@ function normalizeCharacterCard(x: any): CharacterCard | null {
     characterIds: normalizeStringArray(x.characterIds),
     chatProfileCharacterId: typeof x.chatProfileCharacterId === "string" ? x.chatProfileCharacterId : "",
     relationshipStoryId: typeof x.relationshipStoryId === "string" ? x.relationshipStoryId : undefined,
+    scenarioSetting: typeof x.scenarioSetting === "string" ? x.scenarioSetting : "",
+    scenarioOverallTone: typeof x.scenarioOverallTone === "string" ? x.scenarioOverallTone : "",
+    scenarioPremise: typeof x.scenarioPremise === "string" ? x.scenarioPremise : "",
     systemRules: typeof x.systemRules === "string" ? x.systemRules : "",
     selectedSystemRuleIds: normalizeStringArray(x.selectedSystemRuleIds),
     firstMessageMessages: normalizeTextArray(x.firstMessageMessages).length ? normalizeTextArray(x.firstMessageMessages) : [""],
@@ -1160,6 +1170,7 @@ export default function CharacterCreatorApp() {
   const [age, setAge] = useState<number | "">("");
   const [height, setHeight] = useState("");
   const [origins, setOrigins] = useState("");
+  const [motivation, setMotivation] = useState("");
 
   const [racePreset, setRacePreset] = useState("");
   const [customRace, setCustomRace] = useState("");
@@ -1174,6 +1185,7 @@ export default function CharacterCreatorApp() {
   const [problemBehavior, setProblemBehavior] = useState<string[]>([]);
   const [sexualBehaviorInput, setSexualBehaviorInput] = useState("");
   const [sexualBehavior, setSexualBehavior] = useState<string[]>([]);
+  const [intimacyDetails, setIntimacyDetails] = useState("");
   const [speechPatternInput, setSpeechPatternInput] = useState("");
   const [speechPatterns, setSpeechPatterns] = useState<string[]>([]);
 
@@ -1197,6 +1209,9 @@ export default function CharacterCreatorApp() {
   const [introIndex, setIntroIndex] = useState(0);
   const [cardSystemRules, setCardSystemRules] = useState("");
   const [cardSelectedSystemRuleIds, setCardSelectedSystemRuleIds] = useState<string[]>([]);
+  const [cardScenarioSetting, setCardScenarioSetting] = useState("");
+  const [cardScenarioOverallTone, setCardScenarioOverallTone] = useState("");
+  const [cardScenarioPremise, setCardScenarioPremise] = useState("");
   const [introVersionHistories, setIntroVersionHistories] = useState<string[][]>([[""]]);
   const [introVersionIndices, setIntroVersionIndices] = useState<number[]>([0]);
   const [introPrompt, setIntroPrompt] = useState("");
@@ -2044,6 +2059,9 @@ export default function CharacterCreatorApp() {
     if (!card) return;
     setCardSystemRules(card.systemRules || "");
     setCardSelectedSystemRuleIds(card.selectedSystemRuleIds || []);
+    setCardScenarioSetting(card.scenarioSetting || "");
+    setCardScenarioOverallTone(card.scenarioOverallTone || "");
+    setCardScenarioPremise(card.scenarioPremise || "");
     const msgs = card.firstMessageMessages?.length ? [...card.firstMessageMessages] : [""];
     setIntroMessages(msgs);
     setIntroIndex(clampIndex(card.selectedFirstMessageIndex || 0, msgs.length));
@@ -2057,17 +2075,20 @@ export default function CharacterCreatorApp() {
       ...card,
       systemRules: cardSystemRules,
       selectedSystemRuleIds: cardSelectedSystemRuleIds,
+      scenarioSetting: cardScenarioSetting,
+      scenarioOverallTone: cardScenarioOverallTone,
+      scenarioPremise: cardScenarioPremise,
       firstMessageMessages: introMessages,
       selectedFirstMessageIndex: introIndex,
       updatedAt: new Date().toISOString(),
     }));
-  }, [hydrated, activeCharacterCardId, page, cardSystemRules, cardSelectedSystemRuleIds, introMessages, introIndex]);
+  }, [hydrated, activeCharacterCardId, page, cardSystemRules, cardSelectedSystemRuleIds, cardScenarioSetting, cardScenarioOverallTone, cardScenarioPremise, introMessages, introIndex]);
 
   useEffect(() => {
     if (!hydrated) return;
     if (!characterCards.length) {
       const now = new Date().toISOString();
-      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], chatProfileCharacterId: "", systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
+      const card: CharacterCard = { id: uid(), name: "Character Card", characterIds: [], chatProfileCharacterId: "", scenarioSetting: "", scenarioOverallTone: "", scenarioPremise: "", systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
       setCharacterCards([card]);
       setActiveCharacterCardId(card.id);
       setCharacterCardNameInput(card.name);
@@ -2158,6 +2179,7 @@ export default function CharacterCreatorApp() {
     setAge("");
     setHeight("");
     setOrigins("");
+    setMotivation("");
 
     setRacePreset("");
     setCustomRace("");
@@ -2173,6 +2195,7 @@ export default function CharacterCreatorApp() {
     setSexualBehaviorInput("");
     setSpeechPatternInput("");
     setSexualBehavior([]);
+    setIntimacyDetails("");
     setSpeechPatterns([]);
 
     setBackstoryText("");
@@ -2185,6 +2208,9 @@ export default function CharacterCreatorApp() {
 
     setIntroMessages([""]);
     setIntroIndex(0);
+    setCardScenarioSetting("");
+    setCardScenarioOverallTone("");
+    setCardScenarioPremise("");
     setIntroVersionHistories([[""]]);
     setIntroVersionIndices([0]);
     setIntroPrompt("");
@@ -2299,6 +2325,7 @@ export default function CharacterCreatorApp() {
       age,
       height: collapseWhitespace(height),
       origins: collapseWhitespace(origins),
+      motivation: motivation.trim(),
       racePreset: racePreset || (finalRace ? "Other" : ""),
       race: finalRace,
       personalities: Array.isArray(personalities) ? personalities : [],
@@ -2306,6 +2333,7 @@ export default function CharacterCreatorApp() {
       physicalAppearance: Array.isArray(physicalAppearance) ? physicalAppearance : [],
       respondToProblems: Array.isArray(problemBehavior) ? problemBehavior : [],
       sexualBehavior: Array.isArray(sexualBehavior) ? sexualBehavior : [],
+      intimacyDetails: intimacyDetails.trim(),
       speechPatterns: Array.isArray(speechPatterns) ? speechPatterns : [],
       backstory: backstoryVersions,
       selectedBackstoryIndex,
@@ -2469,6 +2497,7 @@ export default function CharacterCreatorApp() {
       age: "",
       height: "",
       origins: "",
+      motivation: "",
       racePreset: "",
       race: "",
       personalities: [],
@@ -2476,6 +2505,7 @@ export default function CharacterCreatorApp() {
       physicalAppearance: [],
       respondToProblems: [],
       sexualBehavior: [],
+      intimacyDetails: "",
       speechPatterns: [],
       backstory: [],
       selectedBackstoryIndex: 0,
@@ -2499,7 +2529,14 @@ export default function CharacterCreatorApp() {
   function updateWholeCharacterCard() {
     saveCharacter();
     if (activeCharacterCardId) {
-      setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? { ...card, name: collapseWhitespace(characterCardNameInput) || "Character Card", updatedAt: new Date().toISOString() } : card));
+      setCharacterCards((prev) => prev.map((card) => card.id === activeCharacterCardId ? {
+        ...card,
+        name: collapseWhitespace(characterCardNameInput) || "Character Card",
+        scenarioSetting: cardScenarioSetting,
+        scenarioOverallTone: cardScenarioOverallTone,
+        scenarioPremise: cardScenarioPremise,
+        updatedAt: new Date().toISOString(),
+      } : card));
     }
     setSaveToastOpen(true);
     window.setTimeout(() => setSaveToastOpen(false), 1400);
@@ -2684,6 +2721,7 @@ export default function CharacterCreatorApp() {
     setAge(c.age ?? "");
     setHeight(c.height || "");
     setOrigins(c.origins || "");
+    setMotivation(c.motivation || "");
 
     const preset = c.racePreset || "";
     setRacePreset(preset);
@@ -2694,6 +2732,7 @@ export default function CharacterCreatorApp() {
     setPhysicalAppearance(Array.isArray(c.physicalAppearance) ? [...c.physicalAppearance] : []);
     setProblemBehavior(Array.isArray(c.respondToProblems) ? [...c.respondToProblems] : []);
     setSexualBehavior(Array.isArray(c.sexualBehavior) ? [...c.sexualBehavior] : []);
+    setIntimacyDetails(c.intimacyDetails || "");
     setSpeechPatterns(Array.isArray(c.speechPatterns) ? [...c.speechPatterns] : []);
     setBackstory([...normalizedBackstory]);
     setBackstoryText(selectedBackstoryText);
@@ -4267,6 +4306,9 @@ ${cast.map((c) => `${c.name} | age: ${c.age === "" ? "" : c.age} | height: ${c.h
         id: uid(),
         name: collapseWhitespace(characterCardNameInput) || fallbackCharacter?.name || "Character Card",
         characterIds: fallbackCharacter ? [fallbackCharacter.id] : [],
+        scenarioSetting: cardScenarioSetting,
+        scenarioOverallTone: cardScenarioOverallTone,
+        scenarioPremise: cardScenarioPremise,
         systemRules: cardSystemRules,
         selectedSystemRuleIds: cardSelectedSystemRuleIds,
         firstMessageMessages: introMessages.length ? [...introMessages] : [""],
@@ -4280,6 +4322,9 @@ ${cast.map((c) => `${c.name} | age: ${c.age === "" ? "" : c.age} | height: ${c.h
       ...baseCard,
       name: collapseWhitespace(characterCardNameInput) || baseCard.name || "Character Card",
       characterIds: [...(baseCard.characterIds || [])],
+      scenarioSetting: cardScenarioSetting,
+      scenarioOverallTone: cardScenarioOverallTone,
+      scenarioPremise: cardScenarioPremise,
       systemRules: cardSystemRules,
       selectedSystemRuleIds: [...cardSelectedSystemRuleIds],
       firstMessageMessages: introMessages.length ? [...introMessages] : [""],
@@ -5421,52 +5466,86 @@ ${feedback}`,
     });
 
     const characterBlocks = cardChars.length
-      ? cardChars.map((c) => {
+      ? cardChars.map((c, i) => {
           const selectedBackstory = (c.backstory || []).length
             ? (c.backstory || [])[Math.max(0, Math.min((c.backstory || []).length - 1, (c as any).selectedBackstoryIndex || 0))] || ""
             : "";
-          const speechPatternsText = (c.speechPatterns || []).length
-            ? (c.speechPatterns || []).map((item) => `- ${item}`).join("\n")
-            : "-";
-          const content = [
+          return [
+            `# Character ${i + 1}`,
+            "",
+            `> Basic Information`,
+            "",
             `Name: ${c.name || ""}`,
             "",
             `Age: ${c.age === "" ? "" : String(c.age)}`,
             "",
-            `Gender: ${c.gender || ""}`,
-            "",
-            `Race: ${c.race || ""}`,
-            "",
             `Height: ${c.height || ""}`,
             "",
-            `Origin: ${c.origins || ""}`,
+            `Physical Appearances: ${(c.physicalAppearance || []).join(", ")}`,
             "",
             `Personality: ${(c.personalities || []).join(", ")}`,
             "",
-            `Physical appearance: ${(c.physicalAppearance || []).join(", ")}`,
+            `Motivation: ${c.motivation || ""}`,
             "",
-            `Unique traits: ${(c.uniqueTraits || []).join(", ")}`,
             "",
-            `Speech patterns:`,
-            speechPatternsText,
+            `> Backstory`,
             "",
-            `Backstory: ${selectedBackstory}`,
+            selectedBackstory || "[Write character backstory here]",
+            "",
+            "",
+            `> Intimacy Details`,
+            "",
+            c.intimacyDetails || "[Write character intimacy details here]",
+            "",
           ].join("\n");
-          const tagName = collapseWhitespace(c.name) || "character";
-          return [`<${tagName}>`, content, `</${tagName}>`].join("\n");
         })
-      : ["<character>\n\n</character>"];
+      : [[
+          "# Character 1",
+          "",
+          "> Basic Information",
+          "",
+          "Name:",
+          "",
+          "Age:",
+          "",
+          "Height:",
+          "",
+          "Physical Appearances:",
+          "",
+          "Personality:",
+          "",
+          "Motivation:",
+          "",
+          "",
+          "> Backstory",
+          "",
+          "[Write character 1's backstory here]",
+          "",
+          "",
+          "> Intimacy Details",
+          "",
+          "[Write character 1's intimacy details here]",
+          "",
+        ].join("\n")];
 
     const text = [
       ...characterBlocks,
       "",
-      `<relationships>`,
-      ...(relationshipLines.length ? relationshipLines : [""]),
-      `</relationships>`,
+      "> Scenario",
       "",
-      `<system>`,
-      ...(allRules.length ? allRules : [""]),
-      `</system>`,
+      `Setting: ${activeCard?.scenarioSetting || ""}`,
+      "",
+      `Overall Tone: ${activeCard?.scenarioOverallTone || ""}`,
+      "",
+      `Premise: ${activeCard?.scenarioPremise || ""}`,
+      "",
+      "",
+      "> Relationships",
+      ...(relationshipLines.length ? relationshipLines.map((line) => `- ${line}`) : ["- (none)"]),
+      "",
+      "",
+      "> Rules",
+      ...(allRules.length ? allRules.map((line) => `- ${line}`) : ["- (none)"]),
       "",
     ].join("\n");
 
@@ -5492,6 +5571,7 @@ ${feedback}`,
 
   const tabs: Array<{ id: CreateTab; label: string }> = [
     { id: "definition", label: "Characters" },
+    { id: "scenario", label: "Scenario" },
     { id: "relationships", label: "Relationships" },
     { id: "system", label: "System Rules" },
     { id: "synopsis", label: "Synopsis" },
@@ -5500,6 +5580,9 @@ ${feedback}`,
   function openCharacterCardForEditing(card: CharacterCard) {
     setActiveCharacterCardId(card.id);
     setCharacterCardNameInput(card.name);
+    setCardScenarioSetting(card.scenarioSetting || "");
+    setCardScenarioOverallTone(card.scenarioOverallTone || "");
+    setCardScenarioPremise(card.scenarioPremise || "");
     setSelectedId(card.characterIds[0] || null);
     if (card.characterIds[0]) {
       const c = characters.find((x) => x.id === card.characterIds[0]);
@@ -7112,7 +7195,7 @@ ${feedback}`,
               </div>
               <Button variant="primary" onClick={() => {
                 const now = new Date().toISOString();
-                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], chatProfileCharacterId: "", systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
+                const newCard: CharacterCard = { id: uid(), name: "New Character Card", characterIds: [], chatProfileCharacterId: "", scenarioSetting: "", scenarioOverallTone: "", scenarioPremise: "", systemRules: "", selectedSystemRuleIds: [], firstMessageMessages: [""], selectedFirstMessageIndex: 0, createdAt: now, updatedAt: now };
                 setCharacterCards((prev) => [newCard, ...prev]);
                 setActiveCharacterCardId(newCard.id);
                 setCharacterCardNameInput(newCard.name);
@@ -7329,18 +7412,37 @@ ${feedback}`,
                           <div><div className="mb-1 text-sm">Race</div><Input value={racePreset === "Other" ? customRace : racePreset} onChange={(e) => { setRacePreset("Other"); setCustomRace(e.target.value); }} /></div>
                           <div><div className="mb-1 text-sm">Height</div><Input value={height} onChange={(e) => setHeight(e.target.value)} /></div>
                           <div><div className="mb-1 text-sm">Origin</div><Input value={origins} onChange={(e) => setOrigins(e.target.value)} /></div>
+                          <div className="md:col-span-2"><div className="mb-1 text-sm">Motivation</div><Textarea value={motivation} onChange={(e) => setMotivation(e.target.value)} rows={3} /></div>
                         </div>
                       </div>
                       <div className="space-y-2"><div className="text-sm font-medium">Personality</div><Input value={personalitySearch} onChange={(e) => setPersonalitySearch(e.target.value)} placeholder="Type to filter personalities" /><div className="flex max-h-36 flex-wrap gap-2 overflow-auto">{PERSONALITIES.filter((x) => !personalitySearch || x.toLowerCase().includes(personalitySearch.toLowerCase())).map((x) => { const active = personalities.includes(x); return <button key={x} type="button" className={cn("rounded-lg border px-2 py-1 text-xs", active ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.15]" : "border-[hsl(var(--border))]")} onClick={() => setPersonalities((prev) => active ? prev.filter((p) => p !== x) : [...prev, x])}>{x}</button>; })}</div></div>
                       <div><div className="mb-1 text-sm font-medium">Physical appearance</div><div className="flex gap-2"><Input value={appearanceInput} onChange={(e) => setAppearanceInput(e.target.value)} onKeyDown={(e) => onEnterAdd(e, () => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput("")))} /><Button variant="secondary" onClick={() => addToList(appearanceInput, physicalAppearance, setPhysicalAppearance, () => setAppearanceInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{physicalAppearance.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setPhysicalAppearance)}>{x} ×</button>)}</div></div>
                       <div><div className="mb-1 text-sm font-medium">Unique traits</div><div className="flex gap-2"><Input value={traitInput} onChange={(e)=>setTraitInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput("")))} /><Button variant="secondary" onClick={()=>addToList(traitInput, traits, setTraits, ()=>setTraitInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{traits.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setTraits)}>{x} ×</button>)}</div></div>
                       <div><div className="mb-1 text-sm font-medium">Speech patterns</div><div className="flex gap-2"><Input value={speechPatternInput} onChange={(e)=>setSpeechPatternInput(e.target.value)} onKeyDown={(e)=>onEnterAdd(e, ()=>addToList(speechPatternInput, speechPatterns, setSpeechPatterns, ()=>setSpeechPatternInput("")))} /><Button variant="secondary" onClick={()=>addToList(speechPatternInput, speechPatterns, setSpeechPatterns, ()=>setSpeechPatternInput(""))}>Add</Button></div><div className="mt-2 flex flex-wrap gap-2">{speechPatterns.map((x)=><button key={x} type="button" className="rounded-full border border-[hsl(var(--border))] px-3 py-1 text-xs" onClick={()=>removeFromList(x,setSpeechPatterns)}>{x} ×</button>)}</div></div>
+                      <div className="space-y-2"><div className="text-sm font-medium">Intimacy Details</div><Textarea value={intimacyDetails} onChange={(e) => setIntimacyDetails(e.target.value)} rows={4} placeholder="Write intimacy details here..." /></div>
                       <div className="space-y-2"><div className="text-sm font-medium">Backstory</div>{renderGeneratedTextarea({ fieldKey: getCharacterBackstoryFieldKey(selectedId), value: backstoryText, onChange: setBackstoryText, rows: 8, placeholder: "Write backstory here..." })}<Textarea value={backstoryPrompt} onChange={(e) => setBackstoryPrompt(e.target.value)} rows={3} placeholder="Prompt for generate/revise" /><div className="flex gap-2"><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Generate</Button><Button variant="secondary" onClick={reviseBackstoryTextWithPrompt} disabled={genLoading || !collapseWhitespace(backstoryPrompt)}><Sparkles className="h-4 w-4" /> Revise</Button></div></div>
                     </div>
                   ) : null}
 
                   {tab === "system" ? (
                     <div className="space-y-3"><div className="grid gap-2">{STORY_SYSTEM_RULE_CARDS.map((rule) => { const selected = cardSelectedSystemRuleIds.includes(rule.id); return <button key={rule.id} type="button" className={cn("rounded-xl border p-3 text-left", selected ? "border-[hsl(var(--hover-accent))] bg-[hsl(var(--hover-accent))/0.12]" : "border-[hsl(var(--border))]")} onClick={() => setCardSelectedSystemRuleIds((prev) => prev.includes(rule.id) ? prev.filter((id) => id !== rule.id) : [...prev, rule.id])}><div className="text-sm font-medium">{rule.label}</div><div className="text-xs text-[hsl(var(--muted-foreground))]">{rule.text}</div></button>; })}</div><div><div className="mb-1 text-xs font-medium text-[hsl(var(--muted-foreground))]">Additional custom system rules</div><Textarea value={cardSystemRules} onChange={(e) => setCardSystemRules(e.target.value)} rows={8} /></div></div>
+                  ) : null}
+
+                  {tab === "scenario" ? (
+                    <div className="space-y-3">
+                      <div>
+                        <div className="mb-1 text-sm font-medium">Setting</div>
+                        <Textarea value={cardScenarioSetting} onChange={(e) => setCardScenarioSetting(e.target.value)} rows={3} />
+                      </div>
+                      <div>
+                        <div className="mb-1 text-sm font-medium">Overall Tone</div>
+                        <Input value={cardScenarioOverallTone} onChange={(e) => setCardScenarioOverallTone(e.target.value)} />
+                      </div>
+                      <div>
+                        <div className="mb-1 text-sm font-medium">Premise</div>
+                        <Textarea value={cardScenarioPremise} onChange={(e) => setCardScenarioPremise(e.target.value)} rows={4} />
+                      </div>
+                    </div>
                   ) : null}
 
                   {tab === "intro" ? (
