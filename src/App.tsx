@@ -1212,6 +1212,7 @@ export default function CharacterCreatorApp() {
   const [cardScenarioSetting, setCardScenarioSetting] = useState("");
   const [cardScenarioOverallTone, setCardScenarioOverallTone] = useState("");
   const [cardScenarioPremise, setCardScenarioPremise] = useState("");
+  const [cardScenarioPremisePrompt, setCardScenarioPremisePrompt] = useState("");
   const [introVersionHistories, setIntroVersionHistories] = useState<string[][]>([[""]]);
   const [introVersionIndices, setIntroVersionIndices] = useState<number[]>([0]);
   const [introPrompt, setIntroPrompt] = useState("");
@@ -2211,6 +2212,7 @@ export default function CharacterCreatorApp() {
     setCardScenarioSetting("");
     setCardScenarioOverallTone("");
     setCardScenarioPremise("");
+    setCardScenarioPremisePrompt("");
     setIntroVersionHistories([[""]]);
     setIntroVersionIndices([0]);
     setIntroPrompt("");
@@ -4278,6 +4280,50 @@ ${cast.map((c) => `${c.name} | age: ${c.age === "" ? "" : c.age} | height: ${c.h
       commitGeneratedText(fieldKey, out, setSynopsis, true);
     } catch (e: any) {
       setGenError(e?.message ? String(e.message) : "Synopsis generation failed.");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  async function generateCardScenarioPremise() {
+    const activeCard = characterCards.find((c) => c.id === activeCharacterCardId) || null;
+    if (!activeCard) return;
+    const prompt = collapseWhitespace(cardScenarioPremisePrompt);
+    if (!prompt) {
+      setGenError("Write a premise prompt first.");
+      return;
+    }
+    const cast = (activeCard.characterIds || [])
+      .map((id) => characters.find((c) => c.id === id))
+      .filter((c): c is Character => !!c);
+    const characterContext = cast.map((c) => {
+      const selectedBackstory = (c.backstory || [])[clampIndex(c.selectedBackstoryIndex || 0, Math.max(1, c.backstory?.length || 1))] || "";
+      return `${c.name} | personality: ${(c.personalities || []).join(", ")} | motivation: ${c.motivation || ""} | backstory: ${selectedBackstory}`;
+    }).join("\n");
+
+    const fieldKey = `character-card-scenario-premise:${activeCard.id}`;
+    setGenError(null);
+    setGenLoading(true);
+    startGeneratedTextPage(fieldKey);
+    try {
+      const out = await callProxyChatCompletion({
+        system: "Write a roleplay scenario premise. Keep it concise, usable, and grounded. Return only premise text.",
+        user: `Card name: ${activeCard.name}
+Setting: ${cardScenarioSetting}
+Overall tone: ${cardScenarioOverallTone}
+Characters:
+${characterContext || "(none)"}
+
+Prompt:
+${prompt}`,
+        maxTokens: proxyMaxTokens,
+        lorebookIds: getActiveCardLorebookIds(),
+        stream: proxyStreamingEnabled,
+        onStreamUpdate: (partial) => commitGeneratedText(fieldKey, partial, setCardScenarioPremise),
+      });
+      commitGeneratedText(fieldKey, out, setCardScenarioPremise, true);
+    } catch (e: any) {
+      setGenError(e?.message ? String(e.message) : "Premise generation failed.");
     } finally {
       setGenLoading(false);
     }
@@ -7440,7 +7486,22 @@ ${feedback}`,
                       </div>
                       <div>
                         <div className="mb-1 text-sm font-medium">Premise</div>
-                        <Textarea value={cardScenarioPremise} onChange={(e) => setCardScenarioPremise(e.target.value)} rows={4} />
+                        {renderGeneratedTextarea({
+                          fieldKey: activeCharacterCardId ? `character-card-scenario-premise:${activeCharacterCardId}` : "character-card-scenario-premise:draft",
+                          value: cardScenarioPremise,
+                          onChange: setCardScenarioPremise,
+                          rows: 4,
+                          placeholder: "Write scenario premise...",
+                        })}
+                      </div>
+                      <div>
+                        <div className="mb-1 text-sm font-medium">Premise generation prompt</div>
+                        <Textarea value={cardScenarioPremisePrompt} onChange={(e) => setCardScenarioPremisePrompt(e.target.value)} rows={3} placeholder="Prompt for premise generation..." />
+                      </div>
+                      <div className="flex justify-end">
+                        <Button variant="secondary" onClick={generateCardScenarioPremise} disabled={genLoading || !collapseWhitespace(cardScenarioPremisePrompt)}>
+                          <Sparkles className="h-4 w-4" /> Generate Premise
+                        </Button>
                       </div>
                     </div>
                   ) : null}
